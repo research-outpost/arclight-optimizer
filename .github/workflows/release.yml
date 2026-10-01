@@ -1,0 +1,55 @@
+# Builds the VPM/UPM package zip when a version tag (v1.0.0, ...) is pushed and attaches it to a GitHub
+# release. The zip contains the package with its .meta files (Unity needs them for stable script references).
+# Download, docs and licence URLs are filled in from this repository.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read package.json
+        id: meta
+        run: |
+          echo "name=$(jq -r .name package.json)" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Check the tag matches package.json
+        run: |
+          if [ "${GITHUB_REF_NAME#v}" != "${{ steps.meta.outputs.version }}" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version ${{ steps.meta.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Build package zip
+        env:
+          NAME: ${{ steps.meta.outputs.name }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          zip_name="$NAME-$VERSION.zip"
+          blob="https://github.com/$REPO/blob/$GITHUB_REF_NAME"
+          mkdir -p build/package
+          rsync -a --exclude='.git*' --exclude='.github' --exclude='build' ./ build/package/
+          jq --arg url "https://github.com/$REPO/releases/download/$GITHUB_REF_NAME/$zip_name" \
+             --arg docs "$blob/README.md" --arg license "$blob/LICENSE.md" \
+             '.url = $url | .documentationUrl = $docs | .licensesUrl = $license' \
+             package.json > build/package/package.json
+          (cd build/package && zip -r -X "../$zip_name" .)
+          cp build/package/package.json build/package.json
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/*.zip
+            build/package.json
+          generate_release_notes: true

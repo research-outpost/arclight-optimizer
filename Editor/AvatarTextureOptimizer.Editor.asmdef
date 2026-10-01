@@ -1,0 +1,7 @@
+{
+  "name": "AvatarTextureOptimizer.Editor",
+  "rootNamespace": "Okarin.AvatarTextureOptimizer.Editor",
+  "references": ["AvatarTextureOptimizer.Runtime", "nadena.dev.ndmf", "nadena.dev.ndmf.runtime", "Unity.Collections"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}

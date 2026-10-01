@@ -1,0 +1,11 @@
+{
+  "name": "AvatarTextureOptimizer.Editor.VRChat",
+  "rootNamespace": "Okarin.AvatarTextureOptimizer.Editor",
+  "references": ["AvatarTextureOptimizer.Runtime", "AvatarTextureOptimizer.Editor", "nadena.dev.ndmf", "VRC.SDKBase.Editor"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true,
+  "defineConstraints": ["ARCLIGHT_VRCHAT_AVATARS"],
+  "versionDefines": [
+    { "name": "com.vrchat.avatars", "expression": "(0.0.0,999.9.9)", "define": "ARCLIGHT_VRCHAT_AVATARS" }
+  ]
+}
