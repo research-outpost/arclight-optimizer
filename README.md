@@ -6,7 +6,7 @@ It does two things:
 
 - **Clears unused texture areas.** Most avatar textures contain areas that no part of the model ever shows. Arclight keeps the pixels your meshes use, adds protective padding, and fills the rest with a flat colour that compresses far better.
 - **Merges duplicates**, so the same data is uploaded once (see below).
-- **Drops channels your shader never reads (PC).** A DXT5 texture whose alpha the shader ignores is imported as DXT1, which stores the colour the same way at half the size, in the download and in VRAM. A linear mask the shader reads through one red channel becomes BC4, which keeps that channel more precisely. This only happens where the shader's code has been checked (see below).
+- **Drops channels your shader never reads (PC).** A DXT5 texture whose alpha the shader ignores is imported as DXT1, which stores the colour the same way at half the size, in the download and in VRAM. A linear mask the shader reads through one red channel becomes BC4, which keeps that channel more precisely (smaller than DXT5, the same size as DXT1). This only happens where the shader's code has been checked (see below).
 
 It runs automatically when you build or enter Play Mode, on a temporary copy. Your textures, materials and scenes are never modified.
 

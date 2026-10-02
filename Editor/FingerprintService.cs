@@ -24,7 +24,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
     internal static class FingerprintService
     {
-        public const string Version = "png-reimport-v19-channel-formats";
+        public const string Version = "png-reimport-v20-dxt1-bc4";
         public static string Hash(byte[] bytes)
         {
             using (var sha = SHA256.Create()) return Hex(sha.ComputeHash(bytes));

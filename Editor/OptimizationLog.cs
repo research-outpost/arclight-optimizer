@@ -419,7 +419,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             row.PaddingMode = action + "; edge extension " + mapping.extensionRadiusX.ToString(CultureInfo.InvariantCulture) +
                 " x " + mapping.extensionRadiusY.ToString(CultureInfo.InvariantCulture) +
                 " source PNG texels; configured radius " + mapping.padding.ToString(CultureInfo.InvariantCulture) + " imported pixels." +
-                (mapping.standaloneFormat == 0 ? "" : " PC format DXT5 to " + (UnityEditor.TextureImporterFormat)mapping.standaloneFormat +
+                (mapping.standaloneFormat == 0 ? "" : " PC format changed to " + (UnityEditor.TextureImporterFormat)mapping.standaloneFormat +
                     ": its shaders never read the dropped channels.");
         }
 

@@ -203,7 +203,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             TextureImporterFormat? ChannelFormat(TextureImporter importer) =>
                 GeneratedTargetValidator.IsStandalone ? ChannelFormats.Choose(importer, channels) : null;
             // A texture with (almost) nothing to clear can still shrink through its format alone.
-            bool formatOnly = ChannelFormat(sourceImporter) != null;
+            bool formatOnly = ChannelFormat(sourceImporter) != null && ChannelFormats.Shrinks(sourceImporter);
             TextureImporterFormat? standaloneFormat = null;
             var candidates = repair ? new[] { BackgroundValueDetector.DetectUsed(pixels, sampled).Value }
                 : normal ? new[] { new Color32(128, 128, 255, 255) }

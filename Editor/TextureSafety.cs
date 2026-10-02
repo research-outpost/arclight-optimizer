@@ -129,17 +129,28 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
     // A PC texture Unity compresses to DXT5 (BC3) stores its colour in the same block format as BC1, plus a
     // separate alpha block. When no shader reading the texture uses alpha, BC1 keeps that colour at half the size.
-    // A linear texture read only through .r becomes BC4 instead, which stores its one channel more precisely than
-    // a BC1/BC3 colour channel. BC7, crunched, uncompressed and Android formats are never changed.
+    // A linear texture read only through .r becomes BC4 instead (from DXT5 or DXT1), which stores its one channel
+    // more precisely than a BC1/BC3 colour channel; from DXT1 that is the same size, so it is a quality gain only.
+    // BC7, crunched, uncompressed and Android formats are never changed.
     internal static class ChannelFormats
     {
         public static TextureImporterFormat? Choose(TextureImporter importer, TextureChannels read)
         {
             if (importer.textureType != TextureImporterType.Default || (read & TextureChannels.A) != 0) return null;
-            var standalone = importer.GetPlatformTextureSettings("Standalone");
-            var format = standalone.overridden ? standalone.format : importer.GetAutomaticFormat("Standalone");
+            var format = Current(importer);
+            bool redOnly = read == TextureChannels.R && !importer.sRGBTexture;
+            if (format == TextureImporterFormat.DXT1) return redOnly ? TextureImporterFormat.BC4 : (TextureImporterFormat?)null;
             if (format != TextureImporterFormat.DXT5) return null;
-            return read == TextureChannels.R && !importer.sRGBTexture ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
+            return redOnly ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
+        }
+
+        // True when the chosen format halves the stored size (DXT5 source), which alone can justify a replacement.
+        public static bool Shrinks(TextureImporter importer) => Current(importer) == TextureImporterFormat.DXT5;
+
+        private static TextureImporterFormat Current(TextureImporter importer)
+        {
+            var standalone = importer.GetPlatformTextureSettings("Standalone");
+            return standalone.overridden ? standalone.format : importer.GetAutomaticFormat("Standalone");
         }
 
         // The importer's effective Standalone settings with only the format replaced.
@@ -148,7 +159,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var settings = importer.GetPlatformTextureSettings("Standalone");
             if (!settings.overridden)
             {
-                // Choose only accepts automatic DXT5, so the default settings are not crunched.
+                // Choose only accepts automatic DXT1/DXT5, so the default settings are not crunched.
                 var defaults = importer.GetDefaultPlatformTextureSettings();
                 settings.maxTextureSize = defaults.maxTextureSize;
                 settings.resizeAlgorithm = defaults.resizeAlgorithm;
