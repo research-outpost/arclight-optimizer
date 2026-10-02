@@ -60,7 +60,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     public static class ShaderAdapterRegistry
     {
         private static readonly List<ITextureSamplingAdapter> Adapters =
-            new List<ITextureSamplingAdapter> { new KnownUnityShaderAdapter(), new StandardShaderAdapter(), new LilToonAdapter(), new SpsLilToonAdapter(), new PoiyomiAdapter(), new NonToonAdapter(), new VRChatMobileAdapter() };
+            new List<ITextureSamplingAdapter> { new KnownUnityShaderAdapter(), new StandardShaderAdapter(), new LilToonAdapter(), new SpsLilToonAdapter(), new PoiyomiAdapter(), new NonToonAdapter(), new VRChatMobileAdapter(), new SunaoAdapter(), new OrelsToonAdapter(), new MochieStandardAdapter() };
 
         private static readonly Dictionary<string, string> pinnedSourceFailures = new Dictionary<string, string>(System.StringComparer.Ordinal);
 

@@ -31,6 +31,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private int scannedGroups;
         private int eligibleGroups;
         private int duplicateAliases;
+        private string reportPath;
+        // Build savings by category, in report order: (bytes saved, what saved them, items whose size could not be estimated).
+        private readonly List<(string Category, long Bytes, string Detail, int Unmeasured)> savings = new List<(string, long, string, int)>();
 
         internal OptimizationLog(bool isPlayMode = false) { this.isPlayMode = isPlayMode; }
         internal bool HasCaptured => captured;
@@ -78,6 +81,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             replacements.Clear();
             textureResults.Clear();
             if (scan == null) return;
+            long textureBytes = 0;
+            int replaced = 0, merged = 0, textureUnmeasured = 0;
 
             var resultBySource = (summary?.TextureResults ?? new List<TextureGenerationResult>())
                 .Where(result => result != null && result.Source)
@@ -148,6 +153,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         row.Reason = "Texture optimization was cancelled before application; original texture assignments were retained.";
                     }
                 }
+                if (mapping != null && result != null && !row.Outcome.EndsWith("(not applied)", StringComparison.Ordinal) && row.Outcome != "Cancelled" &&
+                    (result.Outcome == TextureResultKind.Generated || result.Outcome == TextureResultKind.Reused))
+                {
+                    replaced++;
+                    if (mapping.compressedSourceBytes > 0 && mapping.compressedReplacementBytes > 0)
+                        textureBytes += mapping.compressedSourceBytes - mapping.compressedReplacementBytes;
+                    else textureUnmeasured++;
+                }
                 textureResults.Add(row);
             }
 
@@ -169,8 +182,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     Operation = "Duplicate consolidation",
                     PreparationMilliseconds = -1
                 });
+                if (!retained)
+                {
+                    // The dropped copy matches the kept texture's pixels and import settings, so it would have shipped at the
+                    // kept texture's size (usually already measured this session).
+                    merged++;
+                    if (BundleSizeEstimator.TryMeasure(targetPath, out long duplicateBytes)) textureBytes += duplicateBytes;
+                    else textureUnmeasured++;
+                }
             }
             textureResults.Sort((a, b) => string.CompareOrdinal(a.SourcePath, b.SourcePath));
+            if (replaced + merged > 0)
+                savings.Add(("Textures", textureBytes, Count(replaced, "replaced") + Count(merged, "duplicate(s) merged"), textureUnmeasured));
         }
         internal string Format(GameObject root, SubstitutionState state)
         {
@@ -183,6 +206,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             output.Append("Run context: ").AppendLine(isPlayMode ? "Play Mode" : "Outside Play Mode");
             if (state != null && state.Cancelled) output.AppendLine("Run status: Cancelled; original texture assignments retained.");
             output.AppendLine();
+            AppendBuildSavings(output);
             output.AppendLine("Results");
 
             var summary = state != null ? state.Summary : null;
@@ -253,6 +277,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 RejectReparsePoint(reportPath + ".meta");
                 File.WriteAllText(reportPath, Format(root, state), new UTF8Encoding(false));
                 AssetDatabase.ImportAsset(reportPath, ImportAssetOptions.ForceSynchronousImport);
+                this.reportPath = reportPath;
             }
             catch (Exception e)
             {
@@ -260,6 +285,40 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 Debug.LogWarning("Arclight Optimizer: Could not write report to '" + target + "': " + Compact(e.Message), root);
             }
         }
+
+        // Later passes (meshes and audio run after Avatar Optimizer) add their savings and rewrite the report in place.
+        internal void AddSavings(string category, long bytes, string detail, int unmeasured = 0)
+        {
+            if (!string.IsNullOrEmpty(detail)) savings.Add((category, bytes, detail, unmeasured));
+        }
+
+        internal void Refresh(GameObject root, SubstitutionState state)
+        {
+            if (reportPath == null) return;
+            try
+            {
+                File.WriteAllText(reportPath, Format(root, state), new UTF8Encoding(false));
+                AssetDatabase.ImportAsset(reportPath, ImportAssetOptions.ForceSynchronousImport);
+            }
+            catch (Exception e) { Debug.LogWarning("Arclight Optimizer: Could not update report '" + reportPath + "': " + Compact(e.Message), root); }
+        }
+
+        private void AppendBuildSavings(StringBuilder output)
+        {
+            output.Append("Saved this build: ");
+            if (savings.Count == 0) { output.AppendLine("nothing measurable (no assets were replaced or merged)."); output.AppendLine(); return; }
+            output.Append("about ").AppendLine(Size(savings.Sum(s => s.Bytes)));
+            foreach (var entry in savings)
+            {
+                output.Append("  ").Append(entry.Category).Append(": ").Append(Size(entry.Bytes)).Append(" (").Append(entry.Detail.TrimEnd(',', ' ')).Append(')');
+                if (entry.Unmeasured > 0) output.Append("; ").Append(Number(entry.Unmeasured)).Append(" item(s) could not be estimated");
+                output.AppendLine();
+            }
+            output.AppendLine("  Textures and audio are estimated compressed download sizes for this platform; meshes are uncompressed mesh data.");
+            output.AppendLine();
+        }
+
+        internal static string Count(int count, string what) => count > 0 ? Number(count) + " " + what + ", " : "";
 
         private void AppendSavings(StringBuilder output)
         {

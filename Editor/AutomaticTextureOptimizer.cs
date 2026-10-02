@@ -91,6 +91,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (enabled)
                     {
                         log.Emit(buildRoot, state, folder);
+                        state.Report = log;
                         KeptTextureSummary.Record(buildRoot, scan, state);
                         if (scan != null) CacheCleanup.Schedule(folder);
                     }

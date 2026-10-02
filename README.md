@@ -35,7 +35,7 @@ For a manual install, download `research-outpost.arclight-optimizer-<version>.zi
 
 Everything is automatic. The only option is **Allow unsupported shaders** (see Limitations). To skip the optimizer for an avatar, disable or remove the component.
 
-After a build, click **Open reports folder** on the component to see what changed and why any texture was kept.
+After a build, click **Open reports folder** on the component. Each report opens with how much the build saved, split into textures, audio and meshes, then shows what changed and why any texture was kept.
 
 ## Clearing unused texture areas
 
@@ -54,6 +54,9 @@ This only happens where the shader's source has been checked:
 - **Poiyomi 10–12:** the main texture with **Force Opaque** or **Ignore Main Texture Alpha** on (unless alpha changes colour, such as with premultiply), masks that read one fixed or selected channel, and several colour maps. Lil Fur and Grab Pass keep alpha. Poiyomi 9.x gets texture clearing but not format changes.
 - **VRChat mobile shaders:** main textures that ignore alpha, Standard Lite maps, and Toon Standard's main texture and selected-channel masks.
 - **NonToon:** the base texture in Opaque mode or on fur, the shared mask's selected channels, the SDF map and the fur noise mask.
+- **Sunao:** masks that never read alpha (alpha, occlusion, shade, lighting boost, rim light and outline masks).
+- **ORL Toon:** the main texture on opaque variants, single-channel masks, and masks that read one selected channel.
+- **Mochie Standard:** the detail, emission and alpha masks, which read one selected channel.
 
 Anything else keeps its format, as do BC7, crunched and uncompressed textures and every Quest/Android texture.
 
@@ -83,6 +86,9 @@ This only happens when the clip leaves room for the +3 dB without clipping, and 
 | Poiyomi 9.x–12.x | Locked and unlocked |
 | VRChat mobile shaders | Toon Standard, Toon Lit, Standard Lite and the others |
 | NonToon 0.1.3 | Default modules |
+| Sunao 1.6 | All variants except Fur |
+| ORL Toon v1 and v2 | All variants |
+| Mochie Standard 2.13 | Standard, Lite and Mobile (detail maps are kept) |
 | Unity | Standard and Unlit/Texture |
 
 ## Limitations

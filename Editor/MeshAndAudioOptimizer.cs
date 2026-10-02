@@ -23,6 +23,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal sealed class Result
         {
             public int Meshes, AudioClips, Compacted, MonoAudio;
+            // Mesh bytes are uncompressed vertex and index data; audio bytes are estimated bundle sizes.
+            public long MeshBytes, AudioBytes;
+            public int AudioUnmeasured;
             public bool Changed => Meshes + AudioClips + Compacted + MonoAudio > 0;
             public override string ToString() =>
                 $"merged {Meshes} duplicate mesh(es) and {AudioClips} duplicate audio clip(s), gave {Compacted} mesh(es) a 16-bit index buffer, " +
@@ -42,12 +45,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 result.Meshes = MergeIdentical(references.OfType<Mesh>(), MeshSignature, replace);
                 result.AudioClips = MergeIdentical(references.OfType<AudioClip>(), AudioSignature, replace);
+                foreach (var dropped in replace.Keys)
+                    if (dropped is Mesh mesh) result.MeshBytes += MeshBytes(mesh);
+                    else if (dropped is AudioClip clip)
+                    {
+                        if (TryMeasure(clip, out long bytes)) result.AudioBytes += bytes;
+                        else result.AudioUnmeasured++;
+                    }
             }
             if (compact)
                 foreach (var mesh in references.OfType<Mesh>().Where(m => !replace.ContainsKey(m)).ToArray())
                 {
                     var copy = Compact(mesh);
                     if (!copy) continue;
+                    result.MeshBytes += 2 * IndexCount(mesh);
                     // Duplicates already pointed at this mesh follow it to the compact copy.
                     foreach (var key in replace.Where(p => p.Value == mesh).Select(p => p.Key).ToArray()) replace[key] = copy;
                     replace.Add(mesh, copy);
@@ -64,6 +75,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var mono = AudioMonoConverter.Convert(ClipReferences(components));
                 if (mono.Count > 0)
                 {
+                    foreach (var pair in mono)
+                        if (TryMeasure(pair.Key, out long stereo) && TryMeasure(pair.Value, out long single)) result.AudioBytes += stereo - single;
+                        else result.AudioUnmeasured++;
                     var monoReplace = mono.ToDictionary(p => (UnityEngine.Object)p.Key, p => (UnityEngine.Object)p.Value);
                     foreach (var pair in monoReplace) register(pair.Key, pair.Value);
                     Rewrite(components, monoReplace);
@@ -71,6 +85,28 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
             }
             return result;
+        }
+
+        // Vertex streams plus index buffer; blend shapes are not counted, so merged meshes report a lower bound.
+        internal static long MeshBytes(Mesh mesh)
+        {
+            long bytes = 0;
+            for (int stream = 0; stream < mesh.vertexBufferCount; stream++) bytes += (long)mesh.GetVertexBufferStride(stream) * mesh.vertexCount;
+            return bytes + IndexCount(mesh) * (mesh.indexFormat == IndexFormat.UInt16 ? 2 : 4);
+        }
+
+        private static long IndexCount(Mesh mesh)
+        {
+            long count = 0;
+            for (int i = 0; i < mesh.subMeshCount; i++) count += mesh.GetIndexCount(i);
+            return count;
+        }
+
+        private static bool TryMeasure(AudioClip clip, out long bytes)
+        {
+            bytes = 0;
+            string path = AssetDatabase.GetAssetPath(clip);
+            return !string.IsNullOrEmpty(path) && BundleSizeEstimator.TryMeasure(path, out bytes);
         }
 
         private static List<(Component, AudioClip)> ClipReferences(Component[] components)

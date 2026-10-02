@@ -86,6 +86,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         (a, b) => ObjectRegistry.RegisterReplacedObject(a, b), monoAudio);
                     if (result.Changed)
                         Debug.Log("Arclight Optimizer: " + result + " on " + ctx.AvatarRootObject.name + ".");
+                    if (state.Report != null && result.Changed)
+                    {
+                        state.Report.AddSavings("Audio", result.AudioBytes, OptimizationLog.Count(result.MonoAudio, "made mono") +
+                            OptimizationLog.Count(result.AudioClips, "duplicate(s) merged"), result.AudioUnmeasured);
+                        state.Report.AddSavings("Meshes", result.MeshBytes, OptimizationLog.Count(result.Meshes, "duplicate(s) merged") +
+                            OptimizationLog.Count(result.Compacted, "index buffer(s) halved"));
+                        state.Report.Refresh(ctx.AvatarRootObject, state);
+                    }
                     if (monoAudio) CacheCleanup.Schedule(AutomaticTextureOptimizer.CacheFolder);
                 }
                 catch (Exception e)
@@ -143,6 +151,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public readonly HashSet<Texture> MergedDuplicates = new HashSet<Texture>();
         internal AnimationSnapshot SerializedAnimation;
         public readonly GenerationSummary Summary = new GenerationSummary();
+        // The written report, so passes after Avatar Optimizer can add their savings to it.
+        internal OptimizationLog Report;
     }
 
     internal static class TemporaryMaterialSubstituter
