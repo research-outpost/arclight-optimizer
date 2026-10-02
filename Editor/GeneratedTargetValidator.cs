@@ -15,7 +15,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public static bool IsValidated(GeneratedTextureMapping mapping) =>
             EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android ? mapping.androidValidated : IsStandalone && mapping.standaloneValidated;
 
-        internal static void ValidatePair(Texture2D source, Texture2D replacement, bool skipPngSizeGate = false)
+        // standaloneFormat: the mapping's channel format (0 = the source's settings are copied unchanged).
+        internal static void ValidatePair(Texture2D source, Texture2D replacement, bool skipPngSizeGate = false, int standaloneFormat = 0)
         {
             if (!IsStandalone && EditorUserBuildSettings.activeBuildTarget != BuildTarget.Android)
                 throw new InvalidOperationException("Only Standalone and Android targets are supported.");
@@ -23,7 +24,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 new System.IO.FileInfo(AssetDatabase.GetAssetPath(replacement)).Length);
             var originalImporter = TextureSafety.Validate(source);
             var outputImporter = TextureSafety.Validate(replacement);
-            if (TextureSafety.SettingsFingerprint(originalImporter) != TextureSafety.SettingsFingerprint(outputImporter))
+            bool changed = standaloneFormat != 0;
+            if (TextureSafety.SettingsFingerprint(originalImporter, changed) != TextureSafety.SettingsFingerprint(outputImporter, changed) ||
+                (changed && !ChannelFormats.Matches(originalImporter, outputImporter, (TextureImporterFormat)standaloneFormat)))
                 throw new InvalidOperationException("Generated importer settings differ from the source; output retained but not mapped.");
             if (source.width != replacement.width || source.height != replacement.height || source.mipmapCount != replacement.mipmapCount)
                 throw new InvalidOperationException("Generated target dimensions/mipmap count differ from the source; output retained but not mapped.");
@@ -32,7 +35,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Called by generation/cache reuse, including NDMF processing; source importers are never changed.
         public static void ValidateExisting(GeneratedTextureMapping mapping)
         {
-            ValidatePair(mapping.source, mapping.replacement, TextureFileSizePolicy.SkipsPngGate(mapping));
+            ValidatePair(mapping.source, mapping.replacement, TextureFileSizePolicy.SkipsPngGate(mapping), mapping.standaloneFormat);
             mapping.outputImporterHash = FingerprintService.ImporterHash(mapping.replacement);
             if (IsStandalone) mapping.standaloneValidated = true;
             else mapping.androidValidated = true;

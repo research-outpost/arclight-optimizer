@@ -64,7 +64,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return importer;
         }
 
-        public static string SettingsFingerprint(TextureImporter importer)
+        // withoutStandalone leaves out the Standalone platform settings, which a channel format change replaces.
+        public static string SettingsFingerprint(TextureImporter importer, bool withoutStandalone = false)
         {
             var settings = new TextureImporterSettings();
             importer.ReadTextureSettings(settings);
@@ -73,7 +74,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 importer.maxTextureSize + "|" + importer.streamingMipmaps + "|" + importer.streamingMipmapsPriority + "|" +
                 importer.isReadable + "|" + importer.ignorePngGamma + "|" +
                 JsonUtility.ToJson(importer.GetDefaultPlatformTextureSettings()) + "|" +
-                JsonUtility.ToJson(importer.GetPlatformTextureSettings("Standalone")) + "|" +
+                (withoutStandalone ? "" : JsonUtility.ToJson(importer.GetPlatformTextureSettings("Standalone"))) + "|" +
                 JsonUtility.ToJson(importer.GetPlatformTextureSettings("Android"));
         }
 
@@ -123,6 +124,49 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (string.Equals(directory.FullName, assets, StringComparison.OrdinalIgnoreCase)) break;
             }
             return folder;
+        }
+    }
+
+    // A PC texture Unity compresses to DXT5 (BC3) stores its colour in the same block format as BC1, plus a
+    // separate alpha block. When no shader reading the texture uses alpha, BC1 keeps that colour at half the size.
+    // A linear texture read only through .r becomes BC4 instead, which stores its one channel more precisely than
+    // a BC1/BC3 colour channel. BC7, crunched, uncompressed and Android formats are never changed.
+    internal static class ChannelFormats
+    {
+        public static TextureImporterFormat? Choose(TextureImporter importer, TextureChannels read)
+        {
+            if (importer.textureType != TextureImporterType.Default || (read & TextureChannels.A) != 0) return null;
+            var standalone = importer.GetPlatformTextureSettings("Standalone");
+            var format = standalone.overridden ? standalone.format : importer.GetAutomaticFormat("Standalone");
+            if (format != TextureImporterFormat.DXT5) return null;
+            return read == TextureChannels.R && !importer.sRGBTexture ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
+        }
+
+        // The importer's effective Standalone settings with only the format replaced.
+        public static TextureImporterPlatformSettings Standalone(TextureImporter importer, TextureImporterFormat format)
+        {
+            var settings = importer.GetPlatformTextureSettings("Standalone");
+            if (!settings.overridden)
+            {
+                // Choose only accepts automatic DXT5, so the default settings are not crunched.
+                var defaults = importer.GetDefaultPlatformTextureSettings();
+                settings.maxTextureSize = defaults.maxTextureSize;
+                settings.resizeAlgorithm = defaults.resizeAlgorithm;
+                settings.compressionQuality = defaults.compressionQuality;
+                settings.crunchedCompression = false;
+                settings.overridden = true;
+            }
+            settings.format = format;
+            return settings;
+        }
+
+        public static bool Matches(TextureImporter source, TextureImporter output, TextureImporterFormat format)
+        {
+            var expected = Standalone(source, format);
+            var actual = output.GetPlatformTextureSettings("Standalone");
+            return actual.overridden && actual.format == format && actual.maxTextureSize == expected.maxTextureSize &&
+                actual.resizeAlgorithm == expected.resizeAlgorithm && actual.compressionQuality == expected.compressionQuality &&
+                actual.crunchedCompression == expected.crunchedCompression;
         }
     }
 

@@ -63,6 +63,47 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         public SamplingDescription Describe(Material material, string property)
         {
+            var result = DescribeSampling(material, property);
+            if (result.Supported && !result.NotSampled) result.Channels = Channels(material, property);
+            return result;
+        }
+
+        // Toon Standard masks read through SAMPLE_MASK (or the outline's tex2Dlod) as tex[<name>Channel].
+        private static readonly HashSet<string> ToonStandardSelectedMasks = new HashSet<string>(StringComparer.Ordinal)
+            { "_OcclusionMap", "_DetailMask", "_MetallicMap", "_GlossMap", "_MatcapMask", "_HueShiftMask", "_OutlineMask" };
+
+        // Channel reads in the pinned 3.10.5 sources. Toon Lit and MatCap Lit return alpha 1; Diffuse, Bumped
+        // Diffuse and Standard Lite are opaque surface shaders whose generated output uses UNITY_OPAQUE_ALPHA.
+        // Bumped (Mapped) Specular read _MainTex alpha as gloss. Toon Standard compiles no alpha keyword (its
+        // shader_feature line is commented out), so GetAlpha returns 1 and main alpha is never read; its masks read
+        // the channel their selector picks. _DetailAlbedoMap (alpha blends detail), _ColorMask (four channels) and
+        // _AudioLinkMask (whole-texel modes) keep every channel.
+        private static TextureChannels Channels(Material material, string property)
+        {
+            switch (FileOf(material.shader))
+            {
+                case "ToonStandard/ToonStandard.shader": case "ToonStandard/ToonStandardOutline.shader":
+                    if (property == "_MainTex" || property == "_EmissionMap") return TextureChannels.RGB;
+                    if (!ToonStandardSelectedMasks.Contains(property) || !material.HasProperty(property + "Channel")) return TextureChannels.All;
+                    int channel = Selector(material, property + "Channel");
+                    return channel >= 0 && channel <= 3 ? PoiyomiAdapter.ChannelOf(channel) : TextureChannels.All;
+                case "VRChat-Mobile-ToonLit.shader": case "VRChat-Mobile-MatCapLit.shader":
+                case "VRChat-Mobile-Diffuse.shader": case "VRChat-Mobile-BumpedDiffuse.shader":
+                    return property == "_MainTex" ? TextureChannels.RGB : TextureChannels.All;
+                case "VRChat-Mobile-StandardLite.shader":
+                    switch (property)
+                    {
+                        case "_MainTex": case "_EmissionMap": case "_DetailAlbedoMap": return TextureChannels.RGB;
+                        case "_MetallicGlossMap": return TextureChannels.R | TextureChannels.A;
+                        case "_OcclusionMap": return TextureChannels.G;
+                        default: return TextureChannels.All; // _DetailMask reads alpha; normal maps keep their format.
+                    }
+                default: return TextureChannels.All;
+            }
+        }
+
+        private SamplingDescription DescribeSampling(Material material, string property)
+        {
             if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline)
                 return Unsupported("VRChat mobile shaders are supported on the Built-in Render Pipeline only.");
             string file = FileOf(material.shader);

@@ -63,11 +63,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (use.Texture && probe.HasProperty(use.Property)) probe.SetTexture(use.Property, use.Texture);
                 var corners = new Vector4[(int)evaluations][];
                 var index = new int[inputs.Count];
+                // Channels any evaluated value can read; non-integer channel selectors read every channel.
+                var channels = baseline.Channels;
                 for (long n = 0; n < evaluations; n++)
                 {
                     Decompose(n, inputs, index);
                     for (int i = 0; i < inputs.Count; i++) Apply(probe, inputs[i], inputs[i].Values[index[i]]);
-                    corners[n] = Transforms(ShaderAdapterRegistry.Describe(probe, use.Property, allowUnsupportedShaders), baseline, basePaths);
+                    var described = ShaderAdapterRegistry.Describe(probe, use.Property, allowUnsupportedShaders);
+                    channels |= described?.Channels ?? TextureChannels.All;
+                    corners[n] = Transforms(described, baseline, basePaths);
                     if (corners[n] == null) return "it changes the sampling model, not only UV transforms";
                 }
                 string nonlinear = CheckCellCentres(probe, use, inputs, corners, baseline, basePaths, allowUnsupportedShaders);
@@ -91,7 +95,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     AdapterId = baseline.AdapterId, Supported = baseline.Supported, UnsafeOverride = baseline.UnsafeOverride,
                     OverrideExcluded = baseline.OverrideExcluded, NotSampled = baseline.NotSampled,
                     Reason = baseline.Reason,
-                    Semantics = baseline.Semantics, MaterialInputs = baseline.MaterialInputs, Paths = paths
+                    Semantics = baseline.Semantics, Channels = channels, MaterialInputs = baseline.MaterialInputs, Paths = paths
                 };
                 return null;
             }

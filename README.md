@@ -6,6 +6,7 @@ It does two things:
 
 - **Clears unused texture areas.** Most avatar textures contain areas that no part of the model ever shows. Arclight keeps the pixels your meshes use, adds protective padding, and fills the rest with a flat colour that compresses far better.
 - **Merges duplicates**, so the same data is uploaded once (see below).
+- **Drops channels your shader never reads (PC).** A DXT5 texture whose alpha the shader ignores is imported as DXT1, which stores the colour the same way at half the size, in the download and in VRAM. A linear mask the shader reads through one red channel becomes BC4, which keeps that channel more precisely. This only happens where the shader's code has been checked (see below).
 
 It runs automatically when you build or enter Play Mode, on a temporary copy. Your textures, materials and scenes are never modified.
 
@@ -53,9 +54,21 @@ Only the avatar being built is changed, never your project's files. Anything tha
 
 A texture is only replaced when its estimated compressed size in the avatar bundle gets smaller.
 
+## Smaller formats without quality loss
+
+On PC builds, a texture only changes format when every shader that uses it never reads the dropped channels. This was checked in each shader's source:
+
+- **Unity Standard and Unlit/Texture:** opaque main textures, emission and detail colour, and single-channel maps.
+- **lilToon 2.x:** the main texture on opaque shaders, plus its red-channel masks.
+- **Poiyomi 10–12:** the main texture with **Force Opaque** or **Ignore Main Texture Alpha** on (unless alpha changes colour, such as with premultiply), masks that read one fixed or selected channel, and several colour maps. Lil Fur and Grab Pass keep alpha.
+- **VRChat mobile shaders:** main textures that ignore alpha, Standard Lite maps, and Toon Standard's main texture and selected-channel masks.
+- **NonToon:** the base texture in Opaque mode or on fur, the shared mask's selected channels, the SDF map and the fur noise mask.
+
+Anything else keeps its format, as do BC7, crunched and uncompressed textures and every Quest/Android texture. Generated textures are rebuilt once after updating.
+
 ## Limitations
 
-- It does not resize, recompress or atlas textures, and it does not reduce VRAM use.
+- It does not resize or atlas textures. Apart from the channel formats above, it keeps each texture's compression format.
 - It reads 8-bit PNG, PSD, TGA, TIFF, BMP and JPEG sources. Normal maps must be PNG.
 - Matcaps, ramps and textures with unknown sampling are kept, as are textures animated in ways it cannot follow.
 - Distant mipmaps can still show some colour bleeding. Check your avatar at different distances.

@@ -328,7 +328,30 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
             }
             result.Reason = inference + "lilToon 2.x static mesh-UV compatibility model; disabled feature paths are conservatively retained in coverage.";
+            result.Channels = Channels(material, property, file);
             return result;
+        }
+
+        // Channel reads audited in the 2.3.4 shader sources; other 2.x versions are assumed to read the same channels.
+        // Every read of these fields in every pass takes .r alone.
+        internal static readonly HashSet<string> RedOnlyFields = new HashSet<string>(
+            ("_MainColorAdjustMask _Main2ndBlendMask _Main3rdBlendMask _RimShadeMask _FurMask _FurLengthMask _AlphaMask " +
+             "_Bump2ndScaleMask _AnisotropyScaleMask _AnisotropyShiftNoiseMask _SmoothnessTex _MetallicGlossMap").Split(' '), StringComparer.Ordinal);
+        // Entries built only from the ltspass_opaque, ltspass_tess_opaque and ltspass_lite_opaque passes (LIL_RENDER 0).
+        // Those passes set fd.col.a = 1 before any use of the main alpha that can affect colour, and their
+        // shadow-caster and depth passes compile the alpha path only for LIL_RENDER > 0.
+        internal static readonly HashSet<string> OpaqueEntries = new HashSet<string>(
+            "lts lts_o lts_oo lts_tess lts_tess_o ltsl ltsl_o".Split(' ').Select(name => name + ".shader"), StringComparer.Ordinal);
+
+        private static TextureChannels Channels(Material material, string property, string file)
+        {
+            if (RedOnlyFields.Contains(property)) return TextureChannels.R;
+            // VRChat's fallback shader reads main alpha when the fallback tag asks for cutout or transparency.
+            string fallback = material.GetTag("VRCFallback", false, "");
+            if (property == "_MainTex" && OpaqueEntries.Contains(file) &&
+                new[] { "Cutout", "Transparent", "Fade" }.All(mode => fallback.IndexOf(mode, StringComparison.OrdinalIgnoreCase) < 0))
+                return TextureChannels.RGB;
+            return TextureChannels.All;
         }
 
         private static bool Enabled(Material material, string property) => material.HasProperty(property) && MaterialInputs.Float(material, property) != 0;

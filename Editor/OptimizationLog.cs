@@ -418,7 +418,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 : "Clear unused pixels and extend UV island edges";
             row.PaddingMode = action + "; edge extension " + mapping.extensionRadiusX.ToString(CultureInfo.InvariantCulture) +
                 " x " + mapping.extensionRadiusY.ToString(CultureInfo.InvariantCulture) +
-                " source PNG texels; configured radius " + mapping.padding.ToString(CultureInfo.InvariantCulture) + " imported pixels.";
+                " source PNG texels; configured radius " + mapping.padding.ToString(CultureInfo.InvariantCulture) + " imported pixels." +
+                (mapping.standaloneFormat == 0 ? "" : " PC format DXT5 to " + (UnityEditor.TextureImporterFormat)mapping.standaloneFormat +
+                    ": its shaders never read the dropped channels.");
         }
 
         internal static string PackageVersion()

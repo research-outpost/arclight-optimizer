@@ -5,6 +5,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 {
     public enum TextureSemantics { Color, Data, Normal, Unknown }
 
+    // Texture channels a shader property can read in every compiled pass. Only an audited adapter narrows this;
+    // anything else reads All, which keeps the source's compressed format.
+    [System.Flags] public enum TextureChannels { R = 1, G = 2, B = 4, A = 8, RGB = R | G | B, All = RGB | A }
+
     public sealed class SamplingPath
     {
         public int UvChannel;
@@ -30,6 +34,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public bool NotSampled;
         public string Reason;
         public TextureSemantics Semantics = TextureSemantics.Unknown;
+        public TextureChannels Channels = TextureChannels.All;
         public List<SamplingPath> Paths;
         // Material float/vector/ST values read while describing this property. Animating any other
         // material value cannot change this description. Null means the inputs are unknown.
@@ -203,13 +208,35 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             if (material.IsKeywordEnabled("_PARALLAXMAP") || material.GetTexture("_ParallaxMap"))
                 return ShaderAdapterRegistry.Unsupported(Id, "Standard parallax offsets every texture lookup by view direction; original retained.");
+            SamplingDescription result;
             if (MainUvFields.TryGetValue(property, out var semantics))
-                return ShaderAdapterRegistry.UvPath(Id, semantics, 0, material, "_MainTex");
-            if (DetailUvFields.TryGetValue(property, out semantics))
-                return ShaderAdapterRegistry.UvPath(Id, semantics, MaterialInputs.Float(material, "_UVSec") == 0 ? 0 : 1, material, "_DetailAlbedoMap");
-            return ShaderAdapterRegistry.Unsupported(Id, property == "_ParallaxMap"
+                result = ShaderAdapterRegistry.UvPath(Id, semantics, 0, material, "_MainTex");
+            else if (DetailUvFields.TryGetValue(property, out semantics))
+                result = ShaderAdapterRegistry.UvPath(Id, semantics, MaterialInputs.Float(material, "_UVSec") == 0 ? 0 : 1, material, "_DetailAlbedoMap");
+            else return ShaderAdapterRegistry.Unsupported(Id, property == "_ParallaxMap"
                 ? "Standard height maps drive view-dependent parallax; original retained."
                 : "Unverified Standard texture property; original retained.");
+            result.Channels = Channels(material, property);
+            return result;
+        }
+
+        // Channel reads per UnityStandardInput.cginc and UnityStandardShadow.cginc (2022.3). Albedo alpha is read
+        // only for alpha test/blend/premultiply or as the smoothness source; opaque output is UNITY_OPAQUE_ALPHA.
+        // Keywords select the compiled variant and cannot be animated.
+        private static TextureChannels Channels(Material material, string property)
+        {
+            bool albedoSmoothness = material.IsKeywordEnabled("_SMOOTHNESS_TEXTURE_ALBEDO_CHANNEL_A");
+            switch (property)
+            {
+                case "_MainTex":
+                    return albedoSmoothness || material.IsKeywordEnabled("_ALPHATEST_ON") || material.IsKeywordEnabled("_ALPHABLEND_ON") ||
+                        material.IsKeywordEnabled("_ALPHAPREMULTIPLY_ON") ? TextureChannels.All : TextureChannels.RGB;
+                case "_MetallicGlossMap": return albedoSmoothness ? TextureChannels.R : TextureChannels.R | TextureChannels.A;
+                case "_SpecGlossMap": return albedoSmoothness ? TextureChannels.RGB : TextureChannels.All;
+                case "_OcclusionMap": return TextureChannels.G;
+                case "_EmissionMap": case "_DetailAlbedoMap": return TextureChannels.RGB;
+                default: return TextureChannels.All; // _DetailMask reads alpha; normal maps keep their format.
+            }
         }
     }
 
@@ -222,7 +249,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public SamplingDescription Describe(Material material, string property)
         {
             if (property != "_MainTex") return ShaderAdapterRegistry.Unsupported("unity-unlit-v1", "Unverified texture property.");
-            return ShaderAdapterRegistry.UvPath("unity-unlit-texture-v1", TextureSemantics.Color, 0, material, property);
+            var result = ShaderAdapterRegistry.UvPath("unity-unlit-texture-v1", TextureSemantics.Color, 0, material, property);
+            result.Channels = TextureChannels.RGB; // The fragment ends with UNITY_OPAQUE_ALPHA.
+            return result;
         }
     }
 

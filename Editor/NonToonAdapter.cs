@@ -40,6 +40,44 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         public SamplingDescription Describe(Material material, string property)
         {
+            var result = DescribeSampling(material, property);
+            if (result.Supported && !result.NotSampled) result.Channels = Channels(material, property);
+            return result;
+        }
+
+        // Channel reads in the audited source (NonToon modules plus Shader Core 0.1.12):
+        //  - Shade SDF map: .r/.g/.b. Fur noise mask: .r.
+        //  - _BaseTexture: albedo alpha only feeds sd.col.a, which NonToonFur replaces with fur noise and which
+        //    rendering mode 0 (Opaque) resets to 1 before any use; modules read albedoAlpha.rgb only.
+        //  - _SharedMask: every read is sd.mask[<...MaskChannel>] (sd.maskTexture is assigned but never read),
+        //    so it reads the union of the channels the material's mask-channel selectors pick.
+        // Detail textures multiply into albedo alpha and detail masks read all four channels.
+        private static TextureChannels Channels(Material material, string property)
+        {
+            if (property == SdfMap) return TextureChannels.RGB;
+            if (property == "_FurNoiseMask") return TextureChannels.R;
+            if (property == "_BaseTexture")
+                return AssetDatabase.GetAssetPath(material.shader) == FurShaderPath || (material.HasProperty("_RenderingMode") && Value(material, "_RenderingMode") == 0)
+                    ? TextureChannels.RGB : TextureChannels.All;
+            if (property != "_SharedMask") return TextureChannels.All;
+            TextureChannels read = 0;
+            var shader = material.shader;
+            for (int i = 0; i < shader.GetPropertyCount(); i++)
+            {
+                string name = shader.GetPropertyName(i);
+                if (!name.EndsWith("MaskChannel", StringComparison.Ordinal)) continue;
+                read |= PoiyomiAdapter.ChannelOf(Value(material, name));
+            }
+            return read == 0 ? TextureChannels.All : read;
+        }
+
+        // Shader Core uint properties are Int when declared Integer, otherwise stored as floats.
+        private static float Value(Material material, string property) =>
+            material.shader.GetPropertyType(material.shader.FindPropertyIndex(property)) == UnityEngine.Rendering.ShaderPropertyType.Int
+                ? MaterialInputs.Int(material, property) : MaterialInputs.Float(material, property);
+
+        private SamplingDescription DescribeSampling(Material material, string property)
+        {
             if (UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline)
                 return Unsupported("This NonToon adapter supports the Built-in Render Pipeline only.");
             string failure = SourceFailure(AssetDatabase.GetAssetPath(material.shader));

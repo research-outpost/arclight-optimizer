@@ -198,10 +198,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             bool repair = !normal && group.RepairsPadding;
             if (repair && !sampled.Any(used => used)) throw new InvalidOperationException("No sampled UV texels to rebuild padding from.");
             if (repair) mask = sampled; // Repair existing padding; preserve only the modeled sampled coverage.
+            // Channels any use can read. Only the Standalone (PC) import is ever given a smaller format.
+            var channels = group.ActiveUses.Aggregate((TextureChannels)0, (read, use) => read | use.Sampling.Channels);
+            TextureImporterFormat? ChannelFormat(TextureImporter importer) =>
+                GeneratedTargetValidator.IsStandalone ? ChannelFormats.Choose(importer, channels) : null;
+            // A texture with (almost) nothing to clear can still shrink through its format alone.
+            bool formatOnly = ChannelFormat(sourceImporter) != null;
+            TextureImporterFormat? standaloneFormat = null;
             var candidates = repair ? new[] { BackgroundValueDetector.DetectUsed(pixels, sampled).Value }
                 : normal ? new[] { new Color32(128, 128, 255, 255) }
                 : new[] { colour ? BackgroundValueDetector.DetectUsed(pixels, sampled) : null,
-                    BackgroundValueDetector.DetectEdge(pixels, mask, info.Width, info.Height), BackgroundValueDetector.Detect(pixels, mask) }
+                    BackgroundValueDetector.DetectEdge(pixels, mask, info.Width, info.Height),
+                    formatOnly && mask.Count(used => !used) < 256 ? BackgroundValueDetector.DetectUsed(pixels, sampled) : BackgroundValueDetector.Detect(pixels, mask) }
                     .Where(c => c.HasValue).Select(c => c.Value).Distinct().ToArray();
             int padding = AvatarTextureOptimizer.GetPaddingPixels(source.width, source.height);
             int radiusX = ExtensionRadius(padding, info.Width, source.width);
@@ -297,9 +305,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     importer.userData = userData;
                     importer.SaveAndReimport();
                 }
+                // Decided on the imported output: clearing unused pixels can already leave its alpha fully opaque.
+                standaloneFormat = ChannelFormat(importer);
+                if (standaloneFormat != null)
+                {
+                    progress?.Stage("Importing with " + standaloneFormat.Value + " format", false);
+                    importer.SetPlatformTextureSettings(ChannelFormats.Standalone(importer, standaloneFormat.Value));
+                    importer.SaveAndReimport();
+                }
                 progress?.Stage("Validating imported PNG", false);
                 var imported = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
-                GeneratedTargetValidator.ValidatePair(source, imported, repair || estimate);
+                GeneratedTargetValidator.ValidatePair(source, imported, repair || estimate, (int)(standaloneFormat ?? 0));
                 return (outPath, imported);
             }
 
@@ -315,7 +331,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
                 progress?.Stage("Extending padding");
                 EdgeValueExtender.Extend(pixels, attempt, mask, info.Width, info.Height, radiusX, radiusY, repeatX, repeatY, checkCancelled);
-                if (attempt.SequenceEqual(pixels)) { unchanged = true; continue; }
+                // Unchanged pixels are still worth writing for a smaller format, which only the estimate can show.
+                if (!(formatOnly && estimate) && attempt.SequenceEqual(pixels)) { unchanged = true; continue; }
                 checkCancelled?.Invoke();
                 progress?.Stage("Encoding PNG");
                 var encoded = PngPixels.Encode(attempt, info);
@@ -369,6 +386,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 outputImporterHash = FingerprintService.ImporterHash(replacement), width = info.Width, height = info.Height,
                 padding = padding, preservedPixels = preserved, background = background, repairedPadding = repair, hasReportMetadata = true, extensionRadiusX = radiusX, extensionRadiusY = radiusY,
                 compressedSourceBytes = estimate ? compressedSource : 0, compressedReplacementBytes = estimate ? compressedReplacement : 0,
+                standaloneFormat = (int)(standaloneFormat ?? 0),
                 // Only the active target has actually been imported. This does not certify visual equivalence.
                 standaloneValidated = GeneratedTargetValidator.IsStandalone,
                 androidValidated = EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android

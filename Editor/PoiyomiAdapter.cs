@@ -47,6 +47,72 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // 9.3.67 Lil Fur also reads [NoScaleOffset] _FurMask at raw UV0 with a Repeat sampler.
         private static readonly HashSet<string> ProRawUv0 = Set("_SmoothnessTex _MetallicGlossMap _ReflectionColorTex _FurMask");
         private static readonly string[] Colors = { "Red", "Green", "Blue", "Alpha" };
+        // 10.x channel reads: every sample site of these fields in all seven Toon 10.0.22 entries takes a fixed
+        // swizzle. Other fields read the whole texel or pick a channel from a material value, and 9.x layouts
+        // were not audited for channels, so they keep every channel.
+        private static readonly Dictionary<string, TextureChannels> ToonChannels = new Dictionary<string, TextureChannels>(StringComparer.Ordinal)
+        {
+            { "_Bump2ndScaleMask", TextureChannels.R }, { "_SkinThicknessMap", TextureChannels.R }, { "_SDFShadingTexture", TextureChannels.R },
+            { "_SmoothnessTex", TextureChannels.R }, { "_MetallicGlossMap", TextureChannels.R }, { "_DissolveNoiseTexture", TextureChannels.R },
+            { "_DissolveMask", TextureChannels.R }, { "_VertexGlitchingMask", TextureChannels.R },
+            { "_DetailMask", TextureChannels.R | TextureChannels.G }, { "_LightDataSDFMap", TextureChannels.R | TextureChannels.G },
+            { "_DetailTex", TextureChannels.RGB }, { "_BacklightColorTex", TextureChannels.RGB },
+            { "_GlitterColorMap", TextureChannels.RGB }, { "_DepthTexture", TextureChannels.RGB },
+        };
+        // Fields whose only sample site in every Toon 10.0.22 entry is tex[<channel property>]: one channel
+        // chosen by a material value (0-3 = R, G, B, A).
+        private static readonly Dictionary<string, string> SelectedChannel = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            { "_BackFaceMask", "_BackFaceMaskChannel" }, { "_CubeMapMask", "_CubeMapMaskChannel" },
+            { "_Set_RimLightMask", "_Set_RimLightMaskChannel" }, { "_Set_Rim2LightMask", "_Set_Rim2LightMaskChannel" },
+            { "_DepthRimMask", "_DepthRimMaskChannel" }, { "_RimEnviroMask", "_RimEnviroChannel" },
+            { "_Set_HighColorMask", "_Set_HighColorMaskChannel" }, { "_DepthBulgeMask", "_DepthBulgeMaskChannel" },
+            { "_FlipbookMask", "_FlipbookMaskChannel" }, { "_FlipbookMask1", "_FlipbookMaskChannel1" },
+            { "_EmissionMask", "_EmissionMaskChannel" }, { "_EmissionMask1", "_EmissionMask1Channel" },
+            { "_EmissionMask2", "_EmissionMask2Channel" }, { "_EmissionMask3", "_EmissionMask3Channel" },
+            { "_GlitterMask", "_GlitterMaskChannel" }, { "_DepthMask", "_DepthMaskChannel" },
+            { "_ParallaxInternalMapMask", "_ParallaxInternalMapMaskChannel" }, { "_VideoMaskTexture", "_VideoMaskTextureChannel" },
+            { "_VoronoiNoise", "_VoronoiNoiseChannel" }, { "_VoronoiMask", "_VoronoiMaskChannel" },
+            { "_TruchetMask", "_TruchetMaskChannel" }, { "_VertexManipulationHeightMask", "_VertexManipulationHeightMapChannel" },
+            { "_UzumoreMask", "_UzumoreMaskChannel" }, { "_Heightmask", "_HeightmaskChannel" }, { "_DistortionMask", "_DistortionMaskChannel" },
+        };
+
+        // Material values are read through MaterialInputs, so animating them is checked like any sampling input.
+        private static TextureChannels ToonChannelsRead(Material material, string property)
+        {
+            if (ToonChannels.TryGetValue(property, out var fixedRead)) return fixedRead;
+            if (SelectedChannel.TryGetValue(property, out string selector))
+                return material.HasProperty(selector) ? ChannelOf(Number(material, selector)) : TextureChannels.All;
+            // Every main-texture read is followed by mainTexture.a = max(mainTexture.a, _MainIgnoreTexAlpha), so the
+            // texture's alpha is never used once Ignore Main Texture Alpha is 1 or more. (The video-pixelate resample
+            // skips that line; it is already unsupported above.)
+            if (property == "_MainTex" && material.HasProperty("_MainIgnoreTexAlpha") && Number(material, "_MainIgnoreTexAlpha") >= 1)
+                return TextureChannels.RGB;
+            if (property == "_MainTex" && ForcedOpaque(material)) return TextureChannels.RGB;
+            return TextureChannels.All;
+        }
+
+        // Every non-fur pass of every Toon 10.0.22 entry ends with alpha = _AlphaForceOpaque ? 1 : alpha
+        // (_AlphaForceOpaque2 for the Two Pass second pass) before alpha reaches the output, blending, clipping or
+        // fog. Before that line, main alpha changes colour only through premultiply, lilToon-style reflection
+        // transparency, video effects and the Grab Pass blend; everything else only rewrites alpha itself.
+        // Lil Fur passes skip the force line and keep main alpha.
+        private static bool ForcedOpaque(Material material)
+        {
+            string name = material.shader.name;
+            if (name.IndexOf("Fur", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Grab", StringComparison.OrdinalIgnoreCase) >= 0)
+                return false;
+            foreach (string force in new[] { "_AlphaForceOpaque", "_AlphaForceOpaque2" })
+                if (material.HasProperty(force) && Number(material, force) == 0) return false;
+            if (!material.HasProperty("_AlphaForceOpaque") || On(material, "_AlphaPremultiply") || On(material, "_VideoEffectsEnable"))
+                return false;
+            bool reflection = On(material, "_StylizedSpecular") || material.IsKeywordEnabled("POI_STYLIZED_StylizedSpecular");
+            return !(reflection && Number(material, "_ReflectionApplyTransparency") >= 0.5f);
+        }
+
+        // Index 0-3 picks R, G, B or A; anything else is undefined and keeps every channel.
+        internal static TextureChannels ChannelOf(float index) =>
+            index == 0 ? TextureChannels.R : index == 1 ? TextureChannels.G : index == 2 ? TextureChannels.B : index == 3 ? TextureChannels.A : TextureChannels.All;
         // What differs between the audited sampling layouts; everything else is shared.
         private sealed class Layout
         {
@@ -141,7 +207,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 Merge(Vector(material, "_RGBA" + color + "PBRMaskScaleTiling"), Vector(material, "_RGBA" + color + "ScaleOffset")),
                                 false, layout.PbrMaskRepeat, fur);
                 return new SamplingDescription { AdapterId = id, Supported = true,
-                    Semantics = Normals.Contains(property) ? TextureSemantics.Normal : TextureSemantics.Data, Paths = paths };
+                    Semantics = Normals.Contains(property) ? TextureSemantics.Normal : TextureSemantics.Data, Paths = paths,
+                    Channels = layout == Toon10 ? ToonChannelsRead(material, property) : TextureChannels.All };
             }
             catch (InvalidOperationException e)
             {

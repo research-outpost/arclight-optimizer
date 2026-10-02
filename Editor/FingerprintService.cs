@@ -24,7 +24,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
     internal static class FingerprintService
     {
-        public const string Version = "png-reimport-v18-estimated-repair";
+        public const string Version = "png-reimport-v19-channel-formats";
         public static string Hash(byte[] bytes)
         {
             using (var sha = SHA256.Create()) return Hex(sha.ComputeHash(bytes));
@@ -91,6 +91,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 writer.Write(use.Sampling.AdapterId ?? ""); writer.Write(use.Sampling.NotSampled);
                 writer.Write((int)use.Sampling.Semantics);
+                writer.Write((int)use.Sampling.Channels);
                 writer.Write(use.Material.shader.name);
                 writer.Write(AssetDatabase.GetAssetDependencyHash(AssetDatabase.GetAssetPath(use.Material.shader)).ToString());
                 var paths = use.Sampling.GetPaths().ToArray();

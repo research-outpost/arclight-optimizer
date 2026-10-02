@@ -156,7 +156,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                     result.CacheLookup = true;
                                     result.CacheValidation = true;
                                     progress?.Stage("Validating cached replacement");
-                                    GeneratedTargetValidator.ValidatePair((Texture2D)group.Source, mapping.replacement, TextureFileSizePolicy.SkipsPngGate(mapping));
+                                    GeneratedTargetValidator.ValidatePair((Texture2D)group.Source, mapping.replacement, TextureFileSizePolicy.SkipsPngGate(mapping), mapping.standaloneFormat);
                                     if (!GeneratedTargetValidator.IsValidated(mapping))
                                     {
                                         GeneratedTargetValidator.ValidateExisting(mapping);

@@ -61,5 +61,8 @@ namespace Okarin.AvatarTextureOptimizer
         // target); 0 for mappings made under the PNG file-size rule, whose validity is still judged by that rule.
         public long compressedSourceBytes;
         public long compressedReplacementBytes;
+        // Standalone format the replacement was given because its shaders never read the dropped channels
+        // (UnityEditor.TextureImporterFormat value); 0 when it keeps the source's import settings unchanged.
+        public int standaloneFormat;
     }
 }
