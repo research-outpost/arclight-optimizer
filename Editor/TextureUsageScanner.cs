@@ -151,7 +151,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
             }
 
-            if (config && config.optimizeTextures && config.mergeDuplicateTextures)
+            if (config && config.optimizeTextures && config.mergeDuplicates)
             {
                 progress?.Scanning(null, "Merging duplicate textures");
                 MergeDuplicates(result, progress);

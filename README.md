@@ -2,10 +2,12 @@
 
 Smaller VRChat avatar downloads, with no visible change up close.
 
-It does two things:
+It does five things:
 
 - **Clears unused texture areas.** Most avatar textures contain areas that no part of the model ever shows. Arclight keeps the pixels your meshes use, adds protective padding, and fills the rest with a flat colour that compresses far better.
 - **Merges duplicates**, so the same data is uploaded once (see below).
+- **Shrinks mesh index buffers.** A mesh whose 32-bit index buffer fits in 16 bits gets a 16-bit one: identical triangles, half the index data.
+- **Stores identical-channel stereo audio as mono.** The mono copy gets +3 dB, so it plays at the same level and balance (measured through Unity and VRChat's Steam Audio spatializer). Only where the audio source's setup has been measured to match and the clip has headroom; Vorbis clips halve in size.
 - **Drops channels your shader never reads (PC).** A DXT5 texture whose alpha the shader ignores is imported as DXT1, which stores the colour the same way at half the size, in the download and in VRAM. A linear mask the shader reads through one red channel becomes BC4, which keeps that channel more precisely (smaller than DXT5, the same size as DXT1). This only happens where the shader's code has been checked (see below).
 
 It runs automatically when you build or enter Play Mode, on a temporary copy. Your textures, materials and scenes are never modified.
@@ -34,11 +36,15 @@ After a build, click **Open reports folder** on the component to see what change
 
 ## Merging duplicates
 
-Outfits and avatar bases often include the same data under different names. With **Merge duplicate textures** and **Merge duplicates** on (both are on by default), these share one copy:
+Outfits and avatar bases often include the same data under different names. With **Merge duplicates** on (the default), these share one copy:
 
 - **Textures** with identical pixels, colour metadata and import settings, including animated texture swaps.
 - **Materials** with identical shaders, properties and keywords.
 - **Animation clips** with identical curves, events and settings. This usually saves only a few kilobytes.
+- **Meshes** with identical vertices, triangles, bone weights and blend shapes.
+- **Audio clips** with identical files and import settings.
+
+Texture merging needs **Optimize textures** on as well.
 
 Only the avatar being built is changed, never your project's files. Anything that is not exactly identical is left alone.
 

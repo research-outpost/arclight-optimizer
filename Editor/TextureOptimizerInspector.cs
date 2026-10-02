@@ -15,13 +15,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             using (new EditorGUI.IndentLevelScope())
             using (new EditorGUI.DisabledScope(!optimize.boolValue))
             {
-                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.mergeDuplicateTextures)),
-                    new GUIContent("Merge duplicate textures", "Use one texture wherever PNGs have identical pixels, compatible colour metadata and identical import settings, so the copies are not uploaded."));
                 var allowUnsupported = serializedObject.FindProperty("allowUnsupportedShaders");
                 EditorGUILayout.PropertyField(allowUnsupported, new GUIContent("Allow unsupported shaders"));
             }
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.mergeDuplicates)),
-                new GUIContent("Merge duplicates", "Use one copy wherever the build contains identical animation clips or materials (compared on all data and settings), so the copies are not uploaded. Runs after the other optimizers."));
+                new GUIContent("Merge duplicates", "Use one copy wherever the build contains identical data, so the copies are not uploaded: textures with identical pixels, colour metadata and import settings (while Optimize textures is on), and materials, animation clips, meshes and audio clips identical in all data and settings. Meshes and audio merge after Avatar Optimizer; materials and clips after the other optimizers."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.optimizeMeshes)),
+                new GUIContent("Optimize meshes", "Give meshes with at most 65,536 vertices a 16-bit index buffer instead of a 32-bit one: identical triangles, half the index data in the download and in VRAM. Runs after Avatar Optimizer."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.optimizeAudio)),
+                new GUIContent("Optimize audio", "Store stereo clips whose two channels are identical as mono with +3 dB, which plays at the same level and balance, halving Vorbis clips. Only for clips that do not clip with the boost and whose audio sources are spatialized or unpanned 2D VRC Spatial Audio Sources, with no animated playback settings. Runs after Avatar Optimizer."));
             serializedObject.ApplyModifiedProperties();
             if (GUILayout.Button("Open reports folder"))
             {

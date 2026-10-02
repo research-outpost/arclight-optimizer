@@ -29,6 +29,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // The component is removed during this pass; the post-d4rk hook reads this request instead.
                 if (config.enabled && config.mergeDuplicates) MergeRequests.Add(ctx.AvatarRootObject);
                 var state = ctx.GetState<SubstitutionState>();
+                // Read by the later mesh/audio pass, after this pass has removed the component.
+                state.MergeMeshesAndAudio = config.enabled && config.mergeDuplicates;
+                state.OptimizeMeshes = config.enabled && config.optimizeMeshes;
+                state.OptimizeAudio = config.enabled && config.optimizeAudio;
                 Action<UnityEngine.Object, UnityEngine.Object> register =
                     (a, b) => ObjectRegistry.RegisterReplacedObject(a, b);
                 // Clip merging alone still activates the virtual controller context: deactivating it commits every
@@ -66,6 +70,64 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     TemporaryMaterialSubstituter.ReapplyAfterControllerCommit(ctx.AvatarRootObject, state);
                 }
             });
+
+            // After Avatar Optimizer, which merges and rebuilds meshes. New meshes stay in memory; NDMF saves
+            // everything the avatar references when the build ends.
+            InPhase(BuildPhase.Optimizing).AfterPlugin("com.anatawa12.avatar-optimizer")
+                .Run("Merge duplicate meshes and audio, compact mesh indices", ctx =>
+            {
+                var state = ctx.GetState<SubstitutionState>();
+                if (!state.MergeMeshesAndAudio && !state.OptimizeMeshes && !state.OptimizeAudio) return;
+                try
+                {
+                    bool monoAudio = state.OptimizeAudio && !AudioSettingsAnimated(ctx);
+                    var result = MeshAndAudioOptimizer.Run(ctx.AvatarRootObject, state.MergeMeshesAndAudio, state.OptimizeMeshes,
+                        (a, b) => ObjectRegistry.RegisterReplacedObject(a, b), monoAudio);
+                    if (result.Changed)
+                        Debug.Log("Arclight Optimizer: " + result + " on " + ctx.AvatarRootObject.name + ".");
+                }
+                catch (Exception e)
+                {
+                    // Optimization only: never fail the build.
+                    Debug.LogWarning("Arclight Optimizer: mesh and audio optimization skipped: " + e.Message);
+                }
+            });
+        }
+
+        // Mono +3 dB matches stereo only for the source settings it was measured with, so any animation of an
+        // AudioSource or VRC Spatial Audio Source setting other than volume, pitch, mute, enabling or the clip
+        // itself turns the conversion off. NDMF marker clips stand for the platform's proxy motions, which hold
+        // no audio bindings. Anything that cannot be read also turns it off.
+        private static readonly HashSet<string> NeutralAudioProperties = new HashSet<string>(StringComparer.Ordinal)
+            { "m_Volume", "m_Pitch", "m_Mute", "m_Enabled", "m_audioClip", "Gain" };
+
+        private static bool AudioSettingsAnimated(BuildContext ctx)
+        {
+            bool Changes(EditorCurveBinding binding) => binding.type != null &&
+                (typeof(AudioSource).IsAssignableFrom(binding.type) || AudioMonoConverter.IsVrcSpatialSource(binding.type)) &&
+                !NeutralAudioProperties.Contains(binding.propertyName ?? "");
+            try
+            {
+                foreach (var animation in ctx.AvatarRootObject.GetComponentsInChildren<Animation>(true))
+                    foreach (var clip in AnimationUtility.GetAnimationClips(animation.gameObject))
+                        if (clip && AnimationUtility.GetCurveBindings(clip).Concat(AnimationUtility.GetObjectReferenceCurveBindings(clip)).Any(Changes))
+                            return true;
+                var context = ctx.ActivateExtensionContext<VirtualControllerContext>();
+                try
+                {
+                    foreach (var entry in context.Controllers)
+                    {
+                        if (entry.Value == null) continue;
+                        foreach (var node in entry.Value.AllReachableNodes())
+                            if (node is VirtualClip clip && !clip.IsMarkerClip &&
+                                clip.GetFloatCurveBindings().Concat(clip.GetObjectCurveBindings()).Any(Changes))
+                                return true;
+                    }
+                }
+                finally { ctx.DeactivateExtensionContext<VirtualControllerContext>(); }
+                return false;
+            }
+            catch (Exception) { return true; }
         }
     }
 
@@ -74,6 +136,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public readonly Dictionary<Material, Material> Clones = new Dictionary<Material, Material>();
         public bool Applied;
         public bool Cancelled;
+        public bool MergeMeshesAndAudio, OptimizeMeshes, OptimizeAudio;
         public int AppliedTextures;
         public readonly HashSet<Texture> MergedDuplicates = new HashSet<Texture>();
         internal AnimationSnapshot SerializedAnimation;

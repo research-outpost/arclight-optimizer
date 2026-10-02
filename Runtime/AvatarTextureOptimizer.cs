@@ -11,10 +11,12 @@ namespace Okarin.AvatarTextureOptimizer
     {
         [Tooltip("Clear texture areas the meshes never show, so the PNGs compress smaller.")]
         public bool optimizeTextures = true;
-        [Tooltip("Use one texture wherever PNGs have identical pixels, compatible colour metadata and identical import settings, so the copies are not uploaded.")]
-        public bool mergeDuplicateTextures = true;
-        [Tooltip("Use one copy wherever the build contains identical animation clips or materials, so the copies are not uploaded.")]
+        [Tooltip("Use one copy wherever the build contains identical textures, materials, animation clips, meshes or audio clips, so the copies are not uploaded.")]
         public bool mergeDuplicates = true;
+        [Tooltip("Give meshes with at most 65,536 vertices a 16-bit index buffer instead of a 32-bit one. Identical triangles, half the index data.")]
+        public bool optimizeMeshes = true;
+        [Tooltip("Store stereo clips whose two channels are identical as mono with +3 dB, which plays at the same level, where the audio source's setup has been measured to match.")]
+        public bool optimizeAudio = true;
         // Imported Unity dimensions after active-platform sizing. Rectangles use their longer side.
         public static int GetPaddingPixels(int width, int height)
         {
