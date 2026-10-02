@@ -9,16 +9,13 @@ namespace Okarin.AvatarTextureOptimizer
     [AddComponentMenu("Arclight/Arclight Optimizer")]
     public sealed class AvatarTextureOptimizer : MonoBehaviour, INDMFEditorOnly
     {
-        [Tooltip("Clear texture areas the meshes never show, so the PNGs compress smaller.")]
-        public bool optimizeTextures = true;
-        [Tooltip("Use one copy wherever the build contains identical textures, materials, animation clips, meshes or audio clips, so the copies are not uploaded.")]
-        public bool mergeDuplicates = true;
-        [Tooltip("Give meshes with at most 65,536 vertices a 16-bit index buffer instead of a 32-bit one. Identical triangles, half the index data.")]
-        public bool optimizeMeshes = true;
-        [Tooltip("Store stereo clips whose two channels are identical as mono with +3 dB, which plays at the same level, where the audio source's setup has been measured to match.")]
-        public bool optimizeAudio = true;
-        [Tooltip("Remove animation keys that change nothing about playback: keys inside a flat run and repeated object keys.")]
-        public bool optimizeAnimations = true;
+        // Every lossless feature is always on. These are not serialized, so values saved by earlier versions (where
+        // they were toggles) are ignored; only tests switch them off, on the object they build directly.
+        [System.NonSerialized] public bool optimizeTextures = true;
+        [System.NonSerialized] public bool mergeDuplicates = true;
+        [System.NonSerialized] public bool optimizeMeshes = true;
+        [System.NonSerialized] public bool optimizeAudio = true;
+        [System.NonSerialized] public bool optimizeAnimations = true;
         // Imported Unity dimensions after active-platform sizing. Rectangles use their longer side.
         public static int GetPaddingPixels(int width, int height)
         {
