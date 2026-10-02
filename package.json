@@ -1,7 +1,7 @@
 {
   "name": "research-outpost.arclight-optimizer",
   "displayName": "Arclight Optimizer",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "unity": "2022.3",
   "description": "Shrinks VRChat avatar downloads by clearing texture areas your meshes never show. Non-destructive; runs automatically at build time through NDMF.",
   "author": { "name": "Okarin" },

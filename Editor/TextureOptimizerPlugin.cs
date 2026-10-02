@@ -90,6 +90,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         var stripped = VertexStreamStripper.Run(ctx.AvatarRootObject, animation, (a, b) => ObjectRegistry.RegisterReplacedObject(a, b));
                         result.Stripped = stripped.Meshes;
                         result.MeshBytes += stripped.Bytes;
+                        var particles = ParticleUpperBound.Run(ctx.AvatarRootObject, animation);
+                        if (particles.Systems + particles.Removed + particles.Trails + particles.Collisions > 0)
+                        {
+                            string summary = "Particles: total Max Particles " + particles.Before + " -> " + particles.After + " (" +
+                                (OptimizationLog.Count(particles.Systems, "system(s) lowered to their reachable peak") +
+                                 OptimizationLog.Count(particles.Removed, "system(s) that can never emit removed") +
+                                 OptimizationLog.Count(particles.Trails, "zero-lifetime trail module(s) off") +
+                                 OptimizationLog.Count(particles.Collisions, "collision module(s) that can hit nothing off")).TrimEnd(',', ' ') + ").";
+                            Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                            if (state.Report != null) { state.Report.Add(null, summary); state.Report.Refresh(ctx.AvatarRootObject, state); }
+                        }
                     }
                     if (result.Changed)
                         Debug.Log("Arclight Optimizer: " + result + " on " + ctx.AvatarRootObject.name + ".");

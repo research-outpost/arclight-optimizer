@@ -9,6 +9,7 @@ Smaller VRChat avatar downloads, with no negative visual changes. It removes dup
 - **Merges duplicates**, so identical textures, materials, clips, meshes and audio are uploaded once.
 - **Shrinks mesh index buffers** from 32-bit to 16-bit where they fit.
 - **Removes unused vertex data on PC**: tangents, vertex colours and extra UV sets that no material on a mesh reads. For lilToon, tangents go when no material uses a normal map, anisotropy, parallax, decals or an outline vector (outline Vector Scale 0). Avatars using d4rk Avatar Optimizer are left alone.
+- **Lowers Max Particles** on each particle system to the most particles it can actually have alive, so the effect looks the same but the avatar's total max particles (part of the performance rank) drops. Particle systems that can never emit are removed, and trails with lifetime 0 or collision that can hit nothing are turned off.
 - **Stores identical-channel stereo audio as mono**, at the same loudness.
 - **Trims animation keys** that change nothing about playback.
 
