@@ -58,7 +58,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     plan.Bytes += new FileInfo(file).Length;
                 }
             }
+            PrepareAudio(plan, folder + "/Audio");
             return plan;
+        }
+
+        // Generated mono clips (identified by importer userData) follow the same 30-day rule, using the last-used
+        // record the audio pass keeps. A clip with no record yet starts its 30 days now. Leftover temporary decode
+        // copies from an interrupted build are removed.
+        private static void PrepareAudio(Plan plan, string folder)
+        {
+            if (!AssetDatabase.IsValidFolder(folder)) return;
+            var usage = AudioMonoConverter.LoadUsage();
+            bool recorded = false;
+            foreach (string file in Directory.GetFiles(folder).Select(p => p.Replace('\\', '/')).OrderBy(p => p, StringComparer.Ordinal))
+            {
+                if (file.EndsWith(".meta", StringComparison.Ordinal)) continue;
+                bool decode = Path.GetFileNameWithoutExtension(file).EndsWith("_decode", StringComparison.Ordinal);
+                if (!decode && !AudioMonoConverter.IsGenerated(file)) continue;
+                if (!decode && !usage.TryGetValue(file, out int day)) { usage[file] = plan.Today; recorded = true; continue; }
+                if (!decode && !IsStale(plan, usage[file])) continue;
+                plan.Assets.Add(file);
+                plan.Bytes += new FileInfo(file).Length;
+            }
+            if (recorded) AudioMonoConverter.SaveUsage(usage);
         }
 
         // Tests pass moveToTrash: false so fixtures do not fill the user's trash.
@@ -78,6 +100,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     ? !AssetDatabase.MoveAssetsToTrash(plan.Assets.ToArray(), failed)
                     : !AssetDatabase.DeleteAssets(plan.Assets.ToArray(), failed)) && failed.Count > 0)
                 throw new IOException("Could not remove: " + string.Join(", ", failed));
+            var usage = AudioMonoConverter.LoadUsage();
+            if (plan.Assets.Count(usage.Remove) > 0) AudioMonoConverter.SaveUsage(usage);
             foreach (string file in plan.StagingFiles)
                 if (File.Exists(file)) File.Delete(file);
         }

@@ -2,12 +2,13 @@
 
 Smaller VRChat avatar downloads, with no visible change up close.
 
-It does five things:
+It does six things:
 
 - **Clears unused texture areas.** Most avatar textures contain areas that no part of the model ever shows. Arclight keeps the pixels your meshes use, adds protective padding, and fills the rest with a flat colour that compresses far better.
 - **Merges duplicates**, so the same data is uploaded once (see below).
 - **Shrinks mesh index buffers.** A mesh whose 32-bit index buffer fits in 16 bits gets a 16-bit one: identical triangles, half the index data.
 - **Stores identical-channel stereo audio as mono.** The mono copy gets +3 dB, so it plays at the same level and balance (measured through Unity and VRChat's Steam Audio spatializer). Only where the audio source's setup has been measured to match and the clip has headroom; Vorbis clips halve in size.
+- **Trims animation keys** that change nothing about playback, such as keys inside a flat run. Playback stays identical; the saving is small.
 - **Drops channels your shader never reads (PC).** A DXT5 texture whose alpha the shader ignores is imported as DXT1, which stores the colour the same way at half the size, in the download and in VRAM. A linear mask the shader reads through one red channel becomes BC4, which keeps that channel more precisely (smaller than DXT5, the same size as DXT1). This only happens where the shader's code has been checked (see below).
 
 It runs automatically when you build or enter Play Mode, on a temporary copy. Your textures, materials and scenes are never modified.

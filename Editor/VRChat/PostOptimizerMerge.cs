@@ -17,24 +17,35 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         public bool OnPreprocessAvatar(GameObject avatarGameObject)
         {
-            if (!MergeRequests.Take(avatarGameObject)) return true;
+            bool merge = MergeRequests.Take(avatarGameObject), reduce = KeyReductionRequests.Take(avatarGameObject);
+            if (!merge && !reduce) return true;
             try
             {
                 var bindings = VRChatPlatformAnimatorBindings.Instance;
                 var controllers = bindings.GetInnateControllers(avatarGameObject).Select(entry => entry.Item2)
                     .Where(controller => controller).ToArray();
                 System.Func<Motion, bool> special = motion => bindings.IsSpecialMotion(motion);
-                // Materials first: clips that swap between identical materials then become identical themselves.
-                int materials = DuplicateMaterialMerger.Merge(avatarGameObject, controllers, special, IsBuildOwned);
                 var owned = controllers.OfType<AnimatorController>().Where(IsBuildOwned).ToArray();
-                int clips = AnimationClipDeduplicator.MergeCommitted(owned, special);
-                Debug.Log($"Arclight Optimizer: merged {materials} duplicate material(s) and {clips} duplicate animation clip(s) on {avatarGameObject.name}" +
-                    (owned.Length < controllers.Length ? $"; {controllers.Length - owned.Length} controller(s) skipped as source assets." : "."));
+                if (merge)
+                {
+                    // Materials first: clips that swap between identical materials then become identical themselves.
+                    int materials = DuplicateMaterialMerger.Merge(avatarGameObject, controllers, special, IsBuildOwned);
+                    int clips = AnimationClipDeduplicator.MergeCommitted(owned, special);
+                    Debug.Log($"Arclight Optimizer: merged {materials} duplicate material(s) and {clips} duplicate animation clip(s) on {avatarGameObject.name}" +
+                        (owned.Length < controllers.Length ? $"; {controllers.Length - owned.Length} controller(s) skipped as source assets." : "."));
+                }
+                if (reduce)
+                {
+                    // After merging, so each kept clip is reduced once.
+                    var clips = owned.SelectMany(AnimationClipDeduplicator.AllClips).Where(clip => clip && !special(clip) && IsBuildOwned(clip));
+                    int keys = AnimationKeyReducer.Reduce(clips);
+                    if (keys > 0) Debug.Log($"Arclight Optimizer: removed {keys} redundant animation key(s) on {avatarGameObject.name}.");
+                }
             }
             catch (System.Exception e)
             {
                 // Optimization only: never fail the upload.
-                Debug.LogWarning("Arclight Optimizer: duplicate merge skipped: " + e.Message);
+                Debug.LogWarning("Arclight Optimizer: duplicate merge and key reduction skipped: " + e.Message);
             }
             return true;
         }

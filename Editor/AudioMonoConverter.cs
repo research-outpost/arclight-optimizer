@@ -91,7 +91,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (File.Exists(output) && AssetImporter.GetAtPath(output) is AudioImporter cached && cached.userData == userData)
             {
                 var reused = AssetDatabase.LoadAssetAtPath<AudioClip>(output);
-                if (reused && reused.channels == 1) return reused;
+                if (reused && reused.channels == 1) { MarkUsed(output); return reused; }
             }
 
             var samples = DecodedSamples(path, hash, out int frequency);
@@ -119,6 +119,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 AssetDatabase.DeleteAsset(output);
                 return null;
             }
+            MarkUsed(output);
             return result;
         }
 
@@ -170,6 +171,43 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             return guid == 1 && importer == 1 && user == 1 ? string.Join(newline, lines) : null;
         }
+
+        // Last build day each generated clip was used, for the cache cleanup's 30-day rule. Kept in Library: it is
+        // per machine, like the builds that refresh it, and changing it never reimports anything.
+        private const string UsageFile = "Library/AvatarTextureOptimizer/audio-usage.json";
+        [Serializable] private sealed class Usage { public List<string> paths = new List<string>(); public List<int> days = new List<int>(); }
+
+        internal static Dictionary<string, int> LoadUsage()
+        {
+            var usage = new Dictionary<string, int>(StringComparer.Ordinal);
+            try
+            {
+                if (!File.Exists(UsageFile)) return usage;
+                var stored = JsonUtility.FromJson<Usage>(File.ReadAllText(UsageFile));
+                for (int i = 0; stored != null && i < Math.Min(stored.paths.Count, stored.days.Count); i++) usage[stored.paths[i]] = stored.days[i];
+            }
+            catch (Exception) { } // An unreadable record only restarts the 30 days.
+            return usage;
+        }
+
+        internal static void SaveUsage(Dictionary<string, int> usage)
+        {
+            var stored = new Usage();
+            foreach (var pair in usage.OrderBy(p => p.Key, StringComparer.Ordinal)) { stored.paths.Add(pair.Key); stored.days.Add(pair.Value); }
+            Directory.CreateDirectory(Path.GetDirectoryName(UsageFile));
+            File.WriteAllText(UsageFile, JsonUtility.ToJson(stored));
+        }
+
+        private static void MarkUsed(string path)
+        {
+            var usage = LoadUsage();
+            usage[path] = CacheCleanup.Today;
+            SaveUsage(usage);
+        }
+
+        internal static bool IsGenerated(string path) =>
+            path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) && AssetImporter.GetAtPath(path) is AudioImporter importer &&
+            (importer.userData ?? "").StartsWith("ArclightMono:", StringComparison.Ordinal);
 
         // IEEE-float WAV, so no precision is lost before Unity applies the source's own compression.
         private static byte[] FloatWav(float[] samples, int frequency)

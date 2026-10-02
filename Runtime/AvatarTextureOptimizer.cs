@@ -17,6 +17,8 @@ namespace Okarin.AvatarTextureOptimizer
         public bool optimizeMeshes = true;
         [Tooltip("Store stereo clips whose two channels are identical as mono with +3 dB, which plays at the same level, where the audio source's setup has been measured to match.")]
         public bool optimizeAudio = true;
+        [Tooltip("Remove animation keys that change nothing about playback: keys inside a flat run and repeated object keys.")]
+        public bool optimizeAnimations = true;
         // Imported Unity dimensions after active-platform sizing. Rectangles use their longer side.
         public static int GetPaddingPixels(int width, int height)
         {

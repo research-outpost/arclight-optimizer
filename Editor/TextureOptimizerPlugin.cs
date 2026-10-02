@@ -28,6 +28,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (!config) return;
                 // The component is removed during this pass; the post-d4rk hook reads this request instead.
                 if (config.enabled && config.mergeDuplicates) MergeRequests.Add(ctx.AvatarRootObject);
+                if (config.enabled && config.optimizeAnimations) KeyReductionRequests.Add(ctx.AvatarRootObject);
                 var state = ctx.GetState<SubstitutionState>();
                 // Read by the later mesh/audio pass, after this pass has removed the component.
                 state.MergeMeshesAndAudio = config.enabled && config.mergeDuplicates;
@@ -37,7 +38,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     (a, b) => ObjectRegistry.RegisterReplacedObject(a, b);
                 // Clip merging alone still activates the virtual controller context: deactivating it commits every
                 // controller as a build-owned asset, which is what lets the later hook edit them safely.
-                if (!config.enabled || !(config.optimizeTextures || config.mergeDuplicates) ||
+                if (!config.enabled || !(config.optimizeTextures || config.mergeDuplicates || config.optimizeAnimations) ||
                     (EditorApplication.isPlayingOrWillChangePlaymode && AutomaticTextureOptimizer.SceneReloadDisabled))
                 {
                     AutomaticTextureOptimizer.Run(ctx.AvatarRootObject, state, register);
@@ -85,6 +86,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         (a, b) => ObjectRegistry.RegisterReplacedObject(a, b), monoAudio);
                     if (result.Changed)
                         Debug.Log("Arclight Optimizer: " + result + " on " + ctx.AvatarRootObject.name + ".");
+                    if (monoAudio) CacheCleanup.Schedule(AutomaticTextureOptimizer.CacheFolder);
                 }
                 catch (Exception e)
                 {
