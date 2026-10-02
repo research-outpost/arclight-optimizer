@@ -81,9 +81,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (!state.MergeMeshesAndAudio && !state.OptimizeMeshes && !state.OptimizeAudio) return;
                 try
                 {
-                    bool monoAudio = state.OptimizeAudio && !AudioSettingsAnimated(ctx);
+                    var animation = CollectAnimation(ctx);
+                    bool monoAudio = state.OptimizeAudio && !AudioSettingsAnimated(animation);
                     var result = MeshAndAudioOptimizer.Run(ctx.AvatarRootObject, state.MergeMeshesAndAudio, state.OptimizeMeshes,
                         (a, b) => ObjectRegistry.RegisterReplacedObject(a, b), monoAudio);
+                    if (state.OptimizeMeshes)
+                    {
+                        var stripped = VertexStreamStripper.Run(ctx.AvatarRootObject, animation, (a, b) => ObjectRegistry.RegisterReplacedObject(a, b));
+                        result.Stripped = stripped.Meshes;
+                        result.MeshBytes += stripped.Bytes;
+                    }
                     if (result.Changed)
                         Debug.Log("Arclight Optimizer: " + result + " on " + ctx.AvatarRootObject.name + ".");
                     if (state.Report != null && result.Changed)
@@ -91,7 +98,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         state.Report.AddSavings("Audio", result.AudioBytes, OptimizationLog.Count(result.MonoAudio, "made mono") +
                             OptimizationLog.Count(result.AudioClips, "duplicate(s) merged"), result.AudioUnmeasured);
                         state.Report.AddSavings("Meshes", result.MeshBytes, OptimizationLog.Count(result.Meshes, "duplicate(s) merged") +
-                            OptimizationLog.Count(result.Compacted, "index buffer(s) halved"));
+                            OptimizationLog.Count(result.Compacted, "index buffer(s) halved") +
+                            OptimizationLog.Count(result.Stripped, "with unused vertex channels removed"));
                         state.Report.Refresh(ctx.AvatarRootObject, state);
                     }
                     if (monoAudio) CacheCleanup.Schedule(AutomaticTextureOptimizer.CacheFolder);
@@ -111,17 +119,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static readonly HashSet<string> NeutralAudioProperties = new HashSet<string>(StringComparer.Ordinal)
             { "m_Volume", "m_Pitch", "m_Mute", "m_Enabled", "m_audioClip", "Gain" };
 
-        private static bool AudioSettingsAnimated(BuildContext ctx)
+        private static bool AudioSettingsAnimated(VertexStreamStripper.AnimationInfo animation)
         {
             bool Changes(EditorCurveBinding binding) => binding.type != null &&
                 (typeof(AudioSource).IsAssignableFrom(binding.type) || AudioMonoConverter.IsVrcSpatialSource(binding.type)) &&
                 !NeutralAudioProperties.Contains(binding.propertyName ?? "");
+            return animation == null || animation.Bindings.Any(Changes);
+        }
+
+        // Every binding the avatar's clips can animate (legacy Animation components and every controller NDMF
+        // knows, excluding platform marker clips), with object-curve values. Null when anything cannot be read.
+        private static VertexStreamStripper.AnimationInfo CollectAnimation(BuildContext ctx)
+        {
+            var info = new VertexStreamStripper.AnimationInfo();
             try
             {
                 foreach (var animation in ctx.AvatarRootObject.GetComponentsInChildren<Animation>(true))
                     foreach (var clip in AnimationUtility.GetAnimationClips(animation.gameObject))
-                        if (clip && AnimationUtility.GetCurveBindings(clip).Concat(AnimationUtility.GetObjectReferenceCurveBindings(clip)).Any(Changes))
-                            return true;
+                    {
+                        if (!clip) continue;
+                        foreach (var binding in AnimationUtility.GetCurveBindings(clip)) info.Add(binding, null);
+                        foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
+                            info.Add(binding, AnimationUtility.GetObjectReferenceCurve(clip, binding)?.Select(k => k.value).ToArray());
+                    }
                 var context = ctx.ActivateExtensionContext<VirtualControllerContext>();
                 try
                 {
@@ -129,15 +149,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     {
                         if (entry.Value == null) continue;
                         foreach (var node in entry.Value.AllReachableNodes())
-                            if (node is VirtualClip clip && !clip.IsMarkerClip &&
-                                clip.GetFloatCurveBindings().Concat(clip.GetObjectCurveBindings()).Any(Changes))
-                                return true;
+                        {
+                            if (!(node is VirtualClip clip) || clip.IsMarkerClip) continue;
+                            foreach (var binding in clip.GetFloatCurveBindings()) info.Add(binding, null);
+                            foreach (var binding in clip.GetObjectCurveBindings())
+                                info.Add(binding, clip.GetObjectCurve(binding)?.Select(k => k.value).ToArray());
+                        }
                     }
                 }
                 finally { ctx.DeactivateExtensionContext<VirtualControllerContext>(); }
-                return false;
+                return info;
             }
-            catch (Exception) { return true; }
+            catch (Exception) { return null; }
         }
     }
 

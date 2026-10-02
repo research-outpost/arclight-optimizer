@@ -8,6 +8,7 @@ Smaller VRChat avatar downloads, with no negative visual changes. It removes dup
 - **Uses smaller texture formats on PC** where your shader never reads a channel.
 - **Merges duplicates**, so identical textures, materials, clips, meshes and audio are uploaded once.
 - **Shrinks mesh index buffers** from 32-bit to 16-bit where they fit.
+- **Removes unused vertex data on PC**: tangents, vertex colours and extra UV sets that no material on a mesh reads. For lilToon, tangents go when no material uses a normal map, anisotropy, parallax, decals or an outline vector (outline Vector Scale 0). Avatars using d4rk Avatar Optimizer are left alone.
 - **Stores identical-channel stereo audio as mono**, at the same loudness.
 - **Trims animation keys** that change nothing about playback.
 
