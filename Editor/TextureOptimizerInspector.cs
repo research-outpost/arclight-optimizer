@@ -1,3 +1,5 @@
+using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -9,18 +11,62 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
-            EditorGUILayout.HelpBox("Clears unused texture areas, uses smaller texture formats where a channel is never read, merges duplicate " +
-                "textures, materials, clips, meshes and audio, compacts mesh indices, stores identical-channel stereo audio as mono, and trims " +
-                "redundant animation keys. Everything runs on a build copy and never changes how the avatar looks or sounds.", MessageType.None);
+            var root = ((Component)target).gameObject; // The component sits on the avatar root.
+            var avatarOptimizer = AvatarOptimizerConflict.Find(root);
+            if (avatarOptimizer)
+                EditorGUILayout.HelpBox("This avatar has Avatar Optimizer's " + avatarOptimizer.GetType().Name + " component on " + avatarOptimizer.gameObject.name +
+                    ". Arclight Optimizer does not work alongside Avatar Optimizer, so the build will stop with an error. Remove Avatar Optimizer's components or this one.", MessageType.Error);
+            EditorGUILayout.HelpBox("Optimizes a build copy of the avatar: textures, meshes and blend shapes, bones and PhysBones, animator layers and " +
+                "parameters, materials, particles and audio. The avatar in the scene is never changed.\n\n" +
+                "Everything is exact, with these accepted exceptions:\n" +
+                "- Generated textures are compressed again and their unused texels cleared, so texels can differ by compression rounding.\n" +
+                "- Merged meshes and merged bones can differ by at most 1/255 per colour channel.\n" +
+                "- A cropped texture can differ only at its smallest mip levels.\n" +
+                "- A PhysBone paused while its outfit is hidden restarts from its rest pose when shown again.\n" +
+                "- A stereo clip with identical channels becomes mono; its level matches within 0.05%.", MessageType.None);
             var allowUnsupported = serializedObject.FindProperty("allowUnsupportedShaders");
             EditorGUILayout.PropertyField(allowUnsupported, new GUIContent("Allow unsupported shaders",
                 "Attempt texture fields of shaders whose sampling is not known, assuming UV0 and the property's tiling/offset. Can cause visible seams; test before uploading."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.keepMmdShapes)), new GUIContent("MMD Support",
+                "Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.splitPhysBones)),
+                new GUIContent("Split PhysBones (experimental)", "Split large PhysBones into several components, placed so the solver can run them on more threads. Each piece keeps the original settings and forces. Never changes the PhysBone component rank. PC builds only; runs after the other Arclight passes."));
             serializedObject.ApplyModifiedProperties();
-            if (GUILayout.Button("Open reports folder"))
+            using (new EditorGUILayout.HorizontalScope())
             {
-                AutomaticTextureOptimizer.EnsureFolder(AvatarTextureOptimizer.OutputFolder);
-                EditorUtility.RevealInFinder(AvatarTextureOptimizer.OutputFolder);
+                string report = LastReport(root.name);
+                using (new EditorGUI.DisabledScope(report == null))
+                    if (GUILayout.Button(new GUIContent("Open last report", report == null ? "No report for this avatar yet; build or enter Play Mode first." : report)))
+                        EditorUtility.OpenWithDefaultApp(report);
+                if (GUILayout.Button("Open reports folder"))
+                {
+                    AutomaticTextureOptimizer.EnsureFolder(AvatarTextureOptimizer.OutputFolder);
+                    EditorUtility.RevealInFinder(AvatarTextureOptimizer.OutputFolder);
+                }
+                if (GUILayout.Button(new GUIContent("Clear cache", "Moves every generated texture and audio clip to the trash. They are generated again on the next build, which then takes longer.")))
+                    ClearCache();
             }
+        }
+
+        // The newest report whose file name carries this avatar's name (reports are named after the build copy).
+        private static string LastReport(string avatarName)
+        {
+            string folder = AvatarTextureOptimizer.OutputFolder;
+            if (!Directory.Exists(folder)) return null;
+            string name = System.Text.RegularExpressions.Regex.Replace(avatarName ?? "", @"[^A-Za-z0-9_-]+", "_").Trim('_', '-');
+            return Directory.GetFiles(folder, "ArclightTextureOptimizer_*.txt")
+                .Where(f => name.Length == 0 || Path.GetFileName(f).StartsWith("ArclightTextureOptimizer_" + name, System.StringComparison.Ordinal))
+                .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+        }
+
+        private static void ClearCache()
+        {
+            string folder = AutomaticTextureOptimizer.CacheFolder;
+            var plan = CacheCleanup.Prepare(folder, unusedDays: -1); // -1: every entry counts as unused.
+            if (plan.IsEmpty) { EditorUtility.DisplayDialog("Clear cache", "The cache is already empty.", "OK"); return; }
+            if (!EditorUtility.DisplayDialog("Clear cache", "Move " + plan.Assets.Count + " cached file(s) (" + EditorUtility.FormatBytes(plan.Bytes) +
+                ") to the trash? Later builds generate them again.", "Clear", "Cancel")) return;
+            CacheCleanup.Apply(plan, folder);
         }
     }
 }

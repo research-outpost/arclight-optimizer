@@ -205,18 +205,30 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
     }
 
+    // A retained outcome that depends only on the recipe (source, importer, UVs, sampling, padding and the threshold below), so it
+    // is cached like "unchanged".
+    internal sealed class RetainedException : InvalidOperationException
+    {
+        // Below this many texels left unused after padding, a texture is retained (no useful output). Part of the recipe.
+        internal const int MinimumUnusedTexels = 256;
+        public RetainedException(string message) : base(message) { }
+    }
+
+    // Work limits, not time, so the outcome is the same on every machine. Not cached: the work also depends on the order and
+    // repeats of the uses (a mesh on several renderers counts each time), which the recipe does not record.
     internal sealed class CoverageBudget
     {
-        public long Candidates;
+        public long Candidates, Regions;
         public int Pieces, Triangles;
         public Action CheckCancelled;
-        private readonly System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
 
         public void Check()
         {
             CheckCancelled?.Invoke();
-            if (Candidates > 100000000 || Pieces > 1000000 || Triangles > 2000000 || watch.Elapsed.TotalSeconds > 60)
-                throw new InvalidOperationException($"UV analysis exceeded its processing budget (candidates {Candidates:N0}/100,000,000; pieces {Pieces:N0}/1,000,000; triangles {Triangles:N0}/2,000,000; elapsed {watch.Elapsed.TotalSeconds:F2}/60.00s); texture retained.");
+            // Regions counts every wrap region a polygon is clipped against, empty ones too: a sliver crossing many tiles costs a
+            // clip per region without adding pieces.
+            if (Candidates > 100000000 || Pieces > 1000000 || Triangles > 2000000 || Regions > 100000000)
+                throw new InvalidOperationException($"UV analysis exceeded its processing budget (candidates {Candidates:N0}/100,000,000; pieces {Pieces:N0}/1,000,000; triangles {Triangles:N0}/2,000,000; wrap regions {Regions:N0}/100,000,000); texture retained.");
         }
     }
 
@@ -253,9 +265,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var mask = new bool[width * height];
             var budget = new CoverageBudget { CheckCancelled = cancel };
             var wraps = new HashSet<(TextureWrapMode U, TextureWrapMode V)>();
+            // Texels only ever turn on, so once every texel is on no later triangle can change the mask (a tiled texture often
+            // fills it long before its triangles run out). firstFree only moves forward: linear in the mask size overall.
+            int firstFree = 0;
+            bool Full() { while (firstFree < mask.Length && mask[firstFree]) firstFree++; return firstFree == mask.Length; }
             foreach (var use in group.ActiveUses)
                 foreach (var path in use.Sampling.GetPaths())
                 {
+                    if (Full()) { wraps.Add((path.WrapU(group.Source), path.WrapV(group.Source))); continue; }
                     var snapshot = use.ReadMesh(path.UvChannel);
                     var wrap = (U: path.WrapU(group.Source), V: path.WrapV(group.Source));
                     wraps.Add(wrap);
@@ -263,6 +280,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var hullInput = transforms == null ? null : new List<Point>(transforms.Count * 3);
                     for (int i = 0; i < snapshot.Indices.Length; i += 3)
                     {
+                        if (Full()) break;
                         Vector2 u0 = snapshot.Uvs[snapshot.Indices[i]], u1 = snapshot.Uvs[snapshot.Indices[i + 1]], u2 = snapshot.Uvs[snapshot.Indices[i + 2]];
                         if (transforms == null)
                         {
@@ -347,6 +365,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var xs = Intervals(minX, maxX, wrapU);
             var ys = Intervals(minY, maxY, wrapV);
             if ((long)xs.Count * ys.Count > 4096) throw new InvalidOperationException("UV triangle crosses too many wrap regions.");
+            budget.Regions += (long)xs.Count * ys.Count;
+            budget.Check();
             foreach (var x in xs)
                 foreach (var y in ys)
                 {

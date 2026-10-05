@@ -1,6 +1,6 @@
 # Arclight Optimizer
 
-Smaller VRChat avatar downloads, with no negative visual changes. It removes duplicate assets and strips data your materials and shaders never use.
+Smaller, lighter VRChat avatars, optimized on a copy at build time. It strips data your materials and shaders never use, removes what can never be seen, heard or used, and merges what can be merged, without changing how the avatar looks, sounds or behaves (beyond the few accepted differences listed below). Since 1.1.0 it replaces Avatar Optimizer (AAO).
 
 ## What it does
 
@@ -8,10 +8,21 @@ Smaller VRChat avatar downloads, with no negative visual changes. It removes dup
 - **Uses smaller texture formats on PC** where your shader never reads a channel.
 - **Merges duplicates**, so identical textures, materials, clips, meshes and audio are uploaded once.
 - **Shrinks mesh index buffers** from 32-bit to 16-bit where they fit.
-- **Removes unused vertex data on PC**: tangents, vertex colours and extra UV sets that no material on a mesh reads. For lilToon, tangents go when no material uses a normal map, anisotropy, parallax, decals or an outline vector (outline Vector Scale 0). Avatars using d4rk Avatar Optimizer are left alone.
-- **Lowers Max Particles** on each particle system to the most particles it can actually have alive, so the effect looks the same but the avatar's total max particles (part of the performance rank) drops. Particle systems that can never emit are removed, and trails with lifetime 0 or collision that can hit nothing are turned off.
+- **Removes unused vertex data on PC**: tangents, vertex colours and extra UV sets that no material on a mesh reads. For lilToon, tangents go when no material uses a normal map, anisotropy, parallax, decals or an outline vector (outline Vector Scale 0), UV4 to UV7 go unless the ID mask reads them, and four-component UVs keep the two components lilToon reads. Avatars using d4rk Avatar Optimizer are left alone.
+- **Lowers Max Particles** on each particle system to the most particles it can actually have alive, so the effect looks the same with less to reserve. Particle systems that can never emit are removed, and trails with lifetime 0 or collision that can hit nothing are turned off.
 - **Stores identical-channel stereo audio as mono**, at the same loudness.
 - **Trims animation keys** that change nothing about playback.
+
+### Avatar-wide optimization (new in 1.1.0)
+
+- **Removes what can never be seen, heard or used**: objects that are never active, renderers never enabled, silent audio sources, unused PhysBones, colliders, contacts, constraints and bones, empty containers, and animator parameters nothing reads. Expression parameters always stay, for OSC and PC/Quest sync.
+- **Blend shapes**: shapes nothing changes are baked in, and shapes that always share a weight are merged.
+- **Meshes**: compatible skinned meshes are merged, plain meshes that never move apart are merged, single-bone accessories become plain meshes, and bones nothing moves merge into their parent.
+- **Cleanup**: zero-sized triangles, unused and repeated vertices, empty or duplicate material slots, and material data the shader never reads.
+- **Animator**: single-state layers and toggle state machines (including two-parameter toggles and toggles through Entry and Exit) fold into shared Direct blend trees that switch in the same frame. With d4rk Avatar Optimizer, its merged-toggle layer joins an existing blend tree layer when that is exact.
+- **PhysBones**: a PhysBone that only moves a hidden outfit pauses while the outfit is hidden, and chains ending in matching end bones use an endpoint instead.
+- **Texture cropping**: a texture whose meshes only use an aligned part of it is cropped to that part.
+- **Unity constraints** are converted to VRChat constraints with the SDK's own converter, as VRChat would do when the avatar loads.
 
 It runs automatically when you build or enter Play Mode, on a temporary copy. Your textures, materials, meshes, audio and scenes are never modified.
 
@@ -35,9 +46,24 @@ For a manual install, download `research-outpost.arclight-optimizer-<version>.zi
 2. Choose **Add Component → Arclight → Arclight Optimizer**.
 3. Build and upload as usual, or enter Play Mode to preview.
 
-Everything is automatic. The only option is **Allow unsupported shaders** (see Limitations). To skip the optimizer for an avatar, disable or remove the component.
+Everything is automatic. The options are **Allow unsupported shaders** (see Limitations), **MMD Support** (on by default: keeps the blend shapes MMD dance worlds animate on the Body mesh) and **Split PhysBones (experimental)**. To skip the optimizer for an avatar, disable or remove the component.
 
-After a build, click **Open reports folder** on the component. Each report opens with how much the build saved, split into textures, audio and meshes, then shows what changed and why any texture was kept.
+After a build, click **Open reports folder** on the component. Each report opens with how much the build saved (estimated download and mesh data, as separate figures), then shows what changed, why any texture was kept (largest first) and why meshes or layers were not merged.
+
+## Accepted differences
+
+Everything else is exact. These differences are accepted, and the component lists them:
+
+- **Generated textures**: unused areas are cleared, padding is rebuilt and the texture is compressed again, so texels can differ by compression rounding (see below).
+- **Merged meshes and bones**: at most 1/255 per colour channel from re-rounding.
+- **Cropped textures**: only the smallest mip levels can differ.
+- **Paused PhysBones**: a chain restarts from its rest pose when its outfit is shown again.
+- **Mono audio**: the level matches within 0.05%.
+
+## Other optimizers
+
+- **Avatar Optimizer (AAO)**: not supported alongside Arclight, which replaces it. An avatar that still has AAO components gets a build error naming them.
+- **d4rk Avatar Optimizer**: works alongside. Arclight runs first and leaves the steps d4rk's merge depends on to d4rk.
 
 ## Clearing unused texture areas
 

@@ -16,6 +16,8 @@ namespace Okarin.AvatarTextureOptimizer
         [System.NonSerialized] public bool optimizeMeshes = true;
         [System.NonSerialized] public bool optimizeAudio = true;
         [System.NonSerialized] public bool optimizeAnimations = true;
+        [Tooltip("Experimental. Split large PhysBones into several components so the solver can run them on more threads. Never changes the PhysBone component rank. PC builds only.")]
+        public bool splitPhysBones;
         // Imported Unity dimensions after active-platform sizing. Rectangles use their longer side.
         public static int GetPaddingPixels(int width, int height)
         {
@@ -31,5 +33,7 @@ namespace Okarin.AvatarTextureOptimizer
         public const string OutputFolder = "Assets/Arclight/Optimizer/Textures/Cache";
         [Tooltip("Attempt unsupported texture fields using UV0 and property tiling/offset. Incorrect sampling assumptions can cause rendering artifacts.")]
         public bool allowUnsupportedShaders;
+        [Tooltip("Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them.")]
+        public bool keepMmdShapes = true;
     }
 }

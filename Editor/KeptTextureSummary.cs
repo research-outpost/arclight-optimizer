@@ -28,7 +28,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             internal string Avatar;
             internal int Textures, Applied;
             internal GenerationSummary Summary;
-            internal readonly List<(string Reason, string Shader)> Kept = new List<(string, string)>();
+            internal readonly List<(string Reason, string Shader, long Bytes)> Kept = new List<(string, string, long)>();
             internal string Failure;
         }
 
@@ -49,7 +49,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var use = group.ActiveUses.FirstOrDefault(u => u.Warning != null) ?? group.ActiveUses.First();
                     string reason = use.Warning ?? group.Warning.Replace("Skipped; original texture retained for all its assignments.", "");
                     var shader = use.Material ? use.Material.shader : null;
-                    result.Kept.Add((Normalize(reason), shader ? shader.name : "(missing)"));
+                    result.Kept.Add((Normalize(reason), shader ? shader.name : "(missing)", group.Source ? CostHints.Bytes(group.Source) : 0));
                 }
             }
             collecting.Add(result);
@@ -151,12 +151,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             output.Append("  Kept by a safety check: ").AppendLine(kept.ToString(CultureInfo.InvariantCulture));
             output.AppendLine();
 
-            output.AppendLine("Why textures were kept (texture count, most common first)");
+            output.AppendLine("Why textures were kept (texture memory, most first; texture count)");
             if (kept == 0) output.AppendLine("  None.");
             foreach (var reason in built.SelectMany(r => r.Kept).GroupBy(k => k.Reason)
-                         .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal))
+                         .OrderByDescending(g => g.Sum(k => k.Bytes)).ThenByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal))
             {
-                output.Append(reason.Count().ToString(CultureInfo.InvariantCulture).PadLeft(5)).Append("  ").AppendLine(reason.Key);
+                output.Append(reason.Count().ToString(CultureInfo.InvariantCulture).PadLeft(5)).Append("  ")
+                    .Append((reason.Sum(k => k.Bytes) / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture).PadLeft(6)).Append(" MiB  ").AppendLine(reason.Key);
                 output.Append("       Shaders: ").AppendLine(string.Join(", ", reason.GroupBy(k => k.Shader)
                     .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
                     .Select(g => g.Key + " (" + g.Count() + ")")));

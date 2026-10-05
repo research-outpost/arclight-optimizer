@@ -20,6 +20,8 @@ namespace Okarin.AvatarTextureOptimizer
         public string sourceId;
         public string recipeHash;
         public int lastUsedDay; // UTC days since 1970 of the last build that used this entry; 0 = unknown.
+        // Set when the texture was retained for a reason fixed by its recipe (see RetainedException); empty for "no pixel changes".
+        public string retainedReason;
     }
 
     [Serializable]

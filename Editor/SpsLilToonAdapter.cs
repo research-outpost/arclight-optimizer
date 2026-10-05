@@ -11,9 +11,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private const string Id = "sps-liltoon-inventory-v1";
         private readonly LilToonAdapter lilToon = new LilToonAdapter();
 
-        public bool Matches(Material material) => material.shader &&
-            (material.shader.name.StartsWith("Hidden/SPSPatched/", StringComparison.Ordinal) ||
-             material.shader.name.StartsWith("Hidden/Locked/SPSPatched/", StringComparison.Ordinal));
+        // Only SPS-patched lilToon: SPS also patches other shaders (Poiyomi goes to its own adapter), and Matching counts as
+        // "recognized" for passes that trust render state and declared slots. SPS changes only vertex positions, so the
+        // underlying shader's sampling model still holds.
+        public bool Matches(Material material) => material.shader && IsSps(material.shader) && HasLilToonInventory(material);
+
+        internal static bool IsSps(Shader shader) => shader.name.StartsWith("Hidden/SPSPatched/", StringComparison.Ordinal) ||
+            shader.name.StartsWith("Hidden/Locked/SPSPatched/", StringComparison.Ordinal);
 
         internal static bool HasLilToonInventory(Material material)
         {

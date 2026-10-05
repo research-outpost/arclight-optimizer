@@ -30,6 +30,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     // Materials first: clips that swap between identical materials then become identical themselves.
                     int materials = DuplicateMaterialMerger.Merge(avatarGameObject, controllers, special, IsBuildOwned);
+                    // d4rk's merged-toggle layer joins a lower Direct-tree layer when that is exact (see D4rkLayerFold).
+                    foreach (var controller in owned)
+                        if (D4rkLayerFold.Run(controller, controllers, IsBuildOwned) is string into)
+                            Debug.Log($"Arclight Optimizer: moved d4rk's merged layer into the \"{into}\" blend tree in {controller.name} (one animator layer fewer) on {avatarGameObject.name}.");
                     int clips = AnimationClipDeduplicator.MergeCommitted(owned, special);
                     Debug.Log($"Arclight Optimizer: merged {materials} duplicate material(s) and {clips} duplicate animation clip(s) on {avatarGameObject.name}" +
                         (owned.Length < controllers.Length ? $"; {controllers.Length - owned.Length} controller(s) skipped as source assets." : "."));
@@ -37,9 +41,28 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (reduce)
                 {
                     // After merging, so each kept clip is reduced once.
-                    var clips = owned.SelectMany(AnimationClipDeduplicator.AllClips).Where(clip => clip && !special(clip) && IsBuildOwned(clip));
+                    var clips = owned.SelectMany(AnimationClipDeduplicator.AllClips).Where(clip => clip && !special(clip) && IsBuildOwned(clip)).ToList();
+                    // Clips another Animator on the avatar also plays read their paths from that Animator's object.
+                    var elsewhere = new System.Collections.Generic.HashSet<AnimationClip>(avatarGameObject.GetComponentsInChildren<Animator>(true)
+                        .Where(a => a && a.gameObject != avatarGameObject && a.runtimeAnimatorController)
+                        .SelectMany(a => a.runtimeAnimatorController.animationClips));
+                    // Every renderer any animation on the avatar swaps a mesh onto, from any controller, Animator or legacy clip.
+                    var meshSwapped = new System.Collections.Generic.HashSet<Transform>();
+                    void Swaps(Transform owner, System.Collections.Generic.IEnumerable<AnimationClip> source)
+                    {
+                        foreach (var clip in source.Where(c => c))
+                            foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip).Where(b => b.propertyName == "m_Mesh"))
+                                meshSwapped.UnionWith(AvatarAnalysis.Resolve(owner, binding.path));
+                    }
+                    Swaps(avatarGameObject.transform, controllers.SelectMany(c => c.animationClips));
+                    foreach (var animator in avatarGameObject.GetComponentsInChildren<Animator>(true).Where(a => a && a.runtimeAnimatorController))
+                        Swaps(animator.transform, animator.runtimeAnimatorController.animationClips);
+                    foreach (var animation in avatarGameObject.GetComponentsInChildren<Animation>(true))
+                        Swaps(animation.transform, AnimationUtility.GetAnimationClips(animation.gameObject));
+                    int curves = AnimationKeyReducer.RemoveDead(clips, avatarGameObject.transform, elsewhere, meshSwapped);
                     int keys = AnimationKeyReducer.Reduce(clips);
-                    if (keys > 0) Debug.Log($"Arclight Optimizer: removed {keys} redundant animation key(s) on {avatarGameObject.name}.");
+                    if (keys > 0 || curves > 0)
+                        Debug.Log($"Arclight Optimizer: removed {curves} animation curve(s) that drive nothing and {keys} redundant animation key(s) on {avatarGameObject.name}.");
                 }
             }
             catch (System.Exception e)

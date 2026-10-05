@@ -198,7 +198,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             File.WriteAllText(UsageFile, JsonUtility.ToJson(stored));
         }
 
-        private static void MarkUsed(string path)
+        // Shared last-used record for generated files the cache cleanup tracks (mono clips and texture crops).
+        internal static void MarkUsed(string path)
         {
             var usage = LoadUsage();
             usage[path] = CacheCleanup.Today;

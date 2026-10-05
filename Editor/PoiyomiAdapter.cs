@@ -146,8 +146,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return repeat;
         }
 
+        // SPS-patched copies are named by hash; their version label still marks them as Poiyomi. SPS changes only
+        // vertex positions, so sampling is the underlying shader's.
         public bool Matches(Material material) => material.shader &&
-            material.shader.name.IndexOf("poiyomi", StringComparison.OrdinalIgnoreCase) >= 0;
+            (material.shader.name.IndexOf("poiyomi", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             SpsLilToonAdapter.IsSps(material.shader) && !SpsLilToonAdapter.HasLilToonInventory(material) && Version(material.shader) != null);
 
         public SamplingDescription Describe(Material material, string property)
         {

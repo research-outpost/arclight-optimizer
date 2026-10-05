@@ -7,7 +7,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     /// <summary>Copies original protected edge values into the extra resolution-based padding band.</summary>
     internal static class EdgeValueExtender
     {
-        private const double TimeLimitSeconds = 60;
 
         public static int Extend(Color32[] source, Color32[] output, bool[] protectedMask,
             int width, int height, int radiusX, int radiusY, bool repeatX, bool repeatY, Action cancel = null)
@@ -24,8 +23,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             radiusX = Math.Min(radiusX, width);
             radiusY = Math.Min(radiusY, height);
-            var watch = Stopwatch.StartNew();
-            var budget = new WorkBudget(cancel, watch);
+            var budget = new WorkBudget(cancel);
             return radiusX == radiusY
                 ? ExtendSquare(source, output, protectedMask, width, height, radiusX, repeatX, repeatY, budget)
                 : ExtendRectangle(source, output, protectedMask, width, height, radiusX, radiusY, repeatX, repeatY, budget);
@@ -194,18 +192,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static int Mod(int index, int size) => ((index % size) + size) % size;
 
+        // Only the Cancel button: every pass is linear in the texture (each texel is queued at most once), and the texture is
+        // already limited to 16 megapixels, so no time limit is needed and the outcome never depends on the machine.
         private sealed class WorkBudget
         {
             private readonly Action cancel;
-            private readonly Stopwatch watch;
-            public WorkBudget(Action cancel, Stopwatch watch) { this.cancel = cancel; this.watch = watch; }
+            public WorkBudget(Action cancel) { this.cancel = cancel; }
             public void CheckOccasionally(int index) { if ((index & 4095) == 0) Check(); }
-            public void Check()
-            {
-                cancel?.Invoke();
-                if (watch.Elapsed.TotalSeconds > TimeLimitSeconds)
-                    throw new InvalidOperationException("Edge extension exceeded its 60-second processing budget; texture retained.");
-            }
+            public void Check() => cancel?.Invoke();
         }
     }
 }

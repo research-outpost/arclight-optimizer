@@ -60,7 +60,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
     internal sealed class LilToonAdapter : ITextureSamplingAdapter
     {
-        private const string Id = "liltoon-2.x-static-v9";
+        internal const string Id = "liltoon-2.x-static-v9";
         // Every material entry in the package's Shader folder (not the ltspass_/ltsother helper passes).
         // Standard, one/two-pass transparent, overlay and outline-only (_oo) entries all use the same
         // ltspass_opaque/cutout/transparent passes; tessellation (lts_tess*) adds only barycentric UV
@@ -136,9 +136,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             Add(Coordinates.Outline, TextureSemantics.Color, "_OutlineTex");
             Add(Coordinates.Alias, TextureSemantics.Color, "_BaseMap _BaseColorMap");
             Add(Coordinates.MainThenOwn, TextureSemantics.Normal, "_BumpMap");
+            // lil_common_frag.hlsl: LIL_SAMPLE_2D_ST at fd.uvMain with sampler_MainTex (anisotropy, line 606; matcaps through
+            // OVERRIDE_MATCAP's sampler_MainTex, lines 1529 and 1597), the same coordinates as _BumpMap.
+            Add(Coordinates.MainThenOwn, TextureSemantics.Normal, "_AnisotropyTangentMap _MatCapBumpMap _MatCap2ndBumpMap");
             Add(Coordinates.SelectedRawFixed, TextureSemantics.Normal, "_Bump2ndMap");
-            Add(Coordinates.Unsupported, TextureSemantics.Data, "_AnisotropyTangentMap _MatCapBumpMap _MatCap2ndBumpMap _OutlineVectorTex _FurVectorTex",
-                "Normal/tangent-vector field requires separate sampling and encoding validation; only the first and second bump maps are supported. Original retained.");
+            Add(Coordinates.Unsupported, TextureSemantics.Data, "_OutlineVectorTex _FurVectorTex",
+                "Outline and fur vector fields are read in the vertex stage and need separate validation; original retained.");
             Add(Coordinates.Unsupported, TextureSemantics.Color, "_MatCapTex _MatCap2ndTex",
                 "Matcap images use view/normal-dependent sampling rather than static mesh UV coverage; original retained. Matcap blend masks are supported separately.");
             Add(Coordinates.Unsupported, TextureSemantics.Color, "_MainGradationTex _EmissionGradTex _Emission2ndGradTex _Ramp",
@@ -206,13 +209,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return Unsupported("Parallax/POM can move texture sampling outside static mesh UVs.");
             if (Enabled(material, "_ShiftBackfaceUV")) return Unsupported("Backface UV shifting requires an additional sampling model; retained.");
             // FakeShadow has no scroll/rotate properties.
-            if (material.HasProperty("_MainTex_ScrollRotate") && MaterialInputs.Vector(material, "_MainTex_ScrollRotate") != Vector4.zero)
+            if (material.HasProperty("_MainTex_ScrollRotate") && NonZero(MaterialInputs.Vector(material, "_MainTex_ScrollRotate")))
                 return Unsupported("Main UV scrolling/rotation is outside this static lilToon subset.");
-            if (outline && MaterialInputs.Vector(material, "_OutlineTex_ScrollRotate") != Vector4.zero)
+            if (outline && NonZero(MaterialInputs.Vector(material, "_OutlineTex_ScrollRotate")))
                 return Unsupported("Outline UV scrolling/rotation is outside this static lilToon subset.");
 
-            if (property == "_ShadowStrengthMask" && (Enabled(material, "_ShadowStrengthMaskLOD") || Enabled(material, "_ShadowMaskType")))
-                return Unsupported("Shadow mask forced gradients/SDF modes are not yet verified; retained.");
+            // Every mask type (strength, flat, SDF) reads the mask at fd.uvMain with lil_sampler_linear_repeat; SDF only uses its
+            // channels differently (lil_common_frag.hlsl 936-966). A forced gradient (LOD) reads coarse mip levels up close, where
+            // clearing is not exact, so it stays unsupported.
+            if (property == "_ShadowStrengthMask" && Enabled(material, "_ShadowStrengthMaskLOD"))
+                return Unsupported("Shadow mask forced gradients read coarse mip levels up close; retained.");
 
             if ((property == "_ShadowBorderMask" || property == "_ShadowBlurMask") && Enabled(material, property + "LOD"))
                 return Unsupported("Shadow mask forced gradients are not yet modeled; original retained.");
@@ -224,14 +230,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (float.IsNaN(mode) || mode < 0 || mode > 3 || mode != Mathf.Floor(mode))
                     return Unsupported(property + " requires static mesh UV0-UV3; view/rim/matcap and invalid UV modes are retained.");
                 channel = (int)mode;
-                if (material.HasProperty(property + "_ScrollRotate") && MaterialInputs.Vector(material, property + "_ScrollRotate") != Vector4.zero)
+                if (material.HasProperty(property + "_ScrollRotate") && NonZero(MaterialInputs.Vector(material, property + "_ScrollRotate")))
                     return Unsupported(property + " UV scrolling/rotation is outside the static sampling model.");
             }
             if ((property == "_EmissionMap" && Enabled(material, "_EmissionParallaxDepth")) ||
                 (property == "_Emission2ndMap" && Enabled(material, "_Emission2ndParallaxDepth")))
                 return Unsupported("Emission parallax can move texture sampling outside static mesh UVs.");
             if ((field.Coordinates == Coordinates.EmissionMask || property.EndsWith("DissolveNoiseMask", StringComparison.Ordinal)) &&
-                MaterialInputs.Vector(material, property + "_ScrollRotate") != Vector4.zero)
+                NonZero(MaterialInputs.Vector(material, property + "_ScrollRotate")))
                 return Unsupported("Mask UV scrolling/rotation is outside the static sampling model.");
             if (property == "_Main2ndTex" || property == "_Main3rdTex")
             {
@@ -253,35 +259,37 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 Paths = new List<SamplingPath>() };
             var source = material.GetTexture(property);
             var mainSampler = material.GetTexture("_MainTex");
-            if (!source || !mainSampler) return Unsupported("A concrete assigned main texture/sampler is required.");
+            if (!source) return Unsupported("A concrete assigned texture is required.");
 
+            // Texture cropping may rewrite an _ST only where the shader reads it for texture lookups alone; a decal's own
+            // _ST also positions its clipping, so decals are never cropped.
+            string own = (property == "_Main2ndTex" || property == "_Main3rdTex") && Enabled(material, property + "IsDecal") ? null : property;
             if (field.Coordinates == Coordinates.SelectedRawOwn)
                 Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property), source,
-                    "Selected raw mesh UV / own sampler", channel: channel);
+                    "Selected raw mesh UV / own sampler", channel: channel, basis: own, dependencies: new[] { property });
             else if (field.Coordinates == Coordinates.SelectedRawFixed)
             {
                 // OVERRIDE_NORMAL_2ND uses raw UV0-UV3, never the main texture transform.
                 Vector2 scale = MaterialInputs.Scale(material, property);
                 Vector2 offset = MaterialInputs.Offset(material, property);
-                Add(result, scale, offset, null, "Second bump / fixed Repeat", true, channel);
-                Add(result, scale, offset, source, "Second bump / legacy sampler", channel: channel);
+                Add(result, scale, offset, null, "Second bump / fixed Repeat", true, channel, own, new[] { property });
+                Add(result, scale, offset, source, "Second bump / legacy sampler", channel: channel, basis: own, dependencies: new[] { property });
             }
             else if (field.Coordinates == Coordinates.SelectedMainOwn)
             {
                 var samplers = property == "_AudioLinkMask" ? new[] { source } : new[] { mainSampler, source }.Distinct();
                 foreach (var sampler in samplers)
                     if (channel == 0)
-                        AddComposed(result, material, "_MainTex", MaterialInputs.Scale(material, property),
-                            MaterialInputs.Offset(material, property), sampler, "Selected main UV0 / property ST");
+                        AddComposed(result, material, "_MainTex", own, property, sampler, "Selected main UV0 / property ST");
                     else
                         Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property),
-                            sampler, "Selected raw UV / property ST", channel: channel);
+                            sampler, "Selected raw UV / property ST", channel: channel, basis: own, dependencies: new[] { property });
             }
             else if (field.Coordinates == Coordinates.RawOwn)
             {
                 foreach (var sampler in new[] { mainSampler, source }.Distinct())
                     Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property),
-                        sampler, "Dissolve raw UV0 / property ST");
+                        sampler, "Dissolve raw UV0 / property ST", basis: own, dependencies: new[] { property });
             }
             else if (field.Coordinates == Coordinates.EmissionMask)
             {
@@ -290,9 +298,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 foreach (var sampler in new[] { mainSampler, source }.Distinct())
                 {
                     Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property), sampler,
-                        "Emission mask / raw UV0 feature path");
-                    AddComposed(result, material, "_MainTex", MaterialInputs.Scale(material, property),
-                        MaterialInputs.Offset(material, property), sampler, "Emission mask / main UV feature path");
+                        "Emission mask / raw UV0 feature path", basis: own, dependencies: new[] { property });
+                    AddComposed(result, material, "_MainTex", own, property, sampler, "Emission mask / main UV feature path");
                 }
             }
             else if (field.Coordinates == Coordinates.FixedMain)
@@ -301,32 +308,37 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // with lil_sampler_linear_repeat; it does NOT apply _OutlineWidthMask_ST.
                 // ShadowStrengthMask also uses main UVs and fixed Repeat, ignoring its own ST.
                 Add(result, MaterialInputs.Scale(material, "_MainTex"), MaterialInputs.Offset(material, "_MainTex"), null,
-                    property == "_OutlineWidthMask" ? "Outline vertex LOD0 / fixed Repeat" : "Shadow mask / fixed Repeat", true);
+                    property == "_OutlineWidthMask" ? "Outline vertex LOD0 / fixed Repeat" : "Shadow mask / fixed Repeat", true, basis: "_MainTex", dependencies: new[] { "_MainTex" });
                 Add(result, MaterialInputs.Scale(material, "_MainTex"), MaterialInputs.Offset(material, "_MainTex"), source,
-                    "Legacy sampler fallback");
+                    "Legacy sampler fallback", basis: "_MainTex", dependencies: new[] { "_MainTex" });
             }
             else if (property == "_OutlineTex")
-                Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property), source, "Outline passes");
+                Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property), source, "Outline passes",
+                    basis: property, dependencies: new[] { property });
             else
             {
                 // Rim shade samples uvMain directly; unlike reflection colour, it ignores its own ST.
-                bool ignoreOwnTransform = field.Coordinates == Coordinates.Main;
-                Vector2 extraScale = ignoreOwnTransform ? Vector2.one : MaterialInputs.Scale(material, property);
-                Vector2 extraOffset = ignoreOwnTransform ? Vector2.zero : MaterialInputs.Offset(material, property);
-                AddComposed(result, material, "_MainTex", extraScale, extraOffset, mainSampler, "Main / shadow / meta");
+                string extra = field.Coordinates == Coordinates.Main ? null : property;
+                AddComposed(result, material, "_MainTex", own, extra, mainSampler, "Main / shadow / meta");
                 // Include the source's own sampler too: legacy texture macros can ignore the named sampler.
-                if (source != mainSampler) AddComposed(result, material, "_MainTex", extraScale, extraOffset, source, "Legacy sampler fallback");
+                if (source != mainSampler) AddComposed(result, material, "_MainTex", own, extra, source, "Legacy sampler fallback");
                 if (property == "_SmoothnessTex" && gem)
                     foreach (var sampler in new[] { mainSampler, source }.Distinct())
-                        AddComposed(result, material, "_MainTex", Vector2.one, Vector2.zero, sampler, "Gem smoothness / main UV");
+                        AddComposed(result, material, "_MainTex", own, null, sampler, "Gem smoothness / main UV");
                 if (property == "_SmoothnessTex" && refractionBlur)
-                    AddComposed(result, material, "_MainTex", extraScale, extraOffset, null, "Refraction blur smoothness / fixed Repeat", true);
+                    AddComposed(result, material, "_MainTex", own, extra, null, "Refraction blur smoothness / fixed Repeat", true);
                 if (property == "_AlphaMask" && outline)
                 {
-                    AddComposed(result, material, "_OutlineTex", extraScale, extraOffset, mainSampler, "Outline alpha / shadow");
-                    if (source != mainSampler) AddComposed(result, material, "_OutlineTex", extraScale, extraOffset, source, "Outline legacy sampler fallback");
+                    AddComposed(result, material, "_OutlineTex", own, extra, mainSampler, "Outline alpha / shadow");
+                    if (source != mainSampler) AddComposed(result, material, "_OutlineTex", own, extra, source, "Outline legacy sampler fallback");
                 }
             }
+            // With no main texture, lilToon's main sampler is the default texture's, which repeats (as the other adapters
+            // assume). Paths that would read through it keep the source's own wrap mode too, so coverage is the union.
+            if (!mainSampler)
+                foreach (var p in result.Paths.Where(q => !q.SamplerTexture && !q.FixedRepeat).ToList())
+                    result.Paths.Add(new SamplingPath { UvChannel = p.UvChannel, Scale = p.Scale, Offset = p.Offset, FixedRepeat = true,
+                        Label = p.Label + " / default main sampler", Basis = p.Basis, Dependencies = p.Dependencies });
             result.Reason = inference + "lilToon 2.x static mesh-UV compatibility model; disabled feature paths are conservatively retained in coverage.";
             result.Channels = Channels(material, property, file);
             return result;
@@ -356,9 +368,22 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static bool Enabled(Material material, string property) => material.HasProperty(property) && MaterialInputs.Float(material, property) != 0;
         private static SamplingDescription Unsupported(string reason) => ShaderAdapterRegistry.Unsupported(Id, reason);
-        private static void AddComposed(SamplingDescription result, Material material, string basis, Vector2 scale, Vector2 offset, Texture sampler, string label, bool repeat = false) =>
-            Add(result, Vector2.Scale(MaterialInputs.Scale(material, basis), scale), Vector2.Scale(MaterialInputs.Offset(material, basis), scale) + offset, sampler, label, repeat);
-        private static void Add(SamplingDescription result, Vector2 scale, Vector2 offset, Texture sampler, string label, bool repeat = false, int channel = 0) =>
-            result.Paths.Add(new SamplingPath { UvChannel = channel, Scale = scale, Offset = offset, SamplerTexture = sampler, FixedRepeat = repeat, Label = label });
+        // The basis transform followed by the extra property's own _ST (none when extra is null). Croppable through the
+        // basis only when the extra transform is the identity and the property is not excluded (own is null).
+        // Exact: Unity's Vector4 != treats tiny values (a slow scroll) as zero.
+        private static bool NonZero(Vector4 v) => v.x != 0 || v.y != 0 || v.z != 0 || v.w != 0;
+
+        private static void AddComposed(SamplingDescription result, Material material, string basis, string own, string extra, Texture sampler, string label, bool repeat = false)
+        {
+            Vector2 scale = extra == null ? Vector2.one : MaterialInputs.Scale(material, extra);
+            Vector2 offset = extra == null ? Vector2.zero : MaterialInputs.Offset(material, extra);
+            bool identity = scale.x == 1 && scale.y == 1 && offset.x == 0 && offset.y == 0; // Exact: Unity's == allows a small error.
+            Add(result, Vector2.Scale(MaterialInputs.Scale(material, basis), scale), Vector2.Scale(MaterialInputs.Offset(material, basis), scale) + offset, sampler, label, repeat,
+                basis: own != null && identity ? basis : null, dependencies: extra == null ? new[] { basis } : new[] { basis, extra });
+        }
+        private static void Add(SamplingDescription result, Vector2 scale, Vector2 offset, Texture sampler, string label, bool repeat = false, int channel = 0,
+            string basis = null, string[] dependencies = null) =>
+            result.Paths.Add(new SamplingPath { UvChannel = channel, Scale = scale, Offset = offset, SamplerTexture = sampler, FixedRepeat = repeat, Label = label,
+                Basis = basis, Dependencies = dependencies });
     }
 }

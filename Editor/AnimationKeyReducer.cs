@@ -80,6 +80,61 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return kept.ToArray();
         }
 
+        // Removes curves that drive nothing on the finished avatar (Unity skips them): their path names no object, the object
+        // has no component of their type, or they set a blend shape the renderer's mesh lacks and no animation anywhere on the
+        // avatar (meshSwapped: any controller, other Animators, legacy clips) swaps that mesh. Animator parameter curves
+        // always stay. Paths start from root, so clips any other Animator also plays are left alone. A clip's length is
+        // kept: if the longest curve is dead, it stays. Returns the number of curves removed.
+        internal static int RemoveDead(IEnumerable<AnimationClip> clips, Transform root, ISet<AnimationClip> elsewhere, ISet<Transform> meshSwapped)
+        {
+            var list = clips.Where(c => c && !c.legacy && !elsewhere.Contains(c)).Distinct().ToList();
+            bool Dead(EditorCurveBinding b)
+            {
+                if (b.type == typeof(Animator)) return false;
+                var targets = AvatarAnalysis.Resolve(root, b.path).ToList();
+                if (targets.Count == 0) return true;
+                if (b.type == typeof(GameObject) || b.type == typeof(Transform)) return false;
+                if (b.type == null) return true; // A type that no longer exists binds nothing.
+                var components = targets.Select(t => t.GetComponent(b.type)).Where(c => c).ToList();
+                if (components.Count == 0) return true;
+                string property = b.propertyName ?? "";
+                if (property.StartsWith("blendShape.", StringComparison.Ordinal) && !targets.Any(meshSwapped.Contains))
+                {
+                    string shape = property.Substring("blendShape.".Length);
+                    return components.All(c => c is SkinnedMeshRenderer s && s.sharedMesh && s.sharedMesh.GetBlendShapeIndex(shape) < 0);
+                }
+                return false;
+            }
+            int removed = 0;
+            foreach (var clip in list)
+            {
+                var floats = AnimationUtility.GetCurveBindings(clip).Select(b => (Binding: b, End: AnimationUtility.GetEditorCurve(clip, b)?.keys.LastOrDefault().time ?? 0, Dead: Dead(b))).ToList();
+                var objects = AnimationUtility.GetObjectReferenceCurveBindings(clip).Select(b => (Binding: b, End: AnimationUtility.GetObjectReferenceCurve(clip, b)?.LastOrDefault().time ?? 0, Dead: Dead(b))).ToList();
+                var all = floats.Select(f => (f.Binding, f.End, f.Dead, Float: true)).Concat(objects.Select(o => (o.Binding, o.End, o.Dead, Float: false))).ToList();
+                var dead = all.Where(c => c.Dead).ToList();
+                if (dead.Count == 0) continue;
+                float end = all.Max(c => c.End);
+                // Keep the clip's length: if no live curve reaches its end, the longest dead curve stays.
+                if (!all.Any(c => !c.Dead && c.End >= end)) dead.Remove(dead.OrderByDescending(c => c.End).First());
+                float length = clip.length;
+                var saved = dead.Select(c => (c.Binding, c.Float, Curve: c.Float ? AnimationUtility.GetEditorCurve(clip, c.Binding) : null,
+                    Keys: c.Float ? null : AnimationUtility.GetObjectReferenceCurve(clip, c.Binding))).ToList();
+                foreach (var c in dead)
+                    if (c.Float) AnimationUtility.SetEditorCurve(clip, c.Binding, null);
+                    else AnimationUtility.SetObjectReferenceCurve(clip, c.Binding, null);
+                if (clip.length != length)
+                {
+                    // Start times can differ too; put everything back rather than change timing.
+                    foreach (var s in saved)
+                        if (s.Float) AnimationUtility.SetEditorCurve(clip, s.Binding, s.Curve);
+                        else AnimationUtility.SetObjectReferenceCurve(clip, s.Binding, s.Keys);
+                    continue;
+                }
+                removed += dead.Count;
+            }
+            return removed;
+        }
+
         // Exact equality at every key and at evenly spaced points inside every original segment.
         private static bool SamePlayback(AnimationCurve original, AnimationCurve reduced)
         {

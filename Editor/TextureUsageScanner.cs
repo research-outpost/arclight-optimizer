@@ -92,8 +92,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     renderer.GetComponent<MeshFilter>()?.sharedMesh;
                 string path = AnimationUtility.CalculateTransformPath(renderer.transform, root.transform);
                 if (!mesh) result.Warnings.Add($"{path}: renderer has no mesh.");
-                bool ambiguousSlots = mesh && renderer.sharedMaterials.Length < mesh.subMeshCount;
-                if (ambiguousSlots) result.Warnings.Add($"{path}: fewer material slots than submeshes; retained.");
+                bool excluded = Exclusions.Excluded(renderer);
+                if (excluded) result.Warnings.Add($"{path}: under an Arclight Exclude component; its textures are retained.");
+                bool ambiguousSlots = excluded || mesh && renderer.sharedMaterials.Length < mesh.subMeshCount;
+                if (!excluded && ambiguousSlots) result.Warnings.Add($"{path}: fewer material slots than submeshes; retained.");
 
                 animation.Renderers.TryGetValue(path, out var state);
                 var currentMaterials = renderer.sharedMaterials;
@@ -172,6 +174,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // every use of a copy can use one of them without any visible change, and the copies are then not
         // uploaded. The first by asset path keeps the merged uses, so coverage covers them together.
         // Only main-asset Texture2Ds with a TextureImporter qualify (not textures embedded in models).
+        // Textures an excluded renderer uses are left out, so its materials keep pointing at their own copy.
         private sealed class DuplicateCandidate
         {
             public TextureGroup Group;
@@ -188,7 +191,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var candidates = result.Groups
                 .Select(group => (Group: group, Path: AssetDatabase.GetAssetPath(group.Source)))
                 .Where(c => c.Group.Source is Texture2D && AssetDatabase.IsMainAsset(c.Group.Source) &&
-                            AssetImporter.GetAtPath(c.Path) is TextureImporter && File.Exists(c.Path))
+                            AssetImporter.GetAtPath(c.Path) is TextureImporter && File.Exists(c.Path) &&
+                            !c.Group.Uses.Any(u => Exclusions.Excluded(u.Renderer)))
                 .OrderBy(c => c.Path, StringComparer.Ordinal)
                 .ToArray();
 
@@ -226,7 +230,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .Where(c => c.Group.Source is Texture2D && AssetDatabase.IsMainAsset(c.Group.Source) &&
                             c.Path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
                             AssetImporter.GetAtPath(c.Path) is TextureImporter && File.Exists(c.Path) &&
-                            new FileInfo(c.Path).Length <= 128L * 1024 * 1024)
+                            new FileInfo(c.Path).Length <= 128L * 1024 * 1024 &&
+                            !c.Group.Uses.Any(u => Exclusions.Excluded(u.Renderer)))
                 .Select(c => new DuplicateCandidate
                 {
                     Group = c.Group,
@@ -251,6 +256,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         candidate.Height = header.Height;
                         if (candidate.NormalMap && (header.BitDepth != 8 ||
                             (header.ColorType != 2 && header.ColorType != 6))) continue;
+                        // Pixels are compared after 16-bit samples are rounded, which proves nothing for a format that keeps 16 bits.
+                        if (header.BitDepth == 16) continue;
                         structural.Add(candidate);
                     }
                     catch (Exception error) when (error is IOException || error is UnauthorizedAccessException ||
@@ -450,6 +457,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (PropertyBlockMayOverrideSampling(renderer, slot, material, property, sampling, out string blockInput))
                 warning = "Material property block may override sampling: it sets " + blockInput + ".";
             if (ambiguousSlots) warning = "Ambiguous material/submesh assignment.";
+            if (Exclusions.Excluded(renderer)) warning = "Under an Arclight Exclude component.";
             if (!mesh || submesh < 0) warning = "Missing mesh or submesh.";
             else if (mesh.GetTopology(submesh) != MeshTopology.Triangles) warning = "Non-triangle topology.";
             if (!groups.TryGetValue(texture, out var group))

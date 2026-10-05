@@ -58,14 +58,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     plan.Bytes += new FileInfo(file).Length;
                 }
             }
-            PrepareAudio(plan, folder + "/Audio");
+            PrepareTracked(plan, folder + "/Audio", AudioMonoConverter.IsGenerated, decodeCopies: true);
+            PrepareTracked(plan, folder + "/Crops", TextureCropper.IsGenerated, decodeCopies: false);
             return plan;
         }
 
-        // Generated mono clips (identified by importer userData) follow the same 30-day rule, using the last-used
-        // record the audio pass keeps. A clip with no record yet starts its 30 days now. Leftover temporary decode
-        // copies from an interrupted build are removed.
-        private static void PrepareAudio(Plan plan, string folder)
+        // Generated mono clips and texture crops (identified by importer userData) follow the same 30-day rule, using
+        // the last-used record their passes keep. A file with no record yet starts its 30 days now. Leftover temporary
+        // audio decode copies from an interrupted build are removed.
+        private static void PrepareTracked(Plan plan, string folder, Func<string, bool> generated, bool decodeCopies)
         {
             if (!AssetDatabase.IsValidFolder(folder)) return;
             var usage = AudioMonoConverter.LoadUsage();
@@ -73,8 +74,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (string file in Directory.GetFiles(folder).Select(p => p.Replace('\\', '/')).OrderBy(p => p, StringComparer.Ordinal))
             {
                 if (file.EndsWith(".meta", StringComparison.Ordinal)) continue;
-                bool decode = Path.GetFileNameWithoutExtension(file).EndsWith("_decode", StringComparison.Ordinal);
-                if (!decode && !AudioMonoConverter.IsGenerated(file)) continue;
+                bool decode = decodeCopies && Path.GetFileNameWithoutExtension(file).EndsWith("_decode", StringComparison.Ordinal);
+                if (!decode && !generated(file)) continue;
                 if (!decode && !usage.TryGetValue(file, out int day)) { usage[file] = plan.Today; recorded = true; continue; }
                 if (!decode && !IsStale(plan, usage[file])) continue;
                 plan.Assets.Add(file);

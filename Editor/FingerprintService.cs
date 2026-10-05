@@ -61,6 +61,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 writer.Write(Version); writer.Write(Id(group.Source)); writer.Write(sourceHash);
                 writer.Write(ImporterHash(group.Source));
                 writer.Write(group.RepairsPadding);
+                // Code constants a cached "retained" outcome depends on: changing either revisits those textures.
+                writer.Write(RetainedException.MinimumUnusedTexels);
+                writer.Write(AvatarTextureOptimizer.GetPaddingPixels(group.Source.width, group.Source.height));
                 // The compressed-size estimate that gates a replacement depends on the build target.
                 writer.Write((int)EditorUserBuildSettings.activeBuildTarget);
                 // Platform switches can change the imported resolution without changing source metadata.

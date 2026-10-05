@@ -30,6 +30,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 throw new InvalidOperationException("Generated importer settings differ from the source; output retained but not mapped.");
             if (source.width != replacement.width || source.height != replacement.height || source.mipmapCount != replacement.mipmapCount)
                 throw new InvalidOperationException("Generated target dimensions/mipmap count differ from the source; output retained but not mapped.");
+            if (!PngPixels.RoundedImportMatches(source, System.IO.Path.GetDirectoryName(AssetDatabase.GetAssetPath(replacement)).Replace('\\', '/')))
+                throw new InvalidOperationException("This 16-bit source does not compress the same once rounded to 8 bits on this platform; original retained.");
         }
 
         // Called by generation/cache reuse, including NDMF processing; source importers are never changed.

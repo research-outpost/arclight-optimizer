@@ -174,6 +174,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             PngInfo info;
             var pixels = flattened ? SourceImages.Flatten(sourcePath, folder, out info) : PngPixels.Decode(bytes, out info);
             checkCancelled?.Invoke();
+            if (info.BitDepth == 16 && !PngPixels.RoundedImportMatches(source, folder))
+                throw new InvalidOperationException("This 16-bit source does not compress the same once rounded to 8 bits on this platform; original retained.");
             bool normal = sourceImporter.textureType == TextureImporterType.NormalMap;
             if (normal)
                 for (int i = 0; i < pixels.Length; i++)
@@ -187,8 +189,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             checkCancelled?.Invoke();
             var mask = UvCoverageRasterizer.Build(group, info.Width, info.Height, out var sampled, coverageCache, checkCancelled);
             checkCancelled?.Invoke();
-            if (normal && mask.Count(used => !used) < 256)
-                throw new InvalidOperationException("Fewer than 256 unused texels remain after padding; no useful output.");
+            if (normal && mask.Count(used => !used) < RetainedException.MinimumUnusedTexels)
+                throw new RetainedException("Fewer than 256 unused texels remain after padding; no useful output.");
             // Normal maps fill with the flat normal (edit authored RGB, never Unity's platform-packed form).
             // Colour textures prefer the dominant sampled colour, excluding original safety padding.
             // Keep the edge/cleared-colour fallbacks and file-size gate. Data maps retain their old policy.
@@ -209,7 +211,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 : normal ? new[] { new Color32(128, 128, 255, 255) }
                 : new[] { colour ? BackgroundValueDetector.DetectUsed(pixels, sampled) : null,
                     BackgroundValueDetector.DetectEdge(pixels, mask, info.Width, info.Height),
-                    formatOnly && mask.Count(used => !used) < 256 ? BackgroundValueDetector.DetectUsed(pixels, sampled) : BackgroundValueDetector.Detect(pixels, mask) }
+                    formatOnly && mask.Count(used => !used) < RetainedException.MinimumUnusedTexels ? BackgroundValueDetector.DetectUsed(pixels, sampled) : BackgroundValueDetector.Detect(pixels, mask) }
                     .Where(c => c.HasValue).Select(c => c.Value).Distinct().ToArray();
             int padding = AvatarTextureOptimizer.GetPaddingPixels(source.width, source.height);
             int radiusX = ExtensionRadius(padding, info.Width, source.width);

@@ -43,8 +43,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var config = buildRoot.GetComponent<AvatarTextureOptimizer>();
             if (!config) { progress?.Dispose(); return; }
             bool enabled = config.enabled;
-            bool optimizeTextures = config.optimizeTextures;
-            var log = new OptimizationLog(EditorApplication.isPlayingOrWillChangePlaymode);
+            bool optimizeTextures = config.optimizeTextures && !state.VrcfuryPending; // Coverage needs the complete animation.
+            // The pipeline starts the report so earlier passes can add to it; tests calling this directly get a new one.
+            var log = state.Report ?? new OptimizationLog(EditorApplication.isPlayingOrWillChangePlaymode);
             if (config.enabled && EditorApplication.isPlayingOrWillChangePlaymode && SceneReloadDisabled)
             {
                 // Do not destroy even the authoring component when scene restoration is unavailable.
@@ -110,6 +111,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // A bundle build (the compressed-size estimate) unloads objects that only managed code references.
             var keepAlive = BundleSizeEstimator.KeepObjectsAlive();
             TextureOptimizationManifest cache = null;
+            bool cacheWarned = false;
             var coverageCache = new UvCoverageCache();
             summary.TextureResults.Clear();
             try
@@ -143,13 +145,25 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
                             measured = true;
                             result.Operation = group.RepairsPadding ? "Mipmap padding repair" : "Texture optimization";
+                            string recipe = null, id = null; // Read by the RetainedException handler.
                             try
                             {
                                 progress?.Stage("Fingerprinting texture");
-                                string recipe = FingerprintService.Recipe(group);
-                                string id = FingerprintService.Id(group.Source);
+                                recipe = FingerprintService.Recipe(group);
+                                id = FingerprintService.Id(group.Source);
                                 progress?.Stage("Checking cache");
-                                if (!cache) cache = LoadOrCreateCache(folder);
+                                if (!cache)
+                                {
+                                    try { cache = LoadOrCreateCache(folder); }
+                                    catch (Exception e) when (!cacheWarned && !(e is OperationCanceledException))
+                                    {
+                                        // Every texture is skipped until this is fixed by hand, so say so once where it is seen.
+                                        cacheWarned = true;
+                                        BuildWarnings.Report(null, "The texture cache could not be used", e.Message + " Every texture keeps its original.",
+                                            "Delete " + folder + "/" + CacheFileName + " (for example after a version-control merge conflict); it is rebuilt on the next build.");
+                                        throw;
+                                    }
+                                }
                                 var mapping = cache.mappings.FirstOrDefault(m => m.sourceId == id && m.recipeHash == recipe);
                                 if (mapping != null && FingerprintService.IsReady(mapping, recipe) &&
                                     AssetDatabase.GetAssetPath(mapping.replacement).StartsWith(folder + "/", StringComparison.Ordinal))
@@ -176,6 +190,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 {
                                     result.CacheLookup = true;
                                     MarkUsed(cache, ref unchanged.lastUsedDay);
+                                    if (!string.IsNullOrEmpty(unchanged.retainedReason))
+                                    {
+                                        summary.Skipped++;
+                                        result.Outcome = TextureResultKind.Skipped;
+                                        result.Reason = unchanged.retainedReason;
+                                        warn?.Invoke(group.Source, unchanged.retainedReason);
+                                        continue;
+                                    }
                                     summary.Unchanged++;
                                     result.Outcome = TextureResultKind.Unchanged;
                                     result.Reason = "A matching cached result found no pixel changes; the original was retained.";
@@ -229,6 +251,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                     : "A smaller replacement PNG was generated and selected.";
                             }
                             catch (OperationCanceledException) { throw; }
+                            catch (RetainedException e)
+                            {
+                                // Fixed by the recipe: remembered, so later builds skip the analysis.
+                                if (recipe != null && cache)
+                                {
+                                    cache.unchangedTextures.Add(new UnchangedTextureAnalysis { source = (Texture2D)group.Source, sourceId = id, recipeHash = recipe, lastUsedDay = CacheCleanup.Today, retainedReason = e.Message });
+                                    EditorUtility.SetDirty(cache);
+                                }
+                                summary.Skipped++;
+                                result.Outcome = TextureResultKind.Skipped;
+                                result.Reason = e.Message;
+                                warn?.Invoke(group.Source, e.Message);
+                            }
                             catch (Exception e)
                             {
                                 summary.Skipped++;

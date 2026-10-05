@@ -42,8 +42,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             var header = PngPixels.Inspect(File.ReadAllBytes(LongPath.For(path)));
             if (importer.textureType == TextureImporterType.NormalMap &&
-                (header.BitDepth != 8 || (header.ColorType != 2 && header.ColorType != 6)))
-                throw new InvalidOperationException("NormalMap sources must remain authored 8-bit RGB/RGBA PNGs; grayscale and indexed input are unsupported.");
+                (header.BitDepth != 8 && header.BitDepth != 16 || (header.ColorType != 2 && header.ColorType != 6)))
+                throw new InvalidOperationException("NormalMap sources must remain authored 8- or 16-bit RGB/RGBA PNGs; grayscale and indexed input are unsupported.");
             UvCoverageRasterizer.ValidateSize(header.Width, header.Height);
             // Coverage and padding use encoded source dimensions. Unity applies the copied mip,
             // compression, NPOT and per-platform size settings to the newly generated PNG.
@@ -250,7 +250,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         (info.ColorType == 2 && info.BitDepth == 8) ||
                         (info.ColorType == 3 && (info.BitDepth == 1 || info.BitDepth == 2 || info.BitDepth == 4 || info.BitDepth == 8)) ||
                         (info.ColorType == 4 && info.BitDepth == 8) ||
-                        (info.ColorType == 6 && info.BitDepth == 8);
+                        (info.ColorType == 6 && info.BitDepth == 8) ||
+                        // 16-bit: read rounded to 8 bits, which is what Unity compresses (checked per texture on import).
+                        (info.ColorType != 3 && info.BitDepth == 16 && bytes[p + 20] == 0);
                     if (!supported)
                         throw new InvalidOperationException(info.BitDepth > 8
                             ? "PNG precision above 8 bits is unsupported; original retained."
@@ -285,6 +287,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         info.ColorType == 3 && palette && size > 0 && size <= paletteEntries;
                     if (!validLength)
                         throw new InvalidOperationException("PNG tRNS has an invalid length, order, or color type.");
+                    if (info.BitDepth == 16)
+                        throw new InvalidOperationException("A 16-bit PNG with a transparency key is unsupported; original retained.");
                     if (Crc(bytes, p + 4, (int)size + 4) != BigEndian(bytes, p + 8 + (int)size))
                         throw new InvalidOperationException("PNG tRNS CRC mismatch.");
                     transparency = true;
@@ -365,6 +369,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public static Color32[] Decode(byte[] bytes, out PngInfo info)
         {
             info = Inspect(bytes);
+            if (info.BitDepth == 16) return Decode16(bytes, info);
             // Decode encoded samples without colour-profile interpretation or legacy gAMA conversion.
             // This changes only an in-memory copy. Exact metadata goes back on the generated PNG.
             byte[] raw = info.ColourMetadata.Count == 0 ? bytes : WithColourMetadata(bytes, Array.Empty<byte[]>());
@@ -376,6 +381,98 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return decoded.GetPixels32();
             }
             finally { UnityEngine.Object.DestroyImmediate(decoded); }
+        }
+
+        // A non-interlaced 16-bit PNG (validated by Inspect), each sample rounded to 8 bits as round(v / 257): Unity
+        // imports 16-bit PNGs this way before compressing them (an 8-bit copy rounded so compresses to identical bytes).
+        private static Color32[] Decode16(byte[] bytes, PngInfo info)
+        {
+            int channels = info.ColorType == 0 ? 1 : info.ColorType == 2 ? 3 : info.ColorType == 4 ? 2 : 4;
+            int bpp = channels * 2, stride = checked(info.Width * bpp);
+            var compressed = new MemoryStream();
+            for (int p = 8; p + 12 <= bytes.Length;)
+            {
+                int size = checked((int)BigEndian(bytes, p));
+                string type = System.Text.Encoding.ASCII.GetString(bytes, p + 4, 4);
+                if (type == "IDAT") compressed.Write(bytes, p + 8, size);
+                p += size + 12;
+                if (type == "IEND") break;
+            }
+            var raw = new byte[checked((stride + 1) * info.Height)];
+            using (var zlib = new System.IO.Compression.DeflateStream(new MemoryStream(compressed.GetBuffer(), 2, (int)compressed.Length - 2),
+                System.IO.Compression.CompressionMode.Decompress))
+            {
+                int read = 0, count;
+                while (read < raw.Length && (count = zlib.Read(raw, read, raw.Length - read)) > 0) read += count;
+                if (read != raw.Length) throw new InvalidOperationException("Truncated 16-bit PNG image data.");
+            }
+            var rows = new byte[stride * info.Height];
+            for (int y = 0; y < info.Height; y++)
+            {
+                int filter = raw[y * (stride + 1)], s = y * (stride + 1) + 1, d = y * stride;
+                if (filter > 4) throw new InvalidOperationException("Invalid PNG row filter.");
+                for (int x = 0; x < stride; x++)
+                {
+                    int left = x >= bpp ? rows[d + x - bpp] : 0, up = y > 0 ? rows[d - stride + x] : 0, corner = x >= bpp && y > 0 ? rows[d - stride + x - bpp] : 0;
+                    int predicted = filter == 0 ? 0 : filter == 1 ? left : filter == 2 ? up : filter == 3 ? (left + up) >> 1 : Paeth(left, up, corner);
+                    rows[d + x] = (byte)(raw[s + x] + predicted);
+                }
+            }
+            byte Sample(int i) => (byte)((((rows[2 * i] << 8) | rows[2 * i + 1]) + 128) / 257);
+            // PNG rows run top to bottom; Unity's pixel arrays run bottom to top.
+            var pixels = new Color32[info.Width * info.Height];
+            for (int y = 0; y < info.Height; y++)
+                for (int x = 0; x < info.Width; x++)
+                {
+                    int i = (y * info.Width + x) * channels;
+                    var c = channels == 1 ? new Color32(Sample(i), Sample(i), Sample(i), 255)
+                        : channels == 2 ? new Color32(Sample(i), Sample(i), Sample(i), Sample(i + 1))
+                        : channels == 3 ? new Color32(Sample(i), Sample(i + 1), Sample(i + 2), 255)
+                        : new Color32(Sample(i), Sample(i + 1), Sample(i + 2), Sample(i + 3));
+                    pixels[(info.Height - 1 - y) * info.Width + x] = c;
+                }
+            return pixels;
+        }
+
+        private static int Paeth(int a, int b, int c)
+        {
+            int p = a + b - c, pa = Math.Abs(p - a), pb = Math.Abs(p - b), pc = Math.Abs(p - c);
+            return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+        }
+
+        // For a 16-bit PNG source: whether an 8-bit copy rounded as Decode16 reads it, imported with the source's
+        // settings, gives exactly the texture data Unity builds from the source on the active platform. Only then does
+        // anything derived from the rounded pixels match the original. The temporary copy lives in folder for the call.
+        private static readonly System.Collections.Generic.Dictionary<string, bool> roundedMatches = new System.Collections.Generic.Dictionary<string, bool>();
+
+        internal static bool RoundedImportMatches(Texture2D source, string folder)
+        {
+            string path = AssetDatabase.GetAssetPath(source);
+            if (!SourceImages.IsPng(path)) return true; // Flattened sources (PSD, TGA...) are read by Unity at 8 bits.
+            var bytes = File.ReadAllBytes(LongPath.For(path));
+            var info = Inspect(bytes);
+            if (info.BitDepth != 16) return true;
+            string key = FingerprintService.Hash(bytes) + "|" + FingerprintService.ImporterHash(source) + "|" + EditorUserBuildSettings.activeBuildTarget;
+            if (roundedMatches.TryGetValue(key, out bool cached)) return cached;
+            string meta = GenerationCoordinator.CopiedImporterMeta(path + ".meta", "AvatarTextureOptimizer:rounding");
+            if (meta == null) return roundedMatches[key] = false;
+            string temp = folder + "/" + SourceImages.TempPrefix + Guid.NewGuid().ToString("N") + ".png";
+            try
+            {
+                File.WriteAllBytes(temp, Encode(Decode(bytes, out _), info));
+                File.WriteAllText(temp + ".meta", meta, new System.Text.UTF8Encoding(false));
+                AssetDatabase.ImportAsset(temp, ImportAssetOptions.ForceSynchronousImport);
+                var copy = AssetDatabase.LoadAssetAtPath<Texture2D>(temp);
+                bool match = copy && copy.format == source.format && copy.width == source.width && copy.height == source.height &&
+                    copy.mipmapCount == source.mipmapCount && copy.GetRawTextureData().SequenceEqual(source.GetRawTextureData());
+                return roundedMatches[key] = match;
+            }
+            finally
+            {
+                if (File.Exists(temp) || File.Exists(temp + ".meta")) AssetDatabase.DeleteAsset(temp);
+                if (File.Exists(temp)) File.Delete(temp);
+                if (File.Exists(temp + ".meta")) File.Delete(temp + ".meta");
+            }
         }
 
         public static byte[] Encode(Color32[] pixels, PngInfo info)
@@ -399,8 +496,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Most common cleared colour.
         public static Color32 Detect(Color32[] pixels, bool[] preserved)
         {
-            if (preserved.Count(used => !used) < 256)
-                throw new InvalidOperationException("Fewer than 256 unused texels remain after padding; no useful output.");
+            if (preserved.Count(used => !used) < RetainedException.MinimumUnusedTexels)
+                throw new RetainedException("Fewer than 256 unused texels remain after padding; no useful output.");
             return MostCommon(pixels, i => !preserved[i]);
         }
 

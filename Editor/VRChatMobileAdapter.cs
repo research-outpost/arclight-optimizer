@@ -23,7 +23,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Particle shaders only draw on particle systems, which are not scanned; world shaders are not listed.
     internal sealed class VRChatMobileAdapter : ITextureSamplingAdapter
     {
-        private const string Id = "vrchat-mobile-sdk3.10-static-v1";
+        internal const string Id = "vrchat-mobile-sdk3.10-static-v1";
         internal const string Root = "Packages/com.vrchat.base";
         internal const string Folder = Root + "/Runtime/VRCSDK/Sample Assets/Shaders/Mobile/";
         internal enum Kind { Main, MainBump, StandardLite, ToonStandard, ToonStandardOutline }
@@ -190,6 +190,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             catch (Exception) { return null; }
         }
+
+        // Toon Standard declares these textures only inside shader_feature blocks (CG/Definitions.cginc lines 1-28); with the
+        // keyword off a texture is not declared, so it is never read. Material keywords cannot be animated.
+        internal static readonly (string Keyword, string[] Textures)[] ToonStandardKeywordSlots =
+        {
+            ("USE_OCCLUSION_MAP", new[] { "_OcclusionMap" }), // USE_EMISSION_MAP is #defined in the forward pass, so _EmissionMap is always read.
+            ("USE_NORMAL_MAPS", new[] { "_BumpMap", "_DetailNormalMap" }), ("USE_SPECULAR", new[] { "_MetallicMap", "_GlossMap" }),
+            ("USE_DETAIL_MAPS", new[] { "_DetailAlbedoMap", "_DetailMask", "_DetailNormalMap" }), ("USE_MATCAP", new[] { "_Matcap", "_MatcapMask" }),
+            ("USE_AUDIOLINK", new[] { "_AudioLinkMask" }),
+        };
+
+        internal static bool IsAuditedToonStandard(Material material) => material.shader && FileOf(material.shader) is string file &&
+            (Audited[file].Item1 == Kind.ToonStandard || Audited[file].Item1 == Kind.ToonStandardOutline) && SourceFailure(file) == null;
 
         private static string SourceFailure(string file) => ShaderAdapterRegistry.PinnedSourceFailure(Folder + file, Audited[file].Item3,
             () => SourceHash(file), "This VRChat SDK's " + Path.GetFileNameWithoutExtension(file) + " shader differs from the audited SDK 3.10.5 source; original retained.");

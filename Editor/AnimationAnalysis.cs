@@ -200,7 +200,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     foreach (var node in layer.AllReachableNodes())
                     {
                         if (additive && node is VirtualClip clip) clips.Add(clip);
-                        if (node is VirtualBlendTree tree && tree.BlendType != BlendTreeType.Simple1D)
+                        if (node is VirtualBlendTree tree && tree.BlendType != BlendTreeType.Simple1D && !FoldedLayers(tree))
                             foreach (var child in tree.AllReachableNodes())
                                 if (child is VirtualClip nested) clips.Add(nested);
                     }
@@ -209,9 +209,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return clips;
         }
 
+        // Arclight's own folded layer: a Direct tree whose children all play at weight 1 (AlwaysOne) and never share a property,
+        // so every child keeps exactly the values it would have alone; its children are judged on their own.
+        internal static bool FoldedLayers(VirtualBlendTree tree) => tree.BlendType == BlendTreeType.Direct && !tree.NormalizedBlendValues &&
+            AnimatorLayerMerger.AlwaysOne != null && tree.Children.All(c => c.DirectBlendParameter == AnimatorLayerMerger.AlwaysOne);
+
         // VRChat keys its playable layers by VRCAvatarDescriptor.AnimLayerType; this package does not
         // reference the SDK, so match the enum by type and value name.
-        private static bool IsAdditivePlayableLayer(object key) =>
+        internal static bool IsAdditivePlayableLayer(object key) =>
             key != null && key.GetType().Name == "AnimLayerType" && key.ToString() == "Additive";
 
         private static void AnalyzeVirtualClip(GameObject root, string prefix, VirtualClip clip,

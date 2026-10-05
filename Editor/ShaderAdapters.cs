@@ -20,6 +20,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Set only by animation modeling: every (scale.xy, offset.zw) the path can take. Coverage uses
         // the convex hull of each triangle under all of them. Null means the static Scale/Offset.
         public List<Vector4> AnimatedTransforms;
+        // Set by an adapter that knows the path's whole transform is raw UV * Basis_ST.xy + Basis_ST.zw and that the
+        // shader reads Basis_ST only for texture lookups; texture cropping may then rewrite that _ST. Dependencies lists
+        // every texture whose _ST the path reads. Null means the path cannot be cropped.
+        public string Basis;
+        public string[] Dependencies;
         public TextureWrapMode WrapU(Texture source) => FixedRepeat ? TextureWrapMode.Repeat : (SamplerTexture ? SamplerTexture : source).wrapModeU;
         public TextureWrapMode WrapV(Texture source) => FixedRepeat ? TextureWrapMode.Repeat : (SamplerTexture ? SamplerTexture : source).wrapModeV;
     }
@@ -63,6 +68,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             new List<ITextureSamplingAdapter> { new KnownUnityShaderAdapter(), new StandardShaderAdapter(), new LilToonAdapter(), new SpsLilToonAdapter(), new PoiyomiAdapter(), new NonToonAdapter(), new VRChatMobileAdapter(), new SunaoAdapter(), new OrelsToonAdapter(), new MochieStandardAdapter() };
 
         private static readonly Dictionary<string, string> pinnedSourceFailures = new Dictionary<string, string>(System.StringComparer.Ordinal);
+
+        // Whether a shader adapter recognizes the material's shader (audited sampling model).
+        internal static bool Recognizes(Material material) => material && material.shader && Adapters.Exists(a => a.Matches(material));
 
         internal static void BeginScan() { LilToonSourceGuard.BeginScan(); pinnedSourceFailures.Clear(); }
 
@@ -125,10 +133,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             new SamplingDescription { AdapterId = id, Reason = reason };
 
         // One mesh-UV path scaled by stProperty's tiling/offset, with the sampled texture's own sampler.
-        internal static SamplingDescription UvPath(string id, TextureSemantics semantics, int uv, Material material, string stProperty) =>
+        // croppable: the adapter has audited that the shader reads stProperty's _ST only for texture lookups.
+        internal static SamplingDescription UvPath(string id, TextureSemantics semantics, int uv, Material material, string stProperty, bool croppable = false) =>
             new SamplingDescription { AdapterId = id, Supported = true, Semantics = semantics, Paths = new List<SamplingPath> {
                 new SamplingPath { UvChannel = uv, Scale = MaterialInputs.Scale(material, stProperty),
-                    Offset = MaterialInputs.Offset(material, stProperty), Label = "Mesh UV" + uv } } };
+                    Offset = MaterialInputs.Offset(material, stProperty), Label = "Mesh UV" + uv,
+                    Basis = croppable ? stProperty : null, Dependencies = new[] { stProperty } } } };
 
         // Engine and AudioLink globals that shader includes read without a material property.
         private static readonly HashSet<string> GlobalTextures = new HashSet<string>(System.StringComparer.Ordinal)
@@ -210,9 +220,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return ShaderAdapterRegistry.Unsupported(Id, "Standard parallax offsets every texture lookup by view direction; original retained.");
             SamplingDescription result;
             if (MainUvFields.TryGetValue(property, out var semantics))
-                result = ShaderAdapterRegistry.UvPath(Id, semantics, 0, material, "_MainTex");
+                result = ShaderAdapterRegistry.UvPath(Id, semantics, 0, material, "_MainTex", croppable: true);
             else if (DetailUvFields.TryGetValue(property, out semantics))
-                result = ShaderAdapterRegistry.UvPath(Id, semantics, MaterialInputs.Float(material, "_UVSec") == 0 ? 0 : 1, material, "_DetailAlbedoMap");
+                result = ShaderAdapterRegistry.UvPath(Id, semantics, MaterialInputs.Float(material, "_UVSec") == 0 ? 0 : 1, material, "_DetailAlbedoMap", croppable: true);
             else return ShaderAdapterRegistry.Unsupported(Id, property == "_ParallaxMap"
                 ? "Standard height maps drive view-dependent parallax; original retained."
                 : "Unverified Standard texture property; original retained.");
@@ -249,7 +259,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public SamplingDescription Describe(Material material, string property)
         {
             if (property != "_MainTex") return ShaderAdapterRegistry.Unsupported("unity-unlit-v1", "Unverified texture property.");
-            var result = ShaderAdapterRegistry.UvPath("unity-unlit-texture-v1", TextureSemantics.Color, 0, material, property);
+            var result = ShaderAdapterRegistry.UvPath("unity-unlit-texture-v1", TextureSemantics.Color, 0, material, property, croppable: true);
             result.Channels = TextureChannels.RGB; // The fragment ends with UNITY_OPAQUE_ALPHA.
             return result;
         }

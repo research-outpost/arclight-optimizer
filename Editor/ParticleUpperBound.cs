@@ -21,14 +21,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         internal sealed class Result { public int Systems, Removed, Trails, Collisions; public long Before, After; }
 
-        // Also removes systems that can never emit (they still count toward the rank's particle systems), unless
+        // Also removes systems that can never emit (they still cost a component update every frame), unless
         // another component references them or they have particle systems below them that their playback starts;
         // and turns off modules that provably do nothing: per-particle trails whose lifetime is always 0, and
         // collision that can hit nothing (World mode colliding with no layers, Planes mode with no planes).
-        internal static Result Run(GameObject root, VertexStreamStripper.AnimationInfo animation)
+        internal static Result Run(AvatarAnalysis analysis)
         {
             var result = new Result();
-            if (animation == null) return result;
+            if (!analysis.Complete) return result;
+            var root = analysis.Root;
             var systems = root.GetComponentsInChildren<ParticleSystem>(true);
             var subEmitterTargets = new HashSet<ParticleSystem>();
             foreach (var system in systems)
@@ -37,18 +38,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 for (int i = 0; i < sub.subEmittersCount; i++)
                     if (sub.GetSubEmitterSystem(i)) subEmitterTargets.Add(sub.GetSubEmitterSystem(i));
             }
-            var referenced = References(root, systems);
             foreach (var system in systems)
             {
-                if (subEmitterTargets.Contains(system) || Animated(root, system, animation)) continue;
+                var renderer = system.GetComponent<ParticleSystemRenderer>();
+                if (subEmitterTargets.Contains(system) || analysis.IsAnimated(system) || analysis.IsAnimated(renderer) || Exclusions.Excluded(system)) continue;
                 long bound = Bound(system);
                 var main = system.main;
-                if (bound == 0 && !referenced.Contains(system) &&
+                // A Stop Action (Disable, Destroy, Callback) still acts when the system ends, even with nothing emitted.
+                if (bound == 0 && main.stopAction == ParticleSystemStopAction.None && !analysis.ReferencesTo(system).Any(c => c != renderer) && !analysis.ReferencesTo(renderer).Any(c => c != system) &&
                     system.GetComponentsInChildren<ParticleSystem>(true).Length == 1)
                 {
                     result.Removed++;
                     result.Before += main.maxParticles;
-                    var renderer = system.GetComponent<ParticleSystemRenderer>();
                     if (renderer) UnityEngine.Object.DestroyImmediate(renderer);
                     UnityEngine.Object.DestroyImmediate(system);
                     continue;
@@ -60,29 +61,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 result.Before += main.maxParticles;
                 result.After += bound;
                 main.maxParticles = (int)bound;
-            }
-            return result;
-        }
-
-        // Particle systems (or their renderers) that a component other than themselves refers to.
-        private static HashSet<ParticleSystem> References(GameObject root, ParticleSystem[] systems)
-        {
-            var result = new HashSet<ParticleSystem>();
-            foreach (var component in root.GetComponentsInChildren<Component>(true))
-            {
-                if (!component || component is Transform) continue;
-                var own = component is ParticleSystem s ? s : component is ParticleSystemRenderer r ? r.GetComponent<ParticleSystem>() : null;
-                using (var serialized = new SerializedObject(component))
-                {
-                    var iterator = serialized.GetIterator();
-                    while (iterator.Next(true))
-                    {
-                        if (iterator.propertyType != SerializedPropertyType.ObjectReference) continue;
-                        var target = iterator.objectReferenceValue is ParticleSystem system ? system
-                            : iterator.objectReferenceValue is ParticleSystemRenderer renderer ? renderer.GetComponent<ParticleSystem>() : null;
-                        if (target && target != own) result.Add(target);
-                    }
-                }
             }
             return result;
         }
@@ -102,14 +80,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return true;
         }
 
-        private static bool Animated(GameObject root, ParticleSystem system, VertexStreamStripper.AnimationInfo animation)
-        {
-            string path = AnimationUtility.CalculateTransformPath(system.transform, root.transform);
-            return animation.Bindings.Any(b => b.type != null &&
-                (typeof(ParticleSystem).IsAssignableFrom(b.type) || typeof(ParticleSystemRenderer).IsAssignableFrom(b.type)) &&
-                (b.path == path || b.path.Split('/').Last() == system.name));
-        }
-
         // The most particles the system can have alive, or -1 when it cannot be bounded.
         internal static long Bound(ParticleSystem system)
         {
@@ -122,7 +92,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             rate = Math.Max(0, rate);
             lifetime = Math.Max(0, lifetime);
             float duration = Math.Max(main.duration, 1e-4f);
-            float window = lifetime + FrameMargin;
+            // One step advances the simulation by up to FrameMargin times its speed.
+            float window = lifetime + FrameMargin * Math.Max(1f, main.simulationSpeed);
 
             long fromRate = rate > 0 ? (long)Math.Ceiling((double)rate * window) + 1 : 0;
             long fromBursts = 0, everBursts = 0;

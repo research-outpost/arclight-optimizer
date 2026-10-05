@@ -36,7 +36,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var clips = list.Cast<AnimatorController>().SelectMany(AnimationClipDeduplicator.AllClips)
                 .Concat(root.GetComponentsInChildren<Animation>(true).SelectMany(a => AnimationUtility.GetAnimationClips(a.gameObject)))
                 .Where(clip => clip).Distinct().ToArray();
-            var renderers = root.GetComponentsInChildren<Renderer>(true).Where(r => r is MeshRenderer || r is SkinnedMeshRenderer).ToArray();
+            var renderers = root.GetComponentsInChildren<Renderer>(true).Where(r => (r is MeshRenderer || r is SkinnedMeshRenderer) && !Exclusions.Excluded(r)).ToArray();
             var excluded = AnimatedMaterials(root, clips, renderers);
 
             // Renderer-held materials first, so a keeper is one the avatar already uses.

@@ -8,7 +8,7 @@ using UnityEngine.Rendering;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
-    // Runs on the build avatar after Avatar Optimizer. Object references on the avatar's components are rewritten
+    // Runs on the build avatar among the avatar-wide passes. Object references on the avatar's components are rewritten
     // through one replacement map. A reference this does not rewrite (an animation curve, an animator behaviour)
     // keeps its own identical original, so the avatar never looks or sounds different; it only saves less.
     //  - Duplicate meshes: identical vertex and index buffers, vertex layout, submeshes, bounds, bind poses,
@@ -22,14 +22,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     {
         internal sealed class Result
         {
-            public int Meshes, AudioClips, Compacted, MonoAudio, Stripped;
+            public int Meshes, AudioClips, Compacted, MonoAudio, Stripped, FrozenShapes, MergedSkinned, MergedInto;
             // Mesh bytes are uncompressed vertex and index data; audio bytes are estimated bundle sizes.
             public long MeshBytes, AudioBytes;
             public int AudioUnmeasured;
-            public bool Changed => Meshes + AudioClips + Compacted + MonoAudio + Stripped > 0;
+            public bool Changed => Meshes + AudioClips + Compacted + MonoAudio + Stripped + FrozenShapes + MergedSkinned > 0;
             public override string ToString() =>
                 $"merged {Meshes} duplicate mesh(es) and {AudioClips} duplicate audio clip(s), gave {Compacted} mesh(es) a 16-bit index buffer, " +
-                $"made {MonoAudio} identical-channel stereo clip(s) mono (+3 dB), removed unused vertex channels from {Stripped} mesh(es)";
+                $"made {MonoAudio} identical-channel stereo clip(s) mono (+3 dB), removed unused vertex channels from {Stripped} mesh(es), baked or removed {FrozenShapes} blend shape(s), merged {MergedSkinned} skinned mesh(es) into {MergedInto}";
         }
 
         // monoAudio: convert qualifying identical-channel stereo clips. Callers pass false when animation can change
@@ -38,8 +38,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             bool monoAudio = false)
         {
             var result = new Result();
-            var components = root.GetComponentsInChildren<Component>(true).Where(c => c && !(c is Transform)).ToArray();
-            var references = References(components);
+            // Components under an Arclight Exclude keep their own meshes and clips (identical copies stay identical), and a mesh
+            // or clip they share with other components is left alone for those too.
+            var all = root.GetComponentsInChildren<Component>(true).Where(c => c && !(c is Transform)).ToArray();
+            var components = all.Where(c => !Exclusions.Excluded(c)).ToArray();
+            var excluded = new HashSet<UnityEngine.Object>(References(all.Where(Exclusions.Excluded).ToArray()));
+            var references = References(components).Where(r => !excluded.Contains(r)).ToList();
             var replace = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
             if (merge)
             {
@@ -72,7 +76,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (monoAudio)
             {
                 // Judged after merging, on the clips the components now hold.
-                var mono = AudioMonoConverter.Convert(ClipReferences(components));
+                var mono = AudioMonoConverter.Convert(ClipReferences(components).Where(r => !excluded.Contains(r.Item2)).ToList());
                 if (mono.Count > 0)
                 {
                     foreach (var pair in mono)
@@ -85,6 +89,24 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
             }
             return result;
+        }
+
+        // Texture streaming picks a texture's mip from its renderer's mesh UV distribution metric, which Unity computes only when it
+        // imports a mesh; a mesh built with new Mesh() has none. A mesh built from others gets, per UV channel, the largest metric
+        // of its sources (each source keeps its own vertex positions and UVs, or moves only rigidly), so none of their textures is
+        // streamed at less detail than before; a mesh with the same triangles gets exactly its source's.
+        internal static void KeepUvDensity(Mesh built, IEnumerable<Mesh> sources)
+        {
+            var list = sources.Where(m => m).ToList();
+            using (var serialized = new UnityEditor.SerializedObject(built))
+            {
+                for (int channel = 0; channel < 2; channel++)
+                {
+                    var metric = serialized.FindProperty("m_MeshMetrics[" + channel + "]");
+                    if (metric != null && list.Count > 0) metric.floatValue = list.Max(m => m.GetUVDistributionMetric(channel));
+                }
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+            }
         }
 
         // Vertex streams plus index buffer; blend shapes are not counted, so merged meshes report a lower bound.
@@ -187,6 +209,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var data = array[0];
                 writer.Write((int)data.indexFormat); writer.Write(data.vertexCount); writer.Write(data.vertexBufferCount);
+                // Texture streaming picks mips from the UV distribution metrics, so meshes that differ only there stay apart.
+                using (var serialized = new SerializedObject(mesh))
+                    for (int channel = 0; channel < 2; channel++) writer.Write(serialized.FindProperty("m_MeshMetrics[" + channel + "]")?.floatValue ?? -1);
                 foreach (var attribute in mesh.GetVertexAttributes())
                 {
                     writer.Write((int)attribute.attribute); writer.Write((int)attribute.format);
@@ -265,7 +290,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 indices = new ushort[source.Length];
                 for (int i = 0; i < source.Length; i++)
                 {
-                    if (source[i] > ushort.MaxValue) return null;
+                    if (source[i] >= ushort.MaxValue) return null; // 65535 is the strip-restart value some graphics APIs skip.
                     indices[i] = (ushort)source[i];
                 }
                 submeshes = Enumerable.Range(0, data.subMeshCount).Select(data.GetSubMesh).ToArray();

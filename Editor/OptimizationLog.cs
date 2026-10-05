@@ -222,6 +222,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     .Append(Number(eligibleGroups)).AppendLine(" eligible");
 
             AppendSavings(output);
+            AppendKeptByReason(output, summary);
             output.AppendLine();
             output.AppendLine("Replacements");
             if (replacements.Count == 0)
@@ -286,7 +287,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
         }
 
-        // Later passes (meshes and audio run after Avatar Optimizer) add their savings and rewrite the report in place.
+        // Passes add their savings; after the report is first written, later passes rewrite it in place.
         internal void AddSavings(string category, long bytes, string detail, int unmeasured = 0)
         {
             if (!string.IsNullOrEmpty(detail)) savings.Add((category, bytes, detail, unmeasured));
@@ -307,7 +308,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             output.Append("Saved this build: ");
             if (savings.Count == 0) { output.AppendLine("nothing measurable (no assets were replaced or merged)."); output.AppendLine(); return; }
-            output.Append("about ").AppendLine(Size(savings.Sum(s => s.Bytes)));
+            // Two kinds of figure that do not add up: compressed download estimates (textures, audio) and uncompressed mesh data.
+            long download = savings.Where(s => s.Category != "Meshes").Sum(s => s.Bytes), mesh = savings.Where(s => s.Category == "Meshes").Sum(s => s.Bytes);
+            output.AppendLine((download > 0 || mesh == 0 ? "about " + Size(download) + " estimated download" : "") + (download > 0 && mesh > 0 ? ", and " : "") +
+                (mesh > 0 ? Size(mesh) + " of uncompressed mesh data" : "") + ".");
             foreach (var entry in savings)
             {
                 output.Append("  ").Append(entry.Category).Append(": ").Append(Size(entry.Bytes)).Append(" (").Append(entry.Detail.TrimEnd(',', ' ')).Append(')');
@@ -365,6 +369,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (nameBudget < 0) throw new IOException("Report folder path is too long even without an avatar name.");
             if (sanitized.Length > nameBudget) sanitized = sanitized.Substring(0, nameBudget);
             return prefix + sanitized + suffix;
+        }
+
+        // Textures kept at their original, one line per reason (numbers and the part after the first sentence folded), most
+        // common first, so a reader sees what keeps the most textures before the per-texture details.
+        private static void AppendKeptByReason(StringBuilder output, GenerationSummary summary)
+        {
+            var kept = (summary?.TextureResults ?? new List<TextureGenerationResult>())
+                .Where(r => (r.Outcome == TextureResultKind.Skipped || r.Outcome == TextureResultKind.NotSmaller) && r.Source)
+                .GroupBy(r => Regex.Replace(Regex.Split(ReasonText(r.Reason) is string text && text.Length > 0 ? text : "No reason recorded", @"(?<=[.;])\s|\s\(")[0].TrimEnd('.', ';'), @"\d[\d,.]*", "#"))
+                .Select(g => (Group: g, Bytes: g.Select(r => r.Source).Distinct().Sum(t => CostHints.Bytes(t))))
+                .OrderByDescending(g => g.Bytes).ThenByDescending(g => g.Group.Count()).ToList();
+            if (kept.Count == 0) return;
+            output.AppendLine();
+            output.AppendLine("Kept textures, by reason (most texture memory first)");
+            foreach (var (group, bytes) in kept)
+            {
+                var names = group.Select(r => r.Source.name).Distinct().ToList();
+                output.Append("  ").Append(Size(bytes)).Append(", ").Append(Number(group.Count())).Append(" x ").Append(group.Key).Append(": ")
+                    .AppendLine(string.Join(", ", names.Take(6)) + (names.Count > 6 ? ", ..." : ""));
+            }
         }
 
         private void AppendTextureResults(StringBuilder output)
