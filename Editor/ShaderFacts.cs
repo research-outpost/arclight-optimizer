@@ -13,9 +13,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // (GUID, or name for Unity's built-in shaders), its dependency hash (the file and its includes), the keywords, the
     // target platform, the Unity version, this format's version and a hash of the caller's code tables (keyword lists,
     // lighting sets, stages), so an edited shader, include, Unity upgrade or Arclight change is compiled again.
-    // Only shaders whose content the dependency hash covers go to disk: a .shader file, or a built-in shader. A shader
-    // made in memory (no path) or by an importer (.lilcontainer, ORL, ShaderCore: their importers declare no inputs, so a
-    // template change gives a new shader under the same hash) is compiled in every session instead.
+    // Only shaders whose content the key covers go to disk: a .shader file, a built-in shader, or a lilToon container
+    // (.lilcontainer, lilSSAO's entries), keyed by the shader source it generated, lilToon's own source fingerprint and every
+    // file beside the container (its inserts), since its importer does not declare those inputs. A shader made in memory
+    // (no path) or by another importer (ORL, ShaderCore) is compiled in every session instead.
     internal static class ShaderFacts
     {
         private const string Version = "2";
@@ -31,7 +32,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string path = AssetDatabase.GetAssetPath(shader);
             string id;
             if (path.StartsWith("Resources/", StringComparison.Ordinal)) id = "builtin:" + shader.name;
-            else if (path.EndsWith(".shader", StringComparison.OrdinalIgnoreCase) && AssetDatabase.AssetPathToGUID(path) is string guid && guid.Length > 0)
+            else if ((path.EndsWith(".shader", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".lilcontainer", StringComparison.OrdinalIgnoreCase)) && AssetDatabase.AssetPathToGUID(path) is string guid && guid.Length > 0)
                 id = guid + ":" + shader.name;
             else return null;
             string dependencies = Dependencies(shader, new HashSet<Shader>());
@@ -50,12 +51,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (!seen.Add(shader)) return "";
             string path = AssetDatabase.GetAssetPath(shader);
             string hash = AssetDatabase.GetAssetDependencyHash(path).ToString();
-            if (!path.EndsWith(".shader", StringComparison.OrdinalIgnoreCase)) return hash; // Built-in: no file to read.
+            bool container = path.EndsWith(".lilcontainer", StringComparison.OrdinalIgnoreCase);
+            if (container) { hash = ContainerInputs(path); if (hash == null) return null; }
+            else if (!path.EndsWith(".shader", StringComparison.OrdinalIgnoreCase)) return hash; // Built-in: no file to read.
             if (!UsePassTargets.TryGetValue(path + "|" + hash, out var targets))
             {
                 try
                 {
-                    targets = System.Text.RegularExpressions.Regex.Matches(System.IO.File.ReadAllText(path), "UsePass\\s+\"([^\"]+)/[^/\"]+\"")
+                    targets = System.Text.RegularExpressions.Regex.Matches(container ? ContainerSource(path) : System.IO.File.ReadAllText(path), "UsePass\\s+\"([^\"]+)/[^/\"]+\"")
                         .Cast<System.Text.RegularExpressions.Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
                 }
                 catch (Exception) { return null; }
@@ -69,6 +72,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 text.Append('+').Append(other);
             }
             return text.ToString();
+        }
+
+        // The source lilToon's importer generated for a container (its "Shader Source" sub-asset), or null.
+        private static string ContainerSource(string path) =>
+            AssetDatabase.LoadAllAssetsAtPath(path).OfType<TextAsset>().FirstOrDefault(t => t.name == "Shader Source")?.text;
+
+        // What a container's compiled variants depend on: the generated source, lilToon's source files (LilToonSourceGuard) and
+        // every file in the container's own folder (the inserts it includes by name; their nested "Includes/" paths are
+        // lilToon's); null when any cannot be read.
+        private static string ContainerInputs(string path)
+        {
+            try
+            {
+                string source = ContainerSource(path);
+                if (source == null || LilToonSourceGuard.Validate() != null || LilToonSourceGuard.SourceFingerprint == null) return null;
+                string folder = Path.GetDirectoryName(path);
+                var files = Directory.GetFiles(folder, "*", SearchOption.TopDirectoryOnly).Where(f => !f.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+                    .Select(f => f.Replace('\\', '/')).OrderBy(f => f, StringComparer.Ordinal)
+                    .Select(f => f + "=" + FingerprintService.Hash(File.ReadAllBytes(f)));
+                return "container:" + FingerprintService.Hash(System.Text.Encoding.UTF8.GetBytes(
+                    source + "\n" + LilToonSourceGuard.SourceFingerprint + "\n" + string.Join("\n", files)));
+            }
+            catch (Exception) { return null; }
         }
 
         internal static bool TryGet(string kind, string key, out string value)
