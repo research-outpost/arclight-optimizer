@@ -14,8 +14,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // build copy without it; source materials are never edited. Also cleared, because nothing can sample them:
     //  - on audited lilToon entries, textures whose feature switch is off and no animation can turn on (every lookup of
     //    these slots sits inside the switch's branch in lilToon 2.3.4's lil_common_frag.hlsl);
-    //  - on materials whose shader is missing or failed to compile (drawn with Unity's error shader), every texture.
-    // VRChat's fallback slots are always kept, so nothing the shader or the fallback can sample or compile changes.
+    //  - on materials whose shader is missing (drawn with Unity's error shader), every texture, fallback slots included unless it is swapped with a material that is not pink.
+    // Otherwise VRChat's fallback slots are always kept, so nothing the shader or the fallback can sample or compile changes.
     // Undeclared textures go for shaders whose source is audited (lilToon entries, Unity's built-ins, VRChat's mobile
     // shaders), and on PC for any other shader when no compiled variant binds them (VertexStreamStripper.Uniforms). Materials an excluded renderer or a renderer with a property block uses are left alone.
     internal static class StaleTextureCleaner
@@ -42,10 +42,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .Where(m => m && m.shader && !untouched.Contains(m)).Distinct().ToList();
             var animated = new HashSet<string>(analysis.Bindings.Where(b => b.Property.StartsWith("material.", StringComparison.Ordinal))
                 .Select(b => b.Property.Substring(9).Split('.')[0]), StringComparer.Ordinal);
+            // A material with a missing shader keeps VRChat's fallback slots when an animation can swap between it and a
+            // material that is not pink (on the same renderer): the swap may be how the avatar shows it, so nothing more than
+            // before is cleared there. A swap among pink materials only clears them fully; a material an animation swaps in on a
+            // renderer that cannot be found keeps them.
+            bool Pink(Material m) => !m.shader || m.shader.name == "Hidden/InternalErrorShader";
+            var swapped = new HashSet<Material>();
+            var placed = new HashSet<Material>();
+            foreach (var renderer in renderers)
+            {
+                var swaps = analysis.SwappedMaterials(renderer).Where(m => m).ToList();
+                if (swaps.Count == 0) continue;
+                placed.UnionWith(swaps);
+                var shown = renderer.sharedMaterials.Where(m => m).Concat(swaps).ToList();
+                if (shown.Any(m => !Pink(m))) swapped.UnionWith(shown);
+            }
+            swapped.UnionWith(analysis.AnimatedObjectValues.OfType<Material>().Where(m => !placed.Contains(m)));
             var replacements = new Dictionary<Material, Material>();
             foreach (var material in materials)
             {
                 var stale = StaleTextures(material, animated.Contains);
+                if (swapped.Contains(material)) stale.ExceptWith(FallbackSlots);
                 int keywords = InvalidKeywords(material);
                 var values = StaleValues(material);
                 if (stale.Count == 0 && keywords == 0 && values.Count == 0) continue;
@@ -198,7 +215,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var entry = textures.GetArrayElementAtIndex(i);
                     string name = entry.FindPropertyRelative("first").stringValue;
                     var texture = entry.FindPropertyRelative("second.m_Texture").objectReferenceValue;
-                    if (!texture || FallbackSlots.Contains(name)) continue;
+                    if (!texture || FallbackSlots.Contains(name) && !errorShader) continue; // Without its shader the material is broken for everyone; nothing is kept for the fallback.
                     if (errorShader || switchedOff.Contains(name) ||
                         material.shader.FindPropertyIndex(name) < 0 && Unbound(name)) stale.Add(name);
                 }

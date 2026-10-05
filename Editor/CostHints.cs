@@ -40,21 +40,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var material in materials.Where(m => !m.shader || m.shader.name == "Hidden/InternalErrorShader"))
             {
                 var textures = TexturesOf(material).ToList();
-                if (textures.Count == 0) continue;
-                hints.Add("Material " + material.name + " has no shader installed, so it renders pink in game; its " + textures.Count +
-                    " texture(s) still take " + EditorUtility.FormatBytes(textures.Sum(Bytes)) + ". Install its shader or remove the material.");
+                // Arclight clears these textures (StaleTextureCleaner), so usually only the pink warning is left.
+                hints.Add("Material " + material.name + " has no shader installed, so it renders pink in game" + (textures.Count == 0 ? "" : "; its " + textures.Count +
+                    " texture(s) still take " + EditorUtility.FormatBytes(textures.Sum(Bytes))) + ". Install its shader or remove the material.");
             }
 
-            // High Quality (BC7) on a texture with no alpha: Normal Quality stores it as DXT1, half the size, with a small quality loss.
-            var bc7 = materials.SelectMany(TexturesOf).Distinct().OfType<Texture2D>()
-                .Where(t => !AssetDatabase.GetAssetPath(t).StartsWith(AutomaticTextureOptimizer.CacheFolder + "/", StringComparison.Ordinal)) // Arclight's own copies follow their source.
-                .Where(t => t.graphicsFormat == GraphicsFormat.RGBA_BC7_SRGB || t.graphicsFormat == GraphicsFormat.RGBA_BC7_UNorm)
-                .Where(t => AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(t)) is TextureImporter importer && importer.textureType != TextureImporterType.NormalMap && !importer.DoesSourceTextureHaveAlpha())
-                .OrderByDescending(Bytes).ToList();
-            if (bc7.Count > 0)
-                hints.Add(bc7.Count + " texture(s) without alpha use High Quality compression (BC7, " + EditorUtility.FormatBytes(bc7.Sum(Bytes)) +
-                    "). Normal Quality would store them in half the memory, with a small loss of quality: " +
-                    string.Join(", ", bc7.Take(8).Select(t => t.name)) + (bc7.Count > 8 ? ", ..." : "") + ".");
             return hints;
         }
     }

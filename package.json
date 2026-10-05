@@ -1,7 +1,7 @@
 {
   "name": "research-outpost.arclight-optimizer",
   "displayName": "Arclight Optimizer",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "unity": "2022.3",
   "description": "Optimizes VRChat avatars at build time through NDMF: textures, meshes, bones, PhysBones, animators, materials, particles and audio, with no visible change beyond the documented differences. Non-destructive; replaces Avatar Optimizer.",
   "author": { "name": "Okarin" },
