@@ -62,8 +62,8 @@ Everything else is exact. These differences are accepted:
 
 ## Other optimizers
 
-- **Avatar Optimizer (AAO)**: not supported alongside Arclight, which replaces it. An avatar that still has AAO components gets a build error naming them.
-- **d4rk Avatar Optimizer**: works alongside. Arclight runs first and leaves the steps d4rk's merge depends on to d4rk.
+- **Avatar Optimizer (AAO)**: not supported.
+- **d4rk Avatar Optimizer**: supported.
 
 ## Clearing unused texture areas
 
