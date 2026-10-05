@@ -72,7 +72,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // The texture pass removes the component; the post-d4rk hook reads these requests instead.
             if (config.enabled && config.mergeDuplicates) MergeRequests.Add(ctx.AvatarRootObject);
             if (config.enabled && config.optimizeAnimations) KeyReductionRequests.Add(ctx.AvatarRootObject);
-            if (config.enabled && config.splitPhysBones && !state.VrcfuryPending) PhysBoneSplitRequests.Add(ctx.AvatarRootObject);
+            // With d4rk the stream pass waits until after its merge (see VertexStreamStripper).
+            if (config.enabled && config.optimizeMeshes && ctx.AvatarRootObject.GetComponentsInChildren<Component>(true).Any(c => c && c.GetType().Name == "d4rkAvatarOptimizer"))
+                StreamRequests.Add(ctx.AvatarRootObject);
+            // PhysBone splitting is parked: it has no inspector toggle, and a value saved by an earlier version is ignored.
             // Read by the later passes; the component itself is removed by the texture pass.
             state.MergeMeshesAndAudio = config.enabled && config.mergeDuplicates;
             state.OptimizeMeshes = config.enabled && config.optimizeMeshes;
@@ -361,10 +364,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         state.Report?.Add(null, summary);
                     }
                 }
-                bool monoAudio = state.OptimizeAudio && !AudioSettingsAnimated(analysis);
+                var monoVetoed = AudioSettingsAnimated(analysis);
+                bool monoAudio = state.OptimizeAudio && monoVetoed != null;
                 BuildTimings.Step("MeshAndAudioOptimizer");
                 var result = MeshAndAudioOptimizer.Run(ctx.AvatarRootObject, state.MergeMeshesAndAudio, state.OptimizeMeshes,
-                    ReplacementRegistry.Register, monoAudio);
+                    ReplacementRegistry.Register, monoAudio, monoVetoed);
                 result.FrozenShapes = frozen.Frozen + frozen.Removed;
                 result.MergedSkinned = mergedSkinned.Merged;
                 result.MergedInto = mergedSkinned.Into;
@@ -502,17 +506,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // Mono +3 dB matches stereo only for the source settings it was measured with, so any animation of an
         // AudioSource or VRC Spatial Audio Source setting other than volume, pitch, mute, enabling or the clip
-        // itself turns the conversion off. NDMF marker clips stand for the platform's proxy motions, which hold
-        // no audio bindings. Anything that cannot be read also turns it off.
+        // itself turns the conversion off for every clip a source on that object holds; other sources are unaffected. NDMF
+        // marker clips stand for the platform's proxy motions, which hold no audio bindings. When the animation cannot be
+        // read, nothing is converted (null).
         private static readonly HashSet<string> NeutralAudioProperties = new HashSet<string>(StringComparer.Ordinal)
             { "m_Volume", "m_Pitch", "m_Mute", "m_Enabled", "m_audioClip", "Gain" };
 
-        private static bool AudioSettingsAnimated(AvatarAnalysis analysis)
+        private static HashSet<GameObject> AudioSettingsAnimated(AvatarAnalysis analysis)
         {
             bool Changes(EditorCurveBinding binding) => binding.type != null &&
                 (typeof(AudioSource).IsAssignableFrom(binding.type) || AudioMonoConverter.IsVrcSpatialSource(binding.type)) &&
                 !NeutralAudioProperties.Contains(binding.propertyName ?? "");
-            return !analysis.Complete || analysis.Bindings.Any(b => Changes(b.Curve));
+            if (!analysis.Complete) return null;
+            // A binding whose path reaches no object drives nothing.
+            return new HashSet<GameObject>(analysis.Bindings.Where(b => Changes(b.Curve) && b.Target is Component c && c).Select(b => ((Component)b.Target).gameObject));
         }
 
     }

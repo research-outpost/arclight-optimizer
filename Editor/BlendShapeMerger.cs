@@ -10,7 +10,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Blend shapes that always hold the same weight are applied as one: the second's deltas are added to the first's
     // and the second goes (Unity blends one shape instead of two). Typical after merging skinned meshes, where each
     // part's "Shrink" or toggle shape is animated by the same clips. Two shapes of one renderer merge when:
-    //  - both have one frame, at the same frame weight, and no vertex has a delta in both (so every sum is exact);
+    //  - both have the same frames (count and weights), and no vertex has a delta in both in any frame, so at every weight
+    //    each vertex keeps its own shape's frames and interpolation factor (every sum adds zero);
     //  - the renderer holds both at the same weight, and every clip that animates either animates both with
     //    identical curves (controllers only, on a path that names this renderer alone);
     //  - VRChat does not drive either (visemes, eyelids) and neither is an MMD world shape on the root "Body" mesh.
@@ -45,10 +46,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 for (int shape = 0; shape < mesh.blendShapeCount; shape++)
                 {
                     string name = mesh.GetBlendShapeName(shape);
-                    if (mesh.GetBlendShapeFrameCount(shape) != 1 || analysis.BlendShapeDrivenByPlatform(renderer, name) || mmdBody && BlendShapeFreezer.MmdShapes.Contains(name)) continue;
+                    if (analysis.BlendShapeDrivenByPlatform(renderer, name) || mmdBody && BlendShapeFreezer.MmdShapes.Contains(name)) continue;
                     var curves = bindings.Where(b => b.Property == "blendShape." + name).ToList();
                     if (curves.Count == 0) continue; // The freezer handles shapes nothing animates.
-                    string key = renderer.GetBlendShapeWeight(shape).ToString("R") + "|" + mesh.GetBlendShapeFrameWeight(shape, 0).ToString("R") + "|" +
+                    string key = renderer.GetBlendShapeWeight(shape).ToString("R") + "|" + string.Join(",", Enumerable.Range(0, mesh.GetBlendShapeFrameCount(shape)).Select(f => mesh.GetBlendShapeFrameWeight(shape, f).ToString("R"))) + "|" +
                         string.Join(";", curves.Select(b => b.ClipKey + ":" + CurveKey(b.FloatCurve)).OrderBy(s => s, StringComparer.Ordinal));
                     if (!groups.TryGetValue(key, out var list)) groups.Add(key, list = new List<int>());
                     list.Add(shape);
@@ -100,13 +101,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             curve.preWrapMode + "," + curve.postWrapMode + "," + string.Join(",", curve.keys.Select(k =>
                 string.Join(" ", new[] { k.time, k.value, k.inTangent, k.outTangent, k.inWeight, k.outWeight }.Select(f => f.ToString("R"))) + " " + (int)k.weightedMode));
 
-        // Vertices with any delta in the shape's frame.
+        // Vertices with any delta in any of the shape's frames.
         private static bool[] Touched(Mesh mesh, int shape)
         {
             int count = mesh.vertexCount;
             Vector3[] dv = new Vector3[count], dn = new Vector3[count], dt = new Vector3[count];
-            mesh.GetBlendShapeFrameVertices(shape, 0, dv, dn, dt);
-            return Enumerable.Range(0, count).Select(v => !dv[v].Equals(Vector3.zero) || !dn[v].Equals(Vector3.zero) || !dt[v].Equals(Vector3.zero)).ToArray();
+            var touched = new bool[count];
+            for (int f = 0; f < mesh.GetBlendShapeFrameCount(shape); f++)
+            {
+                mesh.GetBlendShapeFrameVertices(shape, f, dv, dn, dt);
+                for (int v = 0; v < count; v++) touched[v] |= !dv[v].Equals(Vector3.zero) || !dn[v].Equals(Vector3.zero) || !dt[v].Equals(Vector3.zero);
+            }
+            return touched;
         }
 
         private static Mesh Build(Mesh mesh, Dictionary<int, int> into)
@@ -125,7 +131,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     mesh.GetBlendShapeFrameVertices(shape, f, dv, dn, dt);
                     foreach (int merged in into.Where(p => p.Value == shape).Select(p => p.Key))
                     {
-                        mesh.GetBlendShapeFrameVertices(merged, 0, mv, mn, mt);
+                        mesh.GetBlendShapeFrameVertices(merged, f, mv, mn, mt); // Same frame weights: frame f matches frame f.
                         for (int v = 0; v < count; v++) { dv[v] += mv[v]; dn[v] += mn[v]; dt[v] += mt[v]; } // Disjoint: one side is zero.
                     }
                     copy.AddBlendShapeFrame(mesh.GetBlendShapeName(shape), mesh.GetBlendShapeFrameWeight(shape, f), dv, dn, dt);

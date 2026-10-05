@@ -92,7 +92,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     result = MaterialInputs.Record(() => adapter.Describe(material, property));
                     break;
                 }
-            // Allow unsupported shaders covers only shaders no adapter recognizes. A field a recognized adapter rejects has a known
+            // Allow Unsupported Shaders covers only shaders no adapter recognizes. A field a recognized adapter rejects has a known
             // reason (a decal, a scrolling or rotated UV, a vertex-stage or data lookup, an unaudited version), so guessing UV0
             // for it would clear texels the shader does read.
             bool recognized = result != null;
@@ -108,7 +108,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string label = propertyIndex >= 0 ? material.shader.GetPropertyDescription(propertyIndex) : "";
             if (IsMatcap(property) || IsMatcap(label) || IsMatcap(material.shader.name))
                 return Unsupported("matcap-override-excluded-v1",
-                    "Matcap fields are excluded from Allow unsupported shaders; original texture retained.");
+                    "Matcap fields are excluded from Allow Unsupported Shaders; original texture retained.");
             var importer = UnityEditor.AssetImporter.GetAtPath(
                 UnityEditor.AssetDatabase.GetAssetPath(material.GetTexture(property))) as UnityEditor.TextureImporter;
             // The override assumes UV0 plus this property's ST. Values that made the adapter reject the

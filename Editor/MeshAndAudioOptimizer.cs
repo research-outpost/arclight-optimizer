@@ -35,7 +35,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // monoAudio: convert qualifying identical-channel stereo clips. Callers pass false when animation can change
         // an AudioSource's or VRC Spatial Audio Source's playback settings, since sources are judged on stored values.
         internal static Result Run(GameObject root, bool merge, bool compact, Action<UnityEngine.Object, UnityEngine.Object> register,
-            bool monoAudio = false)
+            bool monoAudio = false, ICollection<GameObject> monoVetoed = null)
         {
             var result = new Result();
             // Components under an Arclight Exclude keep their own meshes and clips (identical copies stay identical), and a mesh
@@ -76,7 +76,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (monoAudio)
             {
                 // Judged after merging, on the clips the components now hold.
-                var mono = AudioMonoConverter.Convert(ClipReferences(components).Where(r => !excluded.Contains(r.Item2)).ToList());
+                var mono = AudioMonoConverter.Convert(ClipReferences(components).Where(r => !excluded.Contains(r.Item2)).ToList(), monoVetoed);
                 if (mono.Count > 0)
                 {
                     foreach (var pair in mono)

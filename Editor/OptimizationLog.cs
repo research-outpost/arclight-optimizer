@@ -386,10 +386,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var (group, bytes) in kept)
             {
                 var names = group.Select(r => r.Source.name).Distinct().ToList();
+                // Supporting this reason alone would not free a texture another reason also keeps.
+                int alsoOther = group.Select(r => r.Source).Distinct().Count(t => group.Where(r => r.Source == t).SelectMany(r => Blockers(r.Reason)).Distinct().Count() > 1);
                 output.Append("  ").Append(Size(bytes)).Append(", ").Append(Number(group.Count())).Append(" x ").Append(group.Key).Append(": ")
-                    .AppendLine(string.Join(", ", names.Take(6)) + (names.Count > 6 ? ", ..." : ""));
+                    .AppendLine(string.Join(", ", names.Take(6)) + (names.Count > 6 ? ", ..." : "") + (alsoOther > 0 ? " (" + Number(alsoOther) + " also kept for another reason)" : ""));
             }
         }
+
+        // The distinct reasons in a texture's reason text (one per blocking use, joined with " | "), without the material details.
+        private static IEnumerable<string> Blockers(string reason) =>
+            (ReasonText(reason) ?? "").Split(new[] { " | " }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(s => !Regex.IsMatch(s, @"^(Material|Shader|Shader asset|Texture properties):"))
+                .Select(s => Regex.Replace(Regex.Split(s, @"(?<=[.;])\s|\s\(")[0].TrimEnd('.', ';'), @"\d[\d,.]*", "#"));
 
         private void AppendTextureResults(StringBuilder output)
         {

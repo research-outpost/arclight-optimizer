@@ -17,8 +17,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         public bool OnPreprocessAvatar(GameObject avatarGameObject)
         {
-            bool merge = MergeRequests.Take(avatarGameObject), reduce = KeyReductionRequests.Take(avatarGameObject);
-            if (!merge && !reduce) return true;
+            bool merge = MergeRequests.Take(avatarGameObject), reduce = KeyReductionRequests.Take(avatarGameObject), streams = StreamRequests.Take(avatarGameObject);
+            if (!merge && !reduce && !streams) return true;
             try
             {
                 var bindings = VRChatPlatformAnimatorBindings.Instance;
@@ -64,6 +64,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (keys > 0 || curves > 0)
                         Debug.Log($"Arclight Optimizer: removed {curves} animation curve(s) that drive nothing and {keys} redundant animation key(s) on {avatarGameObject.name}.");
                 }
+                if (streams) StripAfterD4rk(avatarGameObject, bindings);
             }
             catch (System.Exception e)
             {
@@ -71,6 +72,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 Debug.LogWarning("Arclight Optimizer: duplicate merge and key reduction skipped: " + e.Message);
             }
             return true;
+        }
+
+        // The vertex stream pass on d4rk's final meshes, with an analysis of the final controllers (d4rk rewrites clips and
+        // materials). Objects d4rk merged lose their identity, so an avatar with excluded objects keeps its streams.
+        private static void StripAfterD4rk(GameObject avatar, VRChatPlatformAnimatorBindings bindings)
+        {
+            if (Exclusions.Any) return;
+            var clones = new CloneContext(bindings);
+            var entries = bindings.GetInnateControllers(avatar).Where(e => e.Item2)
+                .Select(e => new System.Collections.Generic.KeyValuePair<object, VirtualAnimatorController>(e.Item1, clones.Clone(e.Item2)))
+                .Concat(avatar.GetComponentsInChildren<Animator>(true).Where(a => a && a.gameObject != avatar && a.runtimeAnimatorController)
+                    .Select(a => new System.Collections.Generic.KeyValuePair<object, VirtualAnimatorController>(a, clones.Clone(a.runtimeAnimatorController))))
+                .ToList();
+            var analysis = AvatarAnalysis.Build(avatar, entries);
+            var result = VertexStreamStripper.Run(analysis, (a, b) => { }, afterD4rk: true);
+            if (result.Meshes > 0)
+                Debug.Log($"Arclight Optimizer: removed vertex streams no material reads from {result.Meshes} mesh(es) after d4rk's merge ({result.Bytes / 1024:N0} KiB) on {avatar.name}.");
         }
 
         // Source assets must never be edited. Objects made during this build are in-memory or live in generated

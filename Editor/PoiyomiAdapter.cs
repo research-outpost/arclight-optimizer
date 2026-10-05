@@ -35,9 +35,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             "_GlitterColorMap _GlitterMask _PathingMap _PathingColorMap _MirrorTexture _DepthMask _DepthTexture _ParallaxInternalMapMask " +
             "_VideoMaskTexture _VoronoiNoise _VoronoiMask _TruchetMask _ALDecalColorMask _VertexManipulationHeightMask _LookAtMask _VertexGlitchingMask _UzumoreMask _VertexBasicsMask " +
             "_GlobalMaskTexture0 _GlobalMaskTexture1 _GlobalMaskTexture2 _GlobalMaskTexture3 _DistortionMask _DistortionFlowTexture _DistortionFlowTexture1 _Heightmask _PPMask " +
-            "_GrabPassBlendMap _FurMask _FurNoiseMask");
+            "_GrabPassBlendMap _FurMask _FurNoiseMask " +
+            // Custom matcap normal maps: every 10.0.22 entry samples them only in calculateNormal, at poiUV(poiMesh.uv[<UV>], _ST) panned,
+            // through the main sampler, like the other mesh-UV normal maps; only the matcap lookup after it is view-dependent.
+            "_Matcap0NormalMap _Matcap1NormalMap _Matcap2NormalMap _Matcap3NormalMap");
         internal static readonly HashSet<string> ProModeledFields = BuildProModeledFields();
-        private static readonly HashSet<string> Normals = Set("_BumpMap _Bump2ndMap _BentNormalMap _DetailNormalMap _RgbNormalR _RgbNormalG _RgbNormalB _RgbNormalA");
+        private static readonly HashSet<string> Normals = Set("_BumpMap _Bump2ndMap _BentNormalMap _DetailNormalMap _RgbNormalR _RgbNormalG _RgbNormalB _RgbNormalA " +
+            "_Matcap0NormalMap _Matcap1NormalMap _Matcap2NormalMap _Matcap3NormalMap");
         private static readonly HashSet<string> Repeat = Set("_LightDataSDFMap _ShadowBorderMask _SmoothnessTex _MetallicGlossMap _ReflectionColorTex _OutlineMask _DepthBulgeMask _DissolveDetailNoise _PathingMap _VertexManipulationHeightMask _LookAtMask _VertexGlitchingMask _UzumoreMask _VertexBasicsMask _Heightmask _FurMask _FurNoiseMask");
         private static readonly HashSet<string> ProRepeat = BuildProRepeat();
         private static readonly HashSet<string> VertexOnly = Set("_DepthBulgeMask _VertexManipulationHeightMask _LookAtMask _VertexGlitchingMask _UzumoreMask _VertexBasicsMask");
@@ -77,6 +81,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         };
 
         // Material values are read through MaterialInputs, so animating them is checked like any sampling input.
+        // 9.x Toon (not Pro) channel reads: every sample site of these fields in the installed 9.0, 9.1 and 9.3 Toon entries
+        // (all of them: Toon, Two Pass, Early Outline, Grab Pass, World, Lil Fur) takes .r alone. Only shaders named Poiyomi Toon
+        // (locked ones keep the name) qualify: Pro 9.x was not audited, and SPS-patched copies hide which one they came from.
+        private static readonly Dictionary<string, TextureChannels> NineToonChannels = new Dictionary<string, TextureChannels>(StringComparer.Ordinal)
+            { { "_SkinThicknessMap", TextureChannels.R }, { "_DissolveMask", TextureChannels.R }, { "_SmoothnessTex", TextureChannels.R } };
+
+        private static TextureChannels NineChannelsRead(Material material, string property) =>
+            material.shader.name.IndexOf("Poiyomi Toon", StringComparison.Ordinal) >= 0 && NineToonChannels.TryGetValue(property, out var read) ? read : TextureChannels.All;
+
         private static TextureChannels ToonChannelsRead(Material material, string property)
         {
             if (ToonChannels.TryGetValue(property, out var fixedRead)) return fixedRead;
@@ -130,7 +143,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static HashSet<string> BuildProModeledFields()
         {
             var fields = new HashSet<string>(ModeledFields, StringComparer.Ordinal);
-            fields.ExceptWith(Set("_BentNormalMap _Bump2ndMap _Bump2ndScaleMask _DepthRimMask _FlipbookMask1 _MainTintTexture _VertexGlitchingMask _UzumoreMask"));
+            fields.ExceptWith(Set("_BentNormalMap _Bump2ndMap _Bump2ndScaleMask _DepthRimMask _FlipbookMask1 _MainTintTexture _VertexGlitchingMask _UzumoreMask " +
+                "_Matcap0NormalMap _Matcap1NormalMap _Matcap2NormalMap _Matcap3NormalMap")); // Matcap normals: audited in 10.x only.
             fields.UnionWith(Set("_SSAOMask _SSAOColorMap _ConstellationMask"));
             return fields;
         }
@@ -210,7 +224,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 false, layout.PbrMaskRepeat, fur);
                 return new SamplingDescription { AdapterId = id, Supported = true,
                     Semantics = Normals.Contains(property) ? TextureSemantics.Normal : TextureSemantics.Data, Paths = paths,
-                    Channels = layout == Toon10 ? ToonChannelsRead(material, property) : TextureChannels.All };
+                    Channels = layout == Toon10 ? ToonChannelsRead(material, property) : NineChannelsRead(material, property) };
             }
             catch (InvalidOperationException e)
             {
@@ -280,7 +294,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return;
             }
             float selected = Number(m, uvProperty, true);
-            if (selected == 9) throw new InvalidOperationException("Matcap UV sampling is excluded even with Allow unsupported shaders enabled.");
+            if (selected == 9) throw new InvalidOperationException("Matcap UV sampling is excluded even with Allow Unsupported Shaders enabled.");
             if (selected < 0 || selected > 3 || selected != Mathf.Floor(selected))
                 throw new InvalidOperationException(property + " requires mesh UV0-UV3; view, world, polar, distorted and screen-space UVs are not modeled.");
             int uv = (int)selected;

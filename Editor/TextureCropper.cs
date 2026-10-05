@@ -175,8 +175,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var header = PngPixels.InspectHeader(path);
                 if (header.BitDepth > 8 || header.Width * header.Height <= 16) continue;
                 var bytes = File.ReadAllBytes(LongPath.For(path));
+                string hash = NotUniform.Key(bytes);
+                if (NotUniform.Known(hash)) continue; // Decoded before with this decoder: more than one colour.
                 var pixels = PngPixels.Decode(bytes, out var info);
-                if (pixels.Any(p => !p.Equals(pixels[0]))) continue;
+                if (pixels.Any(p => !p.Equals(pixels[0]))) { NotUniform.Add(hash); continue; }
                 try { collapsed[texture] = GenerateUniform(texture, bytes, pixels[0], info, folder); }
                 catch (Exception e) { Debug.Log("Arclight Optimizer: one-colour texture kept for " + texture.name + ": " + e.Message); }
             }
@@ -453,5 +455,38 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static bool IsGenerated(string path) =>
             path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) && AssetImporter.GetAtPath(path) is TextureImporter importer &&
             (importer.userData ?? "").StartsWith("ArclightCrop:", StringComparison.Ordinal);
+    }
+
+    // PNG contents already decoded and found to hold more than one colour, so a repeat build skips decoding them again.
+    // Keyed by the file bytes and the decoder; only that negative answer is kept, so every texture that
+    // might collapse is still decoded and checked in full.
+    internal static class NotUniform
+    {
+        private const string FileName = "Library/AvatarTextureOptimizer/not-uniform.txt";
+        private static HashSet<string> known;
+
+        internal static string Key(byte[] bytes)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                return "png-v1:" + BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", ""); // png-v1: Arclight's PngPixels decoder.
+        }
+
+        internal static bool Known(string key) => Load().Contains(key);
+
+        internal static void Add(string key)
+        {
+            if (!Load().Add(key)) return;
+            try { Directory.CreateDirectory(Path.GetDirectoryName(FileName)); File.AppendAllText(FileName, key + "\n"); }
+            catch (IOException) { } // A cache only: the next build decodes again.
+        }
+
+        private static HashSet<string> Load()
+        {
+            if (known != null) return known;
+            known = new HashSet<string>(StringComparer.Ordinal);
+            try { if (File.Exists(FileName)) known.UnionWith(File.ReadAllLines(FileName).Where(l => l.Length > 0)); }
+            catch (IOException) { }
+            return known;
+        }
     }
 }

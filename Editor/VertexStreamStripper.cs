@@ -23,6 +23,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Meshes that anything other than a MeshFilter or SkinnedMeshRenderer references, that Cloth simulates, or that
     // an animation swaps in are left alone, as is every mesh on an avatar using d4rk Avatar Optimizer, whose merge
     // fills missing tangents with zeros. Animated lilToon switches count as on.
+    // Avatars whose stream pass waits for d4rkAvatarOptimizer: d4rk fills tangents a mesh lacks with zeros when it merges,
+    // so streams are removed only after its merge, on its final meshes (PostOptimizerMerge).
+    internal static class StreamRequests
+    {
+        private static readonly HashSet<int> Requested = new HashSet<int>();
+        internal static void Add(GameObject avatar) => Requested.Add(avatar.GetInstanceID());
+        internal static bool Take(GameObject avatar) => Requested.Remove(avatar.GetInstanceID());
+    }
+
     internal static class VertexStreamStripper
     {
         internal const string AuditedLilToon = "2.3.4";
@@ -61,13 +70,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         internal sealed class Result { public int Meshes; public long Bytes; }
 
-        internal static Result Run(AvatarAnalysis analysis, Action<UnityEngine.Object, UnityEngine.Object> register)
+        internal static Result Run(AvatarAnalysis analysis, Action<UnityEngine.Object, UnityEngine.Object> register, bool afterD4rk = false)
         {
             var result = new Result();
             if (!GeneratedTargetValidator.IsStandalone && !Android || !analysis.Complete) return result;
             var root = analysis.Root;
             var components = root.GetComponentsInChildren<Component>(true).Where(c => c).ToArray();
-            if (components.Any(c => c.GetType().Name == "d4rkAvatarOptimizer")) return result;
+            if (!afterD4rk && components.Any(c => c.GetType().Name == "d4rkAvatarOptimizer")) return result;
 
             var users = new Dictionary<Mesh, List<Renderer>>();
             var blocked = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());

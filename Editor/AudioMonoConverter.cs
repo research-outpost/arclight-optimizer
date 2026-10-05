@@ -25,13 +25,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static string Folder => AutomaticTextureOptimizer.CacheFolder + "/Audio";
         private const float Boost = 1.41421356f;
 
-        // Clip -> its mono +3 dB replacement, for clips every referencing component allows.
-        internal static Dictionary<AudioClip, AudioClip> Convert(IEnumerable<(Component Owner, AudioClip Clip)> references)
+        // Clip -> its mono +3 dB replacement, for clips every referencing component allows. A clip any source on a vetoed object
+        // holds (one whose settings an animation changes) stays as it is.
+        internal static Dictionary<AudioClip, AudioClip> Convert(IEnumerable<(Component Owner, AudioClip Clip)> references, ICollection<GameObject> vetoed = null)
         {
             var result = new Dictionary<AudioClip, AudioClip>();
             foreach (var group in references.GroupBy(r => r.Clip))
             {
-                if (!group.All(r => Qualifies(r.Owner, r.Clip))) continue;
+                if (!group.All(r => Qualifies(r.Owner, r.Clip) && (vetoed == null || !vetoed.Contains(r.Owner.gameObject)))) continue;
                 var mono = MonoCopy(group.Key);
                 if (mono) result.Add(group.Key, mono);
             }

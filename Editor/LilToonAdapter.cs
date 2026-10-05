@@ -207,11 +207,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (property != "_AudioLinkMask" && Enabled(material, "_UseAudioLink")) return Unsupported("AudioLink-dependent material settings are not yet certified.");
             if (Enabled(material, "_UseParallax") || Enabled(material, "_UsePOM"))
                 return Unsupported("Parallax/POM can move texture sampling outside static mesh UVs.");
-            if (Enabled(material, "_ShiftBackfaceUV")) return Unsupported("Backface UV shifting requires an additional sampling model; retained.");
+            // Backface shifting and main/outline scrolling change only fd.uvMain (lil_common_frag.hlsl 256-282). Fields read at a raw mesh
+            // UV picked by their own UV mode (fd.uv0-fd.uv3 with their own transform: _Bump2ndMap 586-592, _Main2ndTex 742-746, ...)
+            // never see it.
+            bool rawUv = field.Coordinates == Coordinates.SelectedRawOwn || field.Coordinates == Coordinates.SelectedRawFixed;
+            if (!rawUv && Enabled(material, "_ShiftBackfaceUV")) return Unsupported("Backface UV shifting requires an additional sampling model; retained.");
             // FakeShadow has no scroll/rotate properties.
-            if (material.HasProperty("_MainTex_ScrollRotate") && NonZero(MaterialInputs.Vector(material, "_MainTex_ScrollRotate")))
+            if (!rawUv && material.HasProperty("_MainTex_ScrollRotate") && NonZero(MaterialInputs.Vector(material, "_MainTex_ScrollRotate")))
                 return Unsupported("Main UV scrolling/rotation is outside this static lilToon subset.");
-            if (outline && NonZero(MaterialInputs.Vector(material, "_OutlineTex_ScrollRotate")))
+            if (!rawUv && outline && NonZero(MaterialInputs.Vector(material, "_OutlineTex_ScrollRotate")))
                 return Unsupported("Outline UV scrolling/rotation is outside this static lilToon subset.");
 
             // Every mask type (strength, flat, SDF) reads the mask at fd.uvMain with lil_sampler_linear_repeat; SDF only uses its

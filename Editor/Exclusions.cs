@@ -26,6 +26,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 Recorded.UnionWith(exclude.GetComponentsInChildren<Transform>(true));
         }
 
+        // Whether this build has any excluded object.
+        internal static bool Any => Recorded.Count > 0 || Listed.Count > 0;
+
         internal static bool Excluded(Component component) => component && Excluded(component.transform);
         internal static bool Excluded(GameObject gameObject) => gameObject && Excluded(gameObject.transform);
 

@@ -16,23 +16,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (avatarOptimizer)
                 EditorGUILayout.HelpBox("This avatar has Avatar Optimizer's " + avatarOptimizer.GetType().Name + " component on " + avatarOptimizer.gameObject.name +
                     ". Arclight Optimizer does not work alongside Avatar Optimizer, so the build will stop with an error. Remove Avatar Optimizer's components or this one.", MessageType.Error);
-            EditorGUILayout.HelpBox("Optimizes a build copy of the avatar: textures, meshes and blend shapes, bones and PhysBones, animator layers and " +
-                "parameters, materials, particles and audio. The avatar in the scene is never changed.\n\n" +
-                "Everything is exact, with these accepted exceptions:\n" +
-                "- Generated textures are compressed again and their unused texels cleared, so texels can differ by compression rounding.\n" +
-                "- Merged meshes and merged bones can differ by at most 1/255 per colour channel.\n" +
-                "- A cropped texture can differ only at its smallest mip levels.\n" +
-                "- A PhysBone paused while its outfit is hidden restarts from its rest pose when shown again.\n" +
-                "- A stereo clip with identical channels becomes mono; its level matches within 0.05%.", MessageType.None);
             var allowUnsupported = serializedObject.FindProperty("allowUnsupportedShaders");
-            EditorGUILayout.PropertyField(allowUnsupported, new GUIContent("Allow unsupported shaders",
-                "Attempt texture fields of shaders whose sampling is not known, assuming UV0 and the property's tiling/offset. Can cause visible seams; test before uploading."));
+            EditorGUILayout.PropertyField(allowUnsupported, new GUIContent("Allow Unsupported Shaders",
+                "Attempt texture fields of shaders Arclight does not recognize, assuming UV0 and the property's tiling/offset. Never overrides what a recognized shader (lilToon, Poiyomi and the others) keeps. Can cause visible seams; test before uploading."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.keepMmdShapes)), new GUIContent("MMD Support",
                 "Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.exclude)), new GUIContent("Exclude",
                 "Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object."), true);
-            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.splitPhysBones)),
-                new GUIContent("Split PhysBones (experimental)", "Split large PhysBones into several components, placed so the solver can run them on more threads. Each piece keeps the original settings and forces. Grabbing and posing differ slightly: people can hold different strands of a split chain at once, and grabs on split strands don't sync with a Quest version. PC builds only; runs after the other Arclight passes."));
             serializedObject.ApplyModifiedProperties();
             using (new EditorGUILayout.HorizontalScope())
             {
