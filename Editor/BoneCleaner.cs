@@ -32,7 +32,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var result = new Result();
             if (!analysis.Complete) return result;
             var root = analysis.Root;
-            bool d4rk = root.GetComponentsInChildren<Component>(true).Any(c => c && c.GetType().Name == "d4rkAvatarOptimizer");
+            bool d4rk = D4rkOrdering.MayRun(root);
             physBones &= !d4rk; // Removing them changes which bones d4rk merges, and so its rounding (Chocofuyu: one pixel at 96/255).
             var users = root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh && !d4rk).GroupBy(r => r.sharedMesh)
                 .Where(g => !g.Any(Exclusions.Excluded));

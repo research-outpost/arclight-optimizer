@@ -263,6 +263,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return output.ToString().TrimEnd();
         }
 
+        // The NDMF report is written before d4rkAvatarOptimizer and Arclight's own post-d4rk hook run (VRChat SDK callbacks), so that
+        // hook adds what it changed or why it stopped, apart from the totals measured earlier.
+        internal static void AppendLate(GameObject root, IList<string> lines, string folder = AvatarTextureOptimizer.OutputFolder)
+        {
+            if (!root || lines.Count == 0) return;
+            try
+            {
+                string path = folder.TrimEnd('/') + "/" + ReportFileName(root.name, EditorApplication.isPlayingOrWillChangePlaymode, folder);
+                if (!File.Exists(path)) return;
+                RejectReparsePoint(path);
+                File.AppendAllText(path, "\nAfter d4rk Avatar Optimizer (SDK stage; not included in the totals above)\n" +
+                    string.Concat(lines.Select(line => "- " + line + "\n")), new UTF8Encoding(false));
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
+            }
+            catch (Exception e) { Debug.LogWarning("Arclight Optimizer: could not add the post-d4rk results to the report: " + e.Message); }
+        }
+
         internal void Emit(GameObject root, SubstitutionState state,
             string folder = AvatarTextureOptimizer.OutputFolder)
         {

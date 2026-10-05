@@ -86,6 +86,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var indices = Enumerable.Range(0, keptSlots.Count).Select(_ => new List<int>()).ToList();
                 for (int s = 0; s < materials.Length; s++)
                     if (target[s] >= 0) indices[target[s]].AddRange(mesh.GetIndices(s, true));
+                // A 16-bit mesh can reach vertices past 65535 through a submesh base vertex; rebuilt with base vertex 0, those indices
+                // would not fit, so such a mesh keeps its submeshes.
+                if (mesh.indexFormat == UnityEngine.Rendering.IndexFormat.UInt16 && indices.Any(list => list.Any(i => i >= ushort.MaxValue))) continue;
                 var copy = Object.Instantiate(mesh);
                 copy.name = mesh.name;
                 copy.subMeshCount = keptSlots.Count;

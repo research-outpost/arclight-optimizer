@@ -38,7 +38,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // edges or triangles.
                 if (group.Any(p => p.Renderer is MeshRenderer m && m.additionalVertexStreams || analysis.ReferencesTo(p.Renderer).Any(c => c is ParticleSystem))) continue;
                 if (group.Any(p => p.Renderer.GetComponent<Cloth>())) continue; // Cloth builds its constraints from the triangles.
-                if (group.Any(p => p.Renderer.sharedMaterials.Concat(analysis.SwappedMaterials(p.Renderer)).Any(m => !TriangleCountInvisible(m) || SkinnedMeshMerger.ReadsVertexId(m)))) continue;
+                if (group.Any(p => p.Renderer.sharedMaterials.Concat(analysis.SwappedMaterials(p.Renderer)).Any(m => !TriangleCountInvisible(m)) || SkinnedMeshMerger.ReadsVertexId(p.Renderer, analysis))) continue;
                 var keep = Enumerable.Range(0, mesh.subMeshCount).Select(s => mesh.GetTopology(s) == MeshTopology.Triangles ? Survivors(mesh, s) : null).ToArray();
                 int removed = Enumerable.Range(0, mesh.subMeshCount).Sum(s => keep[s] == null ? 0 : (int)(mesh.GetIndexCount(s) - keep[s].Length) / 3);
                 if (removed == 0) continue;

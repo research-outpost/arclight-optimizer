@@ -86,7 +86,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     // MMD worlds animate shapes on the root "Body" by name, so it hosts the merge and keeps its names.
                     var body = members.FirstOrDefault(r => r.name == "Body" && r.transform.parent == root.transform);
                     // At most one member may read vertex IDs; it goes first so its numbering is unchanged.
-                    var readers = members.Where(r => r.sharedMaterials.Concat(analysis.SwappedMaterials(r)).Any(m => ReadsVertexId(m))).ToList();
+                    var readers = members.Where(r => ReadsVertexId(r, analysis)).ToList();
                     if (body && readers.Any(r => r != body)) members = members.Except(readers.Where(r => r != body)).ToList();
                     else if (readers.Count > 1) members = members.Except(readers.Skip(1)).ToList();
                     var first = body ? body : readers.FirstOrDefault(members.Contains);
@@ -317,12 +317,28 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // A shader Unity could not compile (shown pink); asking for its variants only logs errors.
         internal static bool Broken(Shader shader) => !shader.isSupported || shader.name == "Hidden/InternalErrorShader" || ShaderUtil.ShaderHasError(shader);
 
-        internal static bool ReadsVertexId(Material material)
+        // Whether any material this renderer draws or an animation swaps in can depend on vertex numbering, with the renderer's
+        // animated material properties.
+        internal static bool ReadsVertexId(Renderer renderer, AvatarAnalysis analysis)
+        {
+            var animated = new HashSet<string>(analysis.AnimatedMaterialProperties(renderer), StringComparer.Ordinal);
+            return renderer.sharedMaterials.Concat(analysis.SwappedMaterials(renderer)).Any(m => ReadsVertexId(m, animated.Contains));
+        }
+
+        // animated: material properties an animation can change; null when unknown (then a mask could be turned on later).
+        internal static bool ReadsVertexId(Material material, Func<string, bool> animated = null)
         {
             if (!material || !material.shader) return false;
             if (Broken(material.shader)) return true; // Cannot be compiled to check; compiling only logs errors.
             if (VertexStreamStripper.IsAuditedLilToonShader(material.shader, out _))
-                return Enumerable.Range(1, 8).Any(i => material.GetFloat("_IDMask" + i) != 0 || material.GetFloat("_IDMaskPrior" + i) != 0);
+            {
+                // lil_common_vert.hlsl: the ID mask reads input.vertexID unless _IDMaskFrom picks UV0-UV7 (then the ID moves with its vertex).
+                // It hides geometry only while a mask flag is on, so a flag an animation can turn on counts too.
+                float from = material.HasProperty("_IDMaskFrom") ? material.GetFloat("_IDMaskFrom") : 8;
+                bool fromVertexId = !(from >= 0 && from <= 7 && from == Mathf.Floor(from)) || animated == null || animated("_IDMaskFrom");
+                return fromVertexId && Enumerable.Range(1, 8).Any(i => material.GetFloat("_IDMask" + i) != 0 || material.GetFloat("_IDMaskPrior" + i) != 0 ||
+                    animated == null || animated("_IDMask" + i) || animated("_IDMaskPrior" + i));
+            }
             // The check reads Direct3D byte code, which cannot answer for Android's graphics APIs; there only VRChat's pinned mobile
             // shaders (one source for every API, audited) are trusted to the Direct3D answer.
             if (VertexStreamStripper.Android && !MobileShaders.Matches(material)) return true;

@@ -40,7 +40,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (group.Any(p => p.Renderer.GetComponent<Cloth>())) continue;
                 // Update When Offscreen bounds come from the vertices: only welding, which removes exact duplicates, is safe there.
                 bool weldOnly = group.Any(p => p.Renderer is SkinnedMeshRenderer s && s.updateWhenOffscreen);
-                if (group.Any(p => p.Renderer.sharedMaterials.Concat(analysis.SwappedMaterials(p.Renderer)).Any(SkinnedMeshMerger.ReadsVertexId))) continue;
+                if (group.Any(p => SkinnedMeshMerger.ReadsVertexId(p.Renderer, analysis))) continue;
                 var copy = Compact(mesh, WeldMap(mesh), out int vertices, weldOnly);
                 if (!copy) continue;
                 register(mesh, copy);

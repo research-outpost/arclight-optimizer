@@ -22,7 +22,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var result = new Result();
             if (!analysis.Complete) return result;
             var root = analysis.Root;
-            if (root.GetComponentsInChildren<Component>(true).Any(c => c && c.GetType().Name == "d4rkAvatarOptimizer")) return result;
+            if (D4rkOrdering.MayRun(root)) return result;
             var swaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
             foreach (var group in root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh).GroupBy(r => r.sharedMesh))
             {

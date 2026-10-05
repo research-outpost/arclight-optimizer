@@ -70,6 +70,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                    path.IndexOf("d4rkavataroptimizer", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
+        // Whether d4rkAvatarOptimizer may optimize this avatar on upload: it has a d4rk component (enabled or not), or d4rk is
+        // installed with its global "Always Optimize on Upload" setting, under which d4rk adds its own component at callback -15.
+        internal static bool MayRun(GameObject root) =>
+            root.GetComponentsInChildren<Component>(true).Any(c => c && c.GetType().Name == "d4rkAvatarOptimizer") ||
+            D4rkType() != null && EditorPrefs.GetBool("d4rkpl4y3r_AvatarOptimizer_DoOptimizeWithDefaultSettingsWhenNoComponent", false);
+
         private static readonly Lazy<Type> d4rkType = new Lazy<Type>(() => AppDomain.CurrentDomain.GetAssemblies()
             .Select(assembly => assembly.GetType("d4rkAvatarOptimizer")).FirstOrDefault(type => type != null));
         private static Type D4rkType() => d4rkType.Value;

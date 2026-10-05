@@ -77,7 +77,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (!GeneratedTargetValidator.IsStandalone && !Android || !analysis.Complete) return result;
             var root = analysis.Root;
             var components = root.GetComponentsInChildren<Component>(true).Where(c => c).ToArray();
-            if (!afterD4rk && components.Any(c => c.GetType().Name == "d4rkAvatarOptimizer")) return result;
+            if (!afterD4rk && D4rkOrdering.MayRun(root)) return result;
 
             var users = new Dictionary<Mesh, List<Renderer>>();
             var blocked = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());

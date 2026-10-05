@@ -19,6 +19,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             bool merge = MergeRequests.Take(avatarGameObject), reduce = KeyReductionRequests.Take(avatarGameObject), streams = StreamRequests.Take(avatarGameObject);
             if (!merge && !reduce && !streams) return true;
+            var late = new System.Collections.Generic.List<string>();
+            void Note(string line) { Debug.Log("Arclight Optimizer: " + line + " (" + avatarGameObject.name + ")"); late.Add(line); }
             try
             {
                 var bindings = VRChatPlatformAnimatorBindings.Instance;
@@ -33,10 +35,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     // d4rk's merged-toggle layer joins a lower Direct-tree layer when that is exact (see D4rkLayerFold).
                     foreach (var controller in owned)
                         if (D4rkLayerFold.Run(controller, controllers, IsBuildOwned) is string into)
-                            Debug.Log($"Arclight Optimizer: moved d4rk's merged layer into the \"{into}\" blend tree in {controller.name} (one animator layer fewer) on {avatarGameObject.name}.");
+                            Note($"Moved d4rk's merged layer into the \"{into}\" blend tree in {controller.name} (one animator layer fewer).");
                     int clips = AnimationClipDeduplicator.MergeCommitted(owned, special);
-                    Debug.Log($"Arclight Optimizer: merged {materials} duplicate material(s) and {clips} duplicate animation clip(s) on {avatarGameObject.name}" +
-                        (owned.Length < controllers.Length ? $"; {controllers.Length - owned.Length} controller(s) skipped as source assets." : "."));
+                    if (materials + clips > 0 || owned.Length < controllers.Length)
+                        Note($"Merged {materials} duplicate material(s) and {clips} duplicate animation clip(s) d4rk left" +
+                            (owned.Length < controllers.Length ? $"; {controllers.Length - owned.Length} controller(s) skipped as source assets." : "."));
                 }
                 if (reduce)
                 {
@@ -62,23 +65,28 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     int curves = AnimationKeyReducer.RemoveDead(clips, avatarGameObject.transform, elsewhere, meshSwapped);
                     int keys = AnimationKeyReducer.Reduce(clips);
                     if (keys > 0 || curves > 0)
-                        Debug.Log($"Arclight Optimizer: removed {curves} animation curve(s) that drive nothing and {keys} redundant animation key(s) on {avatarGameObject.name}.");
+                        Note($"Removed {curves} animation curve(s) that drive nothing and {keys} redundant animation key(s).");
+                    // Clips that differed only in those keys or curves are identical now.
+                    if (merge && (keys > 0 || curves > 0) && AnimationClipDeduplicator.MergeCommitted(owned, special) is int same && same > 0)
+                        Note($"Merged {same} animation clip(s) that became identical once redundant keys and curves were removed.");
                 }
-                if (streams) StripAfterD4rk(avatarGameObject, bindings);
+                if (streams && StripAfterD4rk(avatarGameObject, bindings) is string stripped) Note(stripped);
             }
             catch (System.Exception e)
             {
                 // Optimization only: never fail the upload.
-                Debug.LogWarning("Arclight Optimizer: duplicate merge and key reduction skipped: " + e.Message);
+                Debug.LogWarning("Arclight Optimizer: post-d4rk optimization stopped: " + e.Message);
+                late.Add("Stopped: " + e.Message + " Changes made before it stay; the upload continues.");
             }
+            OptimizationLog.AppendLate(avatarGameObject, late);
             return true;
         }
 
         // The vertex stream pass on d4rk's final meshes, with an analysis of the final controllers (d4rk rewrites clips and
         // materials). Objects d4rk merged lose their identity, so an avatar with excluded objects keeps its streams.
-        private static void StripAfterD4rk(GameObject avatar, VRChatPlatformAnimatorBindings bindings)
+        private static string StripAfterD4rk(GameObject avatar, VRChatPlatformAnimatorBindings bindings)
         {
-            if (Exclusions.Any) return;
+            if (Exclusions.Any) return "Vertex streams were left as they are after d4rk's merge: the avatar has excluded objects, which d4rk's merge can hide.";
             var clones = new CloneContext(bindings);
             var entries = bindings.GetInnateControllers(avatar).Where(e => e.Item2)
                 .Select(e => new System.Collections.Generic.KeyValuePair<object, VirtualAnimatorController>(e.Item1, clones.Clone(e.Item2)))
@@ -87,12 +95,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .ToList();
             var analysis = AvatarAnalysis.Build(avatar, entries);
             // NDMF has already saved the build's assets, and the SDK saves the avatar as a prefab for upload, so a mesh made here
-            // must be saved too or the upload loses it: each copy goes into its source mesh's asset (d4rk's or NDMF's container).
-            // A mesh with no asset of its own is left alone.
+            // must be saved too or the upload loses it: each copy goes into its source mesh's asset. Only meshes in this build's own
+            // containers (NDMF's generated assets, d4rk's TrashBin) qualify, so no source asset (a .asset or an imported model) is
+            // ever written to; any other mesh is left alone.
             var result = VertexStreamStripper.Run(analysis, (a, b) => AssetDatabase.AddObjectToAsset(b, AssetDatabase.GetAssetPath(a)), afterD4rk: true,
-                eligible: mesh => AssetDatabase.Contains(mesh));
-            if (result.Meshes > 0)
-                Debug.Log($"Arclight Optimizer: removed vertex streams no material reads from {result.Meshes} mesh(es) after d4rk's merge ({result.Bytes / 1024:N0} KiB) on {avatar.name}.");
+                eligible: mesh => AssetDatabase.Contains(mesh) && IsBuildOwned(mesh));
+            return result.Meshes > 0 ? $"Removed vertex streams no material reads from {result.Meshes} mesh(es) after d4rk's merge ({result.Bytes / 1024:N0} KiB)." : null;
         }
 
         // Source assets must never be edited. Objects made during this build are in-memory or live in generated

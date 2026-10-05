@@ -59,7 +59,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (!RigidAccessoryConverter.UnitScaleForever(renderer.transform, analysis)) return false;
             var materials = renderer.sharedMaterials;
             if (materials.Length != mesh.subMeshCount || Enumerable.Range(0, mesh.subMeshCount).Any(s => mesh.GetTopology(s) != MeshTopology.Triangles)) return false;
-            if (materials.Any(m => !SkinnedMeshMerger.OrderIndependent(m) || !RigidAccessoryConverter.ObjectSpaceSafe(m) || SkinnedMeshMerger.ReadsVertexId(m))) return false;
+            if (materials.Any(m => !SkinnedMeshMerger.OrderIndependent(m) || !RigidAccessoryConverter.ObjectSpaceSafe(m)) || SkinnedMeshMerger.ReadsVertexId(renderer, analysis)) return false;
             foreach (var attribute in new[] { VertexAttribute.Position, VertexAttribute.Normal, VertexAttribute.Tangent })
                 if (mesh.HasVertexAttribute(attribute) && mesh.GetVertexAttributeFormat(attribute) != VertexAttributeFormat.Float32) return false;
             bool probes = renderer.lightProbeUsage != LightProbeUsage.Off || renderer.reflectionProbeUsage != ReflectionProbeUsage.Off;

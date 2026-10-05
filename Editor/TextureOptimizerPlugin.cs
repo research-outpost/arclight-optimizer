@@ -73,7 +73,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (config.enabled && config.mergeDuplicates) MergeRequests.Add(ctx.AvatarRootObject);
             if (config.enabled && config.optimizeAnimations) KeyReductionRequests.Add(ctx.AvatarRootObject);
             // With d4rk the stream pass waits until after its merge (see VertexStreamStripper).
-            if (config.enabled && config.optimizeMeshes && ctx.AvatarRootObject.GetComponentsInChildren<Component>(true).Any(c => c && c.GetType().Name == "d4rkAvatarOptimizer"))
+            if (config.enabled && config.optimizeMeshes && D4rkOrdering.MayRun(ctx.AvatarRootObject))
                 StreamRequests.Add(ctx.AvatarRootObject);
             // PhysBone splitting is parked: it has no inspector toggle, and a value saved by an earlier version is ignored.
             // Read by the later passes; the component itself is removed by the texture pass.

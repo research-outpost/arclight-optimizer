@@ -167,9 +167,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 var mapping = cache.mappings.FirstOrDefault(m => m.sourceId == id && m.recipeHash == recipe);
                                 if (mapping != null && FingerprintService.IsReady(mapping, recipe) &&
                                     AssetDatabase.GetAssetPath(mapping.replacement).StartsWith(folder + "/", StringComparison.Ordinal) &&
-                                    // Padding repair made without a size estimate (Play Mode) may have grown the texture; where an estimate can
-                                    // be made now (a build), it is made again and the size gate applies.
-                                    !(mapping.repairedPadding && mapping.compressedSourceBytes == 0 && BundleSizeEstimator.CanEstimate))
+                                    // A replacement made without a size estimate (Play Mode) passed only the PNG-size check, which does not prove the
+                                    // bundle shrinks; where an estimate can be made now (a build), it is made again and the size gate applies.
+                                    !(mapping.compressedSourceBytes == 0 && BundleSizeEstimator.CanEstimate))
                                 {
                                     result.CacheLookup = true;
                                     result.CacheValidation = true;
