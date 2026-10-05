@@ -234,7 +234,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             NoFileSizeReductionException notSmaller = null;
             // What ships is the compressed texture inside the bundle, not the PNG: a larger PNG with flat unused areas
             // can still shrink. Without a usable estimate (Play Mode, a failed build) the PNG file size decides.
-            // Padding repair is gated the same way; without an estimate it accepts any size, as before.
+            // Padding repair is gated the same way: without an estimate it must make the PNG smaller (a larger repaired PNG grew
+            // uploads when Play Mode made it and a build reused it).
             progress?.Stage("Estimating original compressed size", false);
             bool estimate = BundleSizeEstimator.TryMeasure(AssetDatabase.GetAssetPath(source), out compressedSource);
             checkCancelled?.Invoke();
@@ -346,7 +347,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         notSmaller = new NoFileSizeReductionException(bytes.LongLength, encoded.LongLength);
                 }
                 // Without an estimate, compare complete encoded files (including preserved profiles) before writing anything.
-                if (!repair && !estimate && !pngSmaller) { RejectByPngSize(); continue; }
+                if (!estimate && !pngSmaller) { RejectByPngSize(); continue; }
 
                 var written = Materialize(encoded, attempt);
                 if (estimate)

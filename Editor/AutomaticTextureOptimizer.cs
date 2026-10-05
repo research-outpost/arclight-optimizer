@@ -166,7 +166,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 }
                                 var mapping = cache.mappings.FirstOrDefault(m => m.sourceId == id && m.recipeHash == recipe);
                                 if (mapping != null && FingerprintService.IsReady(mapping, recipe) &&
-                                    AssetDatabase.GetAssetPath(mapping.replacement).StartsWith(folder + "/", StringComparison.Ordinal))
+                                    AssetDatabase.GetAssetPath(mapping.replacement).StartsWith(folder + "/", StringComparison.Ordinal) &&
+                                    // Padding repair made without a size estimate (Play Mode) may have grown the texture; where an estimate can
+                                    // be made now (a build), it is made again and the size gate applies.
+                                    !(mapping.repairedPadding && mapping.compressedSourceBytes == 0 && BundleSizeEstimator.CanEstimate))
                                 {
                                     result.CacheLookup = true;
                                     result.CacheValidation = true;
@@ -204,7 +207,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                     continue;
                                 }
                                 var nonBeneficial = TextureFileSizePolicy.Find(cache, id, recipe);
-                                if (nonBeneficial != null)
+                                // A "no saving" found by PNG size alone (Play Mode) is checked again where the compressed size can be estimated.
+                                if (nonBeneficial != null && !(!nonBeneficial.compressedEstimate && BundleSizeEstimator.CanEstimate))
                                 {
                                     result.CacheLookup = true;
                                     MarkUsed(cache, ref nonBeneficial.lastUsedDay);

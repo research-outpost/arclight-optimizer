@@ -54,6 +54,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static bool WillBuild => MeasureOverride == null && !EditorApplication.isPlayingOrWillChangePlaymode;
 
+        // Whether an estimate can be attempted now (not in Play Mode; with a test stub, whether it gives estimates at all).
+        internal static bool CanEstimate => MeasureOverride != null ? MeasureOverride(string.Empty) > 0 : !EditorApplication.isPlayingOrWillChangePlaymode;
+
         // Hold this around work that estimates repeatedly, so the object scan happens once. A no-op when no bundle is built.
         internal static KeepAlive KeepObjectsAlive() => new KeepAlive(WillBuild);
 
