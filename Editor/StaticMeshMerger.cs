@@ -53,7 +53,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var filter = renderer.GetComponent<MeshFilter>();
             var mesh = filter ? filter.sharedMesh : null;
-            if (!mesh || swaps.Contains(mesh) || renderer.additionalVertexStreams || renderer.HasPropertyBlock() || mesh.blendShapeCount > 0 || mesh.GetBonesPerVertex().Length > 0) return false;
+            if (!mesh || swaps.Contains(mesh) || renderer.additionalVertexStreams || TextureUsageScanner.HasPropertyBlock(renderer) || mesh.blendShapeCount > 0 || mesh.GetBonesPerVertex().Length > 0) return false;
             if (!renderer.enabled || !renderer.gameObject.activeInHierarchy || analysis.ActivenessAnimated(renderer.gameObject)) return false;
             if (analysis.IsAnimated(renderer) || analysis.IsAnimated(filter) || analysis.ReferencesTo(renderer).Count > 0 || analysis.ReferencesTo(filter).Count > 0) return false;
             if (!RigidAccessoryConverter.UnitScaleForever(renderer.transform, analysis)) return false;

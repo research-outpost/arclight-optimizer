@@ -3,7 +3,6 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Rendering;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {

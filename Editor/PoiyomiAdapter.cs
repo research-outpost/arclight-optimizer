@@ -17,7 +17,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // the global UV tiling/offset and the backface shift.
     internal sealed class PoiyomiAdapter : ITextureSamplingAdapter
     {
-        internal const string ShaderPath = "Packages/com.poiyomi.toon/_PoiyomiShaders/Shaders/10.0/Toon/Poiyomi Toon.shader";
         private const string Id = "poiyomi-toon-static-v2";
         private const string ProId = "poiyomi-9x-static-v2";
         private const string VersionReason = "Poiyomi 9.x-12.x shaders are supported; this shader has no Poiyomi 9-12 version label. Original retained.";

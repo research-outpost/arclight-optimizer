@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using nadena.dev.ndmf;
 using nadena.dev.ndmf.animator;
-using nadena.dev.ndmf.fluent;
 using UnityEditor;
 using UnityEngine;
 
@@ -178,8 +177,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     ParameterCleaner.Result unusedParameters;
                     AnimatorLayerMerger.Result layerMerge;
                     PhysicsCleaner.Result physics;
+                    int deadDrivers = 0;
                     try
                     {
+                        BuildTimings.Step("ParameterDrivers");
+                        // Before folding: a toggle layer whose only behaviour was a dead driver can then fold.
+                        if (!vrcfuryPending) deadDrivers = ParameterCleaner.RemoveDeadDrivers(ctx.AvatarRootObject, controllers.Controllers.Values, analysis);
                         BuildTimings.Step("AnimatorLayerMerger");
                         // Folding reads every animation, so it stands down with the rest when the analysis is incomplete.
                         layerMerge = !analysis.Complete ? new AnimatorLayerMerger.Result() : AnimatorLayerMerger.Run(controllers.Controllers.Select(e => (e.Key is Animator a && a ? a.transform : ctx.AvatarRootObject.transform, e.Value)),
@@ -213,6 +216,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             "Folded " + layerMerge.Merged + " animator layer(s) into a shared Direct blend tree layer" +
                             (layerMerge.Removed == layerMerge.Merged ? " and removed them" : layerMerge.Removed > 0 ? "; removed " + layerMerge.Removed + " and left " + (layerMerge.Merged - layerMerge.Removed) + " empty below a layer a layer control names by index" : " (left empty, as layer controls refer to layers by index)") + "." +
                             (layerMerge.MergedClips > 0 ? " Joined " + layerMerge.MergedClips + " single-clip layer(s) into one clip inside it." : "");
+                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                        state.Report?.Add(null, summary);
+                    }
+                    if (deadDrivers > 0)
+                    {
+                        string summary = "Removed " + deadDrivers + " parameter driver write(s) into parameters nothing reads (not expression or built-in parameters).";
                         Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, summary);
                     }

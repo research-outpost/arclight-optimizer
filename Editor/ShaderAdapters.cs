@@ -92,12 +92,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     result = MaterialInputs.Record(() => adapter.Describe(material, property));
                     break;
                 }
+            // Allow unsupported shaders covers only shaders no adapter recognizes. A field a recognized adapter rejects has a known
+            // reason (a decal, a scrolling or rotated UV, a vertex-stage or data lookup, an unaudited version), so guessing UV0
+            // for it would clear texels the shader does read.
+            bool recognized = result != null;
             if (result == null)
             {
                 result = Unsupported("generic-v1", "Unknown shader sampling; no verified adapter.");
                 result.MaterialInputs = new HashSet<string>(System.StringComparer.Ordinal);
             }
-            if (!allowUnsupportedShaders || result.Supported || result.NotSampled || result.OverrideExcluded ||
+            if (!allowUnsupportedShaders || recognized || result.Supported || result.NotSampled || result.OverrideExcluded ||
                 !(material.GetTexture(property) is Texture2D)) return result;
             // Unknown matcap fields must never inherit the mesh-UV assumption.
             int propertyIndex = material.shader.FindPropertyIndex(property);

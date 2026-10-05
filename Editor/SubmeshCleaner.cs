@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
@@ -39,7 +38,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var mesh = MeshOf(renderer);
                 // A property block can hold values per material slot, which renumbering slots would move.
-                if (!mesh || meshUsers[mesh] != 1 || swaps.Contains(mesh) || Exclusions.Excluded(renderer) || renderer.HasPropertyBlock()) continue;
+                if (!mesh || meshUsers[mesh] != 1 || swaps.Contains(mesh) || Exclusions.Excluded(renderer) || TextureUsageScanner.HasPropertyBlock(renderer)) continue;
                 if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer) && !(c is MeshFilter))) continue;
                 // Cloth builds its constraints from the triangles, and a particle shape can emit from this renderer's triangles
                 // (or one submesh by number).

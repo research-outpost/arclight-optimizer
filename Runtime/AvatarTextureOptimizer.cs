@@ -16,7 +16,7 @@ namespace Okarin.AvatarTextureOptimizer
         [System.NonSerialized] public bool optimizeMeshes = true;
         [System.NonSerialized] public bool optimizeAudio = true;
         [System.NonSerialized] public bool optimizeAnimations = true;
-        [Tooltip("Experimental. Split large PhysBones into several components so the solver can run them on more threads. Never changes the PhysBone component rank. PC builds only.")]
+        [Tooltip("Experimental. Split large PhysBones into several components so the solver can run them on more threads. Grabbing and posing differ slightly on split chains. PC builds only.")]
         public bool splitPhysBones;
         // Imported Unity dimensions after active-platform sizing. Rectangles use their longer side.
         public static int GetPaddingPixels(int width, int height)
@@ -35,5 +35,7 @@ namespace Okarin.AvatarTextureOptimizer
         public bool allowUnsupportedShaders;
         [Tooltip("Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them.")]
         public bool keepMmdShapes = true;
+        [Tooltip("Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object.")]
+        public System.Collections.Generic.List<Transform> exclude = new System.Collections.Generic.List<Transform>();
     }
 }

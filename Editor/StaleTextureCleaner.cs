@@ -36,7 +36,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var renderers = root.GetComponentsInChildren<Renderer>(true);
             // Materials an excluded renderer draws or swaps in stay untouched (the swap rewrite below is not per renderer), and so
             // do materials a renderer with a property block draws: the block can switch on a feature the material stores as off.
-            var untouched = new HashSet<Material>(renderers.Where(r => Exclusions.Excluded(r) || r.HasPropertyBlock())
+            var untouched = new HashSet<Material>(renderers.Where(r => Exclusions.Excluded(r) || TextureUsageScanner.HasPropertyBlock(r))
                 .SelectMany(r => r.sharedMaterials.Concat(analysis.SwappedMaterials(r))).Where(m => m));
             var materials = renderers.SelectMany(r => r.sharedMaterials).Concat(analysis.AnimatedObjectValues.OfType<Material>())
                 .Where(m => m && m.shader && !untouched.Contains(m)).Distinct().ToList();
@@ -198,11 +198,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // An undeclared texture is cleared only for shaders whose source has been audited (lilToon entries, Unity's built-ins,
             // VRChat's mobile shaders): code can bind a texture it never declares, and a name match proves nothing about the code.
             bool audited = AuditedSource(material);
-            // Otherwise (PC only) the compiled variants show which textures are bound; one no variant binds is never read.
+            // On PC the compiled variants show which textures are bound; one no variant binds is never read, declared or not (a
+            // feature compiled out of this entry or by the material's keywords, or a slot kept only for other render pipelines,
+            // such as lilToon's _BaseMap). Animation cannot change keywords, so the variants are fixed for the build.
             HashSet<string> bound = null;
-            bool Unbound(string name)
+            bool Unbound(string name) => audited || NeverBound(name);
+            bool NeverBound(string name)
             {
-                if (audited || !GeneratedTargetValidator.IsStandalone || SkinnedMeshMerger.Broken(material.shader)) return audited;
+                if (!GeneratedTargetValidator.IsStandalone || SkinnedMeshMerger.Broken(material.shader)) return false;
                 if (bound == null) bound = VertexStreamStripper.Uniforms(material) ?? new HashSet<string> { null };
                 // Its tiling (_ST), size (_TexelSize) and HDR decode values come from the same saved entry, so none may be read either.
                 return !bound.Contains(null) && !new[] { name, name + "_ST", name + "_TexelSize", name + "_HDR" }.Any(bound.Contains);
@@ -217,7 +220,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var texture = entry.FindPropertyRelative("second.m_Texture").objectReferenceValue;
                     if (!texture || FallbackSlots.Contains(name) && !errorShader) continue; // Without its shader the material is broken for everyone; nothing is kept for the fallback.
                     if (errorShader || switchedOff.Contains(name) ||
-                        material.shader.FindPropertyIndex(name) < 0 && Unbound(name)) stale.Add(name);
+                        (material.shader.FindPropertyIndex(name) < 0 ? Unbound(name) : NeverBound(name))) stale.Add(name);
                 }
             }
             return stale;

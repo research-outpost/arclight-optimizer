@@ -29,8 +29,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 "Attempt texture fields of shaders whose sampling is not known, assuming UV0 and the property's tiling/offset. Can cause visible seams; test before uploading."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.keepMmdShapes)), new GUIContent("MMD Support",
                 "Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.exclude)), new GUIContent("Exclude",
+                "Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object."), true);
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.splitPhysBones)),
-                new GUIContent("Split PhysBones (experimental)", "Split large PhysBones into several components, placed so the solver can run them on more threads. Each piece keeps the original settings and forces. Never changes the PhysBone component rank. PC builds only; runs after the other Arclight passes."));
+                new GUIContent("Split PhysBones (experimental)", "Split large PhysBones into several components, placed so the solver can run them on more threads. Each piece keeps the original settings and forces. Grabbing and posing differ slightly: people can hold different strands of a split chain at once, and grabs on split strands don't sync with a Quest version. PC builds only; runs after the other Arclight passes."));
             serializedObject.ApplyModifiedProperties();
             using (new EditorGUILayout.HorizontalScope())
             {

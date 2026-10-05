@@ -7,7 +7,7 @@ namespace Okarin.AvatarTextureOptimizer
     // bones, PhysBones, contacts, particles and audio are neither changed nor removed. An escape hatch for when an
     // automatic decision is wrong for an object.
     [DisallowMultipleComponent]
-    [AddComponentMenu("Arclight/Arclight Exclude")]
+    [AddComponentMenu("")] // Superseded by the Exclude list on Arclight Optimizer; still honoured on existing avatars.
     public sealed class ArclightExclude : MonoBehaviour, INDMFEditorOnly
     {
     }

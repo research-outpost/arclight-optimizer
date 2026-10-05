@@ -159,11 +159,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static string WhyNot(SkinnedMeshRenderer renderer, AvatarAnalysis analysis, HashSet<Mesh> meshSwaps, bool canMoveAnimation)
         {
             var mesh = renderer.sharedMesh;
-            if (!mesh || Exclusions.Excluded(renderer)) return "no mesh, or under an Arclight Exclude component";
+            if (!mesh || Exclusions.Excluded(renderer)) return "no mesh, or excluded from Arclight";
             if (!renderer.enabled) return "the renderer is disabled";
             if (meshSwaps.Contains(mesh)) return "an animation swaps its mesh";
             if (renderer.GetComponent<Cloth>()) return "Cloth simulates it";
-            if (renderer.HasPropertyBlock()) return "a material property block sets values on it";
+            if (TextureUsageScanner.HasPropertyBlock(renderer)) return "a material property block sets values on it";
             var bindings = analysis.BindingsOn(renderer).ToList();
             if (bindings.Count > 0 && (!canMoveAnimation || !UniquePath(renderer.transform, analysis.Root.transform) ||
                 bindings.Any(b => !Movable(b, analysis.Root)))) return "an animation on the renderer cannot be moved to the merged one";

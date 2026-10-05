@@ -47,7 +47,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             bone = null;
             var mesh = renderer.sharedMesh;
-            if (!mesh || !renderer.enabled || mesh.blendShapeCount > 0 || swaps.Contains(mesh) || renderer.GetComponent<Cloth>() || renderer.HasPropertyBlock()) return false;
+            if (!mesh || !renderer.enabled || mesh.blendShapeCount > 0 || swaps.Contains(mesh) || renderer.GetComponent<Cloth>() || TextureUsageScanner.HasPropertyBlock(renderer)) return false;
             if (analysis.BindingsOn(renderer).Any() || analysis.ReferencesTo(renderer).Any()) return false;
             if (analysis.ReferencesTo(mesh).Any(c => c != renderer)) return false;
             var perVertex = mesh.GetBonesPerVertex();

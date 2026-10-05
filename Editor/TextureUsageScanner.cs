@@ -6,7 +6,6 @@ using System.Security.Cryptography;
 using nadena.dev.ndmf.animator;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.Rendering;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
@@ -93,7 +92,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 string path = AnimationUtility.CalculateTransformPath(renderer.transform, root.transform);
                 if (!mesh) result.Warnings.Add($"{path}: renderer has no mesh.");
                 bool excluded = Exclusions.Excluded(renderer);
-                if (excluded) result.Warnings.Add($"{path}: under an Arclight Exclude component; its textures are retained.");
+                if (excluded) result.Warnings.Add($"{path}: excluded from Arclight; its textures are retained.");
                 bool ambiguousSlots = excluded || mesh && renderer.sharedMaterials.Length < mesh.subMeshCount;
                 if (!excluded && ambiguousSlots) result.Warnings.Add($"{path}: fewer material slots than submeshes; retained.");
 
@@ -409,6 +408,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
         }
 
+        // Material property blocks are never serialized: Instantiate, prefab saves and asset bundles all drop them (checked
+        // in Unity 2022.3), so an uploaded avatar has none, and a block found during an upload build is editor state (a
+        // preview tool, for example) that the avatar in game will not have. Only Play Mode keeps it, so only Play Mode
+        // honours it. Tests set the override.
+        internal static bool? HonourPropertyBlocks;
+        internal static bool HasPropertyBlock(Renderer renderer) =>
+            (HonourPropertyBlocks ?? EditorApplication.isPlayingOrWillChangePlaymode) && renderer.HasPropertyBlock();
+
         // A renderer property block only matters when it sets something the sampling model reads: any texture slot or
         // its "<texture>_ST" transform (this also covers borrowed samplers and swapped textures), or a material input
         // the adapter recorded. Values it sets for anything else (a tint colour, for example) cannot change which texels
@@ -417,7 +424,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string property, SamplingDescription sampling, out string overridden)
         {
             overridden = null;
-            if (!renderer.HasPropertyBlock()) return false;
+            if (!HasPropertyBlock(renderer)) return false;
             if (sampling.MaterialInputs == null) { overridden = "an unmodeled input"; return true; }
             // A renderer can carry one block for every material and one per material slot; either may apply.
             var blocks = new System.Collections.Generic.List<MaterialPropertyBlock> { new MaterialPropertyBlock() };
@@ -457,7 +464,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (PropertyBlockMayOverrideSampling(renderer, slot, material, property, sampling, out string blockInput))
                 warning = "Material property block may override sampling: it sets " + blockInput + ".";
             if (ambiguousSlots) warning = "Ambiguous material/submesh assignment.";
-            if (Exclusions.Excluded(renderer)) warning = "Under an Arclight Exclude component.";
+            if (Exclusions.Excluded(renderer)) warning = "Excluded from Arclight.";
             if (!mesh || submesh < 0) warning = "Missing mesh or submesh.";
             else if (mesh.GetTopology(submesh) != MeshTopology.Triangles) warning = "Non-triangle topology.";
             if (!groups.TryGetValue(texture, out var group))
