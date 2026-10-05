@@ -46,13 +46,13 @@ For a manual install, download `research-outpost.arclight-optimizer-<version>.zi
 2. Choose **Add Component → Arclight → Arclight Optimizer**.
 3. Build and upload as usual, or enter Play Mode to preview.
 
-Everything is automatic. The options are **Allow unsupported shaders** (see Limitations), **MMD Support** (on by default: keeps the blend shapes MMD dance worlds animate on the Body mesh) and **Split PhysBones (experimental)**. To skip the optimizer for an avatar, disable or remove the component.
+Everything is automatic. The options are **Allow Unsupported Shaders** (see Limitations), **MMD Support** (on by default: keeps the blend shapes MMD dance worlds animate on the Body mesh) and **Exclude** (objects Arclight leaves alone, with everything under them). To skip the optimizer for an avatar, disable or remove the component.
 
 After a build, click **Open reports folder** on the component. Each report opens with how much the build saved (estimated download and mesh data, as separate figures), then shows what changed, why any texture was kept (largest first) and why meshes or layers were not merged.
 
 ## Accepted differences
 
-Everything else is exact. These differences are accepted, and the component lists them:
+Everything else is exact. These differences are accepted:
 
 - **Generated textures**: unused areas are cleared, padding is rebuilt and the texture is compressed again, so texels can differ by compression rounding (see below).
 - **Merged meshes and bones**: at most 1/255 per colour channel from re-rounding.
@@ -126,7 +126,7 @@ This only happens when the clip leaves room for the +3 dB without clipping, and 
 - Matcaps, ramps and textures with unknown sampling are kept, as are textures animated in ways it cannot follow.
 - Distant mipmaps can still show some colour bleeding. Check your avatar at different distances.
 - Quest/Android textures keep their formats, and Quest builds have not been tested on a device.
-- **Allow unsupported shaders** assumes how a shader maps its textures and may cause artifacts. Test before uploading.
+- **Allow Unsupported Shaders** assumes how a shader maps its textures and may cause artifacts. It applies only to shaders Arclight does not recognize; it never overrides what lilToon, Poiyomi or another supported shader keeps. Test before uploading.
 
 ## License
 

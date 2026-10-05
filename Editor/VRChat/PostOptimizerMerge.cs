@@ -86,7 +86,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     .Select(a => new System.Collections.Generic.KeyValuePair<object, VirtualAnimatorController>(a, clones.Clone(a.runtimeAnimatorController))))
                 .ToList();
             var analysis = AvatarAnalysis.Build(avatar, entries);
-            var result = VertexStreamStripper.Run(analysis, (a, b) => { }, afterD4rk: true);
+            // NDMF has already saved the build's assets, and the SDK saves the avatar as a prefab for upload, so a mesh made here
+            // must be saved too or the upload loses it: each copy goes into its source mesh's asset (d4rk's or NDMF's container).
+            // A mesh with no asset of its own is left alone.
+            var result = VertexStreamStripper.Run(analysis, (a, b) => AssetDatabase.AddObjectToAsset(b, AssetDatabase.GetAssetPath(a)), afterD4rk: true,
+                eligible: mesh => AssetDatabase.Contains(mesh));
             if (result.Meshes > 0)
                 Debug.Log($"Arclight Optimizer: removed vertex streams no material reads from {result.Meshes} mesh(es) after d4rk's merge ({result.Bytes / 1024:N0} KiB) on {avatar.name}.");
         }

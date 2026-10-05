@@ -89,18 +89,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 Path.GetExtension(assetPath) != ".lilcontainer")
                 return false;
             string entry = Path.GetFileNameWithoutExtension(assetPath);
-            string expected;
-            switch (entry)
-            {
-                case "lts": expected = "lilToon/lilSSAO/lilToon"; break;
-                case "lts_o": expected = "Hidden/lilToon/lilSSAO/OpaqueOutline"; break;
-                case "lts_cutout": expected = "Hidden/lilToon/lilSSAO/Cutout"; break;
-                case "lts_cutout_o": expected = "Hidden/lilToon/lilSSAO/CutoutOutline"; break;
-                case "lts_trans": expected = "Hidden/lilToon/lilSSAO/Transparent"; break;
-                case "lts_trans_o": expected = "Hidden/lilToon/lilSSAO/TransparentOutline"; break;
-                default: return false;
-            }
-            if (shaderName != expected) return false;
+            // lilSSAO builds each container from the same lilToon templates as the standard entry of that file name, plus an
+            // insert (custom.hlsl) that only reads _SSAOMask and changes fd.col before fog. The container's own Shader line,
+            // with lilSSAO's shader name, must match. ltsmulti_o uses lilSSAO's own Multi outline block, which is not audited.
+            if (!Variants.Contains(entry + ".shader") || entry == "ltsmulti_o") return false;
+            string container;
+            try { container = File.ReadAllText(assetPath); } catch (IOException) { return false; }
+            var declared = System.Text.RegularExpressions.Regex.Match(container, @"Shader\s+""([^""]+)""");
+            if (!declared.Success || declared.Groups[1].Value.Replace("*LIL_SHADER_NAME*", "lilToon/lilSSAO") != shaderName) return false;
             file = entry + ".shader";
             return true;
         }
@@ -128,6 +124,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             Add(Coordinates.MainThenOwn, TextureSemantics.Color, "_RimColorTex _BacklightColorTex _ReflectionColorTex");
             Add(Coordinates.MainThenOwn, TextureSemantics.Data, "_AlphaMask _MatCapBlendMask _MatCap2ndBlendMask _Bump2ndScaleMask _AnisotropyScaleMask _AnisotropyShiftNoiseMask _SmoothnessTex _MetallicGlossMap");
             Add(Coordinates.FixedMain, TextureSemantics.Data, "_OutlineWidthMask _ShadowStrengthMask _ShadowBorderMask _ShadowBlurMask _FurLengthMask");
+            // lilSSAO only (custom_insert.hlsl lilSSAO_ApplySSAO): LIL_SAMPLE_2D(_SSAOMask, lil_sampler_linear_repeat, fd.uvMain).r, in every
+            // pass that runs BEFORE_FOG; in outline passes fd.uvMain is the outline UV (see the outline path below).
+            Add(Coordinates.FixedMain, TextureSemantics.Data, "_SSAOMask");
             Add(Coordinates.SelectedRawOwn, TextureSemantics.Color, "_Main2ndTex _Main3rdTex _EmissionMap _Emission2ndMap");
             Add(Coordinates.SelectedMainOwn, TextureSemantics.Color, "_GlitterColorTex");
             Add(Coordinates.SelectedMainOwn, TextureSemantics.Data, "_AudioLinkMask");
@@ -195,6 +194,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string compatibilityId = Id + (inferredSsao ? "/lilssao-inventory-v1" : "") + "/" + LilToonSourceGuard.SourceFingerprint;
             if (!Fields.TryGetValue(property, out var field))
                 return Unsupported("Custom or unrecognized lilToon texture field " + property + "; discovered, but its sampling is not modeled.");
+            if (property == "_SSAOMask" && !inferredSsao) return Unsupported("_SSAOMask is read only by lilSSAO containers; original retained.");
             if (field.Coordinates == Coordinates.Alias)
                 return new SamplingDescription { AdapterId = compatibilityId, Supported = true, NotSampled = true,
                     Reason = inference + "Compatibility alias; treated as unused by the standard lilToon 2.x Built-in sampling model." };
@@ -315,6 +315,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     property == "_OutlineWidthMask" ? "Outline vertex LOD0 / fixed Repeat" : "Shadow mask / fixed Repeat", true, basis: "_MainTex", dependencies: new[] { "_MainTex" });
                 Add(result, MaterialInputs.Scale(material, "_MainTex"), MaterialInputs.Offset(material, "_MainTex"), source,
                     "Legacy sampler fallback", basis: "_MainTex", dependencies: new[] { "_MainTex" });
+                if (property == "_SSAOMask" && outline)
+                    Add(result, MaterialInputs.Scale(material, "_OutlineTex"), MaterialInputs.Offset(material, "_OutlineTex"), null,
+                        "SSAO mask in outline passes / fixed Repeat", true, dependencies: new[] { "_OutlineTex" });
             }
             else if (property == "_OutlineTex")
                 Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property), source, "Outline passes",
@@ -352,7 +355,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Every read of these fields in every pass takes .r alone.
         internal static readonly HashSet<string> RedOnlyFields = new HashSet<string>(
             ("_MainColorAdjustMask _Main2ndBlendMask _Main3rdBlendMask _RimShadeMask _FurMask _FurLengthMask _AlphaMask " +
-             "_Bump2ndScaleMask _AnisotropyScaleMask _AnisotropyShiftNoiseMask _SmoothnessTex _MetallicGlossMap").Split(' '), StringComparer.Ordinal);
+             "_Bump2ndScaleMask _AnisotropyScaleMask _AnisotropyShiftNoiseMask _SmoothnessTex _MetallicGlossMap _SSAOMask").Split(' '), StringComparer.Ordinal);
         // Entries built only from the ltspass_opaque, ltspass_tess_opaque and ltspass_lite_opaque passes (LIL_RENDER 0).
         // Those passes set fd.col.a = 1 before any use of the main alpha that can affect colour, and their
         // shadow-caster and depth passes compile the alpha path only for LIL_RENDER > 0.

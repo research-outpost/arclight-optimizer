@@ -70,7 +70,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         internal sealed class Result { public int Meshes; public long Bytes; }
 
-        internal static Result Run(AvatarAnalysis analysis, Action<UnityEngine.Object, UnityEngine.Object> register, bool afterD4rk = false)
+        internal static Result Run(AvatarAnalysis analysis, Action<UnityEngine.Object, UnityEngine.Object> register, bool afterD4rk = false,
+            Func<Mesh, bool> eligible = null)
         {
             var result = new Result();
             if (!GeneratedTargetValidator.IsStandalone && !Android || !analysis.Complete) return result;
@@ -97,7 +98,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var pair in users)
             {
                 var mesh = pair.Key;
-                if (blocked.Contains(mesh)) continue;
+                if (blocked.Contains(mesh) || eligible != null && !eligible(mesh)) continue;
                 var materials = pair.Value.SelectMany(r => r.sharedMaterials.Concat(analysis.SwappedMaterials(r))).Distinct().ToArray();
                 var animated = new HashSet<string>(pair.Value.SelectMany(analysis.AnimatedMaterialProperties), StringComparer.Ordinal);
                 var strip = Optional.Where(a => mesh.HasVertexAttribute(a) && materials.All(m => !Needs(m, a, animated.Contains))).ToArray();
