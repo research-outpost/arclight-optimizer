@@ -77,9 +77,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
                 if (changed) renderer.sharedMaterials = materials;
             }
+            // Swaps onto an excluded renderer keep their materials (Arclight Exclude leaves its objects untouched).
+            var protectedRenderers = root.GetComponentsInChildren<Renderer>(true).Where(Exclusions.Excluded).ToArray();
             foreach (var clip in ownedClips)
                 foreach (var binding in SwapBindings(clip))
                 {
+                    if (protectedRenderers.Any(r => PathMatches(root, r, binding.path ?? ""))) continue;
                     var keys = AnimationUtility.GetObjectReferenceCurve(clip, binding);
                     bool changed = false;
                     for (int i = 0; i < keys.Length; i++)

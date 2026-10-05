@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -49,7 +50,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (analysis.BlendShapeDrivenByPlatform(renderer, name) || mmdBody && BlendShapeFreezer.MmdShapes.Contains(name)) continue;
                     var curves = bindings.Where(b => b.Property == "blendShape." + name).ToList();
                     if (curves.Count == 0) continue; // The freezer handles shapes nothing animates.
-                    string key = renderer.GetBlendShapeWeight(shape).ToString("R") + "|" + string.Join(",", Enumerable.Range(0, mesh.GetBlendShapeFrameCount(shape)).Select(f => mesh.GetBlendShapeFrameWeight(shape, f).ToString("R"))) + "|" +
+                    string key = renderer.GetBlendShapeWeight(shape).ToString("R", CultureInfo.InvariantCulture) + "|" + mesh.GetBlendShapeFrameCount(shape) + ":" + string.Join(",", Enumerable.Range(0, mesh.GetBlendShapeFrameCount(shape)).Select(f => mesh.GetBlendShapeFrameWeight(shape, f).ToString("R", CultureInfo.InvariantCulture))) + "|" +
                         string.Join(";", curves.Select(b => b.ClipKey + ":" + CurveKey(b.FloatCurve)).OrderBy(s => s, StringComparer.Ordinal));
                     if (!groups.TryGetValue(key, out var list)) groups.Add(key, list = new List<int>());
                     list.Add(shape);
@@ -99,7 +100,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static string CurveKey(AnimationCurve curve) =>
             curve.preWrapMode + "," + curve.postWrapMode + "," + string.Join(",", curve.keys.Select(k =>
-                string.Join(" ", new[] { k.time, k.value, k.inTangent, k.outTangent, k.inWeight, k.outWeight }.Select(f => f.ToString("R"))) + " " + (int)k.weightedMode));
+                string.Join(" ", new[] { k.time, k.value, k.inTangent, k.outTangent, k.inWeight, k.outWeight }.Select(f => f.ToString("R", CultureInfo.InvariantCulture))) + " " + (int)k.weightedMode));
 
         // Vertices with any delta in any of the shape's frames.
         private static bool[] Touched(Mesh mesh, int shape)

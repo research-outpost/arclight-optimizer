@@ -158,9 +158,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             bool android = EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android;
             if (!GeneratedTargetValidator.IsStandalone && !android) return;
             var collapsed = new Dictionary<Texture, Texture2D>();
+            // The scan only audits mesh and skinned mesh renderers that are not excluded; a texture any other renderer holds stays.
+            var unaudited = new HashSet<Texture>(renderers.Where(r => !(r is MeshRenderer) && !(r is SkinnedMeshRenderer) || Exclusions.Excluded(r))
+                .SelectMany(r => r.sharedMaterials).Where(m => m).SelectMany(m => m.GetTexturePropertyNames().Select(m.GetTexture)).Where(t => t));
             foreach (var group in scan.Groups)
             {
-                if (!(group.Source is Texture2D texture) || cropped.Contains(texture) || group.Warning != null || scan.Duplicates.ContainsValue(texture)) continue;
+                if (!(group.Source is Texture2D texture) || cropped.Contains(texture) || unaudited.Contains(texture) || group.Warning != null || scan.Duplicates.ContainsValue(texture)) continue;
                 if (group.Uses.Count == 0 || group.Uses.Any(u => !u.Material || !u.Sampling.Supported || (android
                         ? u.Sampling.AdapterId != VRChatMobileAdapter.Id
                         : !(u.Sampling.AdapterId ?? "").StartsWith(LilToonAdapter.Id + "/", StringComparison.Ordinal) || u.Sampling.AdapterId.Contains("/lilssao")))) continue;
@@ -184,7 +187,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             if (collapsed.Count == 0) return;
             var copies = new Dictionary<Material, Material>();
-            foreach (var renderer in renderers)
+            foreach (var renderer in renderers.Where(r => (r is MeshRenderer || r is SkinnedMeshRenderer) && !Exclusions.Excluded(r)))
             {
                 var slots = renderer.sharedMaterials;
                 bool changed = false;

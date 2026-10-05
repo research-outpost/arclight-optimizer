@@ -66,9 +66,25 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static bool IsD4rkOutput(UnityEngine.Object asset)
         {
             string path = asset ? AssetDatabase.GetAssetPath(asset) : "";
-            return path.IndexOf("/TrashBin/", StringComparison.Ordinal) >= 0 &&
-                   path.IndexOf("d4rkavataroptimizer", StringComparison.OrdinalIgnoreCase) >= 0;
+            return TrashBin != null && path.StartsWith(TrashBin, StringComparison.Ordinal);
         }
+
+        // d4rk's TrashBin folder, worked out as d4rkAvatarOptimizer.GetTrashBinLocation does (an embedded package's folder, the
+        // package folder under Assets, else Assets/d4rkAvatarOptimizer) but without calling it, as it creates that last folder.
+        // Null without d4rk.
+        internal static string TrashBin => trashBin.Value;
+        private static readonly Lazy<string> trashBin = new Lazy<string>(() =>
+        {
+            var assembly = D4rkType()?.Assembly;
+            if (assembly == null) return null;
+            var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(assembly);
+            if (package?.source == UnityEditor.PackageManager.PackageSource.Embedded && !string.IsNullOrEmpty(package.assetPath)) return package.assetPath + "/TrashBin/";
+            const string inPackage = "/Editor/d4rkpl4y3r.d4rkavataroptimizer.Editor.asmdef";
+            string asmdef = UnityEditor.Compilation.CompilationPipeline.GetAssemblyDefinitionFilePathFromAssemblyName(assembly.GetName().FullName) ?? "";
+            if (asmdef.StartsWith("Assets", StringComparison.Ordinal) && asmdef.EndsWith(inPackage, StringComparison.Ordinal))
+                return asmdef.Substring(0, asmdef.Length - inPackage.Length) + "/TrashBin/";
+            return "Assets/d4rkAvatarOptimizer/TrashBin/";
+        });
 
         // Whether d4rkAvatarOptimizer may optimize this avatar on upload: it has a d4rk component (enabled or not), or d4rk is
         // installed with its global "Always Optimize on Upload" setting, under which d4rk adds its own component at callback -15.

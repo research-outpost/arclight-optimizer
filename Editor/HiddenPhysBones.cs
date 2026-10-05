@@ -64,7 +64,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var renderers = new HashSet<Renderer>();
             foreach (var t in start.GetComponentsInChildren<Transform>(true))
             {
-                if (t == start) continue;
+                if (t == start && !UnusedObjectRemover.RootMoves(physBone)) continue;
                 if (t.GetComponents<Component>().Any(c => c && !(c is Transform) && c != physBone)) return null;
                 // A bone's own active toggle (outfit bones merged into the armature keep the outfit's toggle) moves
                 // nothing and draws nothing by itself, so only its observers matter.

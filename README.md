@@ -59,6 +59,7 @@ Everything else is exact. These differences are accepted:
 - **Cropped textures**: only the smallest mip levels can differ.
 - **Paused PhysBones**: a chain restarts from its rest pose when its outfit is shown again.
 - **Mono audio**: the level matches within 0.05%.
+- **Folded animator layers**: a rotation they animate can differ by one float step.
 
 ## Other optimizers
 

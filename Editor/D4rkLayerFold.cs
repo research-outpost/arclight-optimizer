@@ -65,7 +65,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var named = new HashSet<int>();
             foreach (var controller in all.OfType<AnimatorController>())
                 foreach (var layer in controller.layers)
-                    foreach (var behaviour in Machines(layer.stateMachine).SelectMany(m => m.behaviours.Concat(m.states.SelectMany(s => s.state.behaviours))))
+                    // A synced layer keeps its own behaviours per state of the layer it copies.
+                    foreach (var behaviour in Machines(layer.stateMachine).SelectMany(m => m.behaviours.Concat(m.states.SelectMany(s => s.state.behaviours)))
+                        .Concat(layer.syncedLayerIndex >= 0 && layer.syncedLayerIndex < controller.layers.Length
+                            ? Machines(controller.layers[layer.syncedLayerIndex].stateMachine).SelectMany(m => m.states).SelectMany(s => layer.GetOverrideBehaviours(s.state) ?? new StateMachineBehaviour[0])
+                            : Enumerable.Empty<StateMachineBehaviour>()))
                     {
                         if (!behaviour || behaviour.GetType().Name != "VRCAnimatorLayerControl") continue;
                         using (var serialized = new SerializedObject(behaviour))

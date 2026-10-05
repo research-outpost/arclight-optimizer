@@ -364,9 +364,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     using (var serialized = new SerializedObject(component))
                     {
                         var start = serialized.FindProperty("rootTransform")?.objectReferenceValue as Transform ?? component.transform;
-                        // Conservative: the whole chain below the root moves (ignored transforms move with their parents).
+                        // Conservative: the whole chain below the root moves (ignored transforms move with their parents), and the root
+                        // itself unless the PhysBone leaves it still (UnusedObjectRemover.RootMoves).
+                        bool rootMoves = UnusedObjectRemover.RootMoves(component);
                         foreach (var moving in start.GetComponentsInChildren<Transform>(true))
-                            if (moving != start)
+                            if (moving != start || rootMoves)
                             {
                                 movingLocally.Add(moving);
                                 if (!physBonesMoving.TryGetValue(moving, out var list)) physBonesMoving[moving] = list = new List<Component>();

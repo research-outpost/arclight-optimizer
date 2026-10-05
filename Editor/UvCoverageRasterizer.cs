@@ -95,9 +95,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal int EntryCount => entries.Count;
         internal long RetainedBytes => retainedBytes;
 
-        internal static string CreateKey(TextureGroup group, int width, int height, int padding, Action cancel)
+        // Every distinct sampling path of the group, keyed by everything that decides its coverage, in key order. The cache key and
+        // a cold build both work from this list, so a cache hit and a fresh build always do (and budget) the same work.
+        internal static List<(string Key, TextureUsageRecord Use, SamplingPath Path)> UniquePaths(TextureGroup group, Action cancel)
         {
-            var paths = new SortedSet<string>(StringComparer.Ordinal);
+            var unique = new SortedDictionary<string, (TextureUsageRecord, SamplingPath)>(StringComparer.Ordinal);
             foreach (var use in group.ActiveUses)
                 foreach (var path in use.Sampling.GetPaths())
                 {
@@ -123,10 +125,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 pathWriter.Write(transform.z); pathWriter.Write(transform.w);
                             }
                         pathWriter.Flush();
-                        // Coverage is a union, so order and duplicate identical paths do not affect its output.
-                        paths.Add(FingerprintService.Hash(pathStream.ToArray()));
+                        string key = FingerprintService.Hash(pathStream.ToArray());
+                        if (!unique.ContainsKey(key)) unique.Add(key, (use, path));
                     }
                 }
+            return unique.Select(p => (p.Key, p.Value.Item1, p.Value.Item2)).ToList();
+        }
+
+        internal static string CreateKey(TextureGroup group, int width, int height, int padding, Action cancel)
+        {
+            // Coverage is a union, so order and duplicate identical paths do not affect its output.
+            var paths = new SortedSet<string>(UniquePaths(group, cancel).Select(p => p.Key), StringComparer.Ordinal);
 
             using (var stream = new System.IO.MemoryStream())
             using (var writer = new System.IO.BinaryWriter(stream))
@@ -269,8 +278,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // fills it long before its triangles run out). firstFree only moves forward: linear in the mask size overall.
             int firstFree = 0;
             bool Full() { while (firstFree < mask.Length && mask[firstFree]) firstFree++; return firstFree == mask.Length; }
-            foreach (var use in group.ActiveUses)
-                foreach (var path in use.Sampling.GetPaths())
+            // Distinct paths in key order: the same work, and the same budget, as the cache key describes (UvCoverageCache.UniquePaths).
+            foreach (var (_, use, path) in UvCoverageCache.UniquePaths(group, cancel))
                 {
                     if (Full()) { wraps.Add((path.WrapU(group.Source), path.WrapV(group.Source))); continue; }
                     var snapshot = use.ReadMesh(path.UvChannel);

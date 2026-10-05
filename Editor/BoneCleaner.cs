@@ -51,7 +51,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // physBones: false while VRCFury has not built yet, as it may still add readers of a PhysBone's parameter.
             foreach (var physBone in root.GetComponentsInChildren<Component>(true).Where(c => physBones && c && c.GetType().Name == "VRCPhysBone" && !Exclusions.Excluded(c)).ToList())
             {
-                if (Observed(physBone, analysis)) continue;
+                if (Observed(physBone, analysis) || UnusedObjectRemover.NeedsExcludedWrite(root, physBone)) continue;
                 UnusedObjectRemover.KeepIgnoredByOthers(root, physBone);
                 Object.DestroyImmediate(physBone);
                 result.PhysBones++;
@@ -164,7 +164,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var start = UnusedObjectRemover.PhysBoneRoot(physBone);
             foreach (var t in start.GetComponentsInChildren<Transform>(true))
             {
-                if (t == start) continue;
+                if (t == start && !UnusedObjectRemover.RootMoves(physBone)) continue;
                 if (t.GetComponents<Component>().Any(c => c && !(c is Transform) && c != physBone)) return true;
                 if (analysis.ReferencesTo(t).Any(c => c != physBone)) return true;
                 if (analysis.ReferencesTo(t.gameObject).Any(c => c != physBone && c.gameObject != t.gameObject)) return true;

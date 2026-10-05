@@ -189,7 +189,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                     continue;
                                 }
                                 var unchanged = cache.unchangedTextures.FirstOrDefault(m => m.sourceId == id && m.recipeHash == recipe);
-                                if (unchanged != null)
+                                // "No pixel changes" found without an estimate is checked again where one exists: the format alone may shrink.
+                                if (unchanged != null && !(string.IsNullOrEmpty(unchanged.retainedReason) && !unchanged.estimated && BundleSizeEstimator.CanEstimate))
                                 {
                                     result.CacheLookup = true;
                                     MarkUsed(cache, ref unchanged.lastUsedDay);
@@ -206,6 +207,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                     result.Reason = "A matching cached result found no pixel changes; the original was retained.";
                                     continue;
                                 }
+                                if (unchanged != null) { cache.unchangedTextures.Remove(unchanged); EditorUtility.SetDirty(cache); } // Checked again below.
                                 var nonBeneficial = TextureFileSizePolicy.Find(cache, id, recipe);
                                 // A "no saving" found by PNG size alone (Play Mode) is checked again where the compressed size can be estimated.
                                 if (nonBeneficial != null && !(!nonBeneficial.compressedEstimate && BundleSizeEstimator.CanEstimate))
@@ -235,7 +237,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 }
                                 catch (NoTextureChangesException e)
                                 {
-                                    cache.unchangedTextures.Add(new UnchangedTextureAnalysis { source = (Texture2D)group.Source, sourceId = id, recipeHash = recipe, lastUsedDay = CacheCleanup.Today });
+                                    cache.unchangedTextures.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
+                                    cache.unchangedTextures.Add(new UnchangedTextureAnalysis { source = (Texture2D)group.Source, sourceId = id, recipeHash = recipe, lastUsedDay = CacheCleanup.Today, estimated = BundleSizeEstimator.CanEstimate });
                                     EditorUtility.SetDirty(cache);
                                     summary.Unchanged++;
                                     result.Outcome = TextureResultKind.Unchanged;

@@ -73,9 +73,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // VRCFury's debug info is an editor-only note (stripped before upload) that nothing reads in game, so it
                 // keeps nothing alive; it goes with its object when that object is swept.
                 if (component.GetType().FullName == "VF.Model.VRCFuryDebugInfo" && !Exclusions.Excluded(component)) continue;
-                if (!IsUnderstood(component) || CanRun(component, analysis) || Exclusions.Excluded(component)) Keep(component);
+                if (!IsUnderstood(component) || CanRun(component, analysis) || Exclusions.Excluded(component) ||
+                    component.GetType().Name == "VRCPhysBone" && NeedsExcludedWrite(root, component)) Keep(component);
             }
             Keep(root.transform);
+            // An object-reference key can hand an avatar object to a component later (an AimConstraint's world-up object, say).
+            foreach (var value in analysis.AnimatedObjectValues)
+                if (((value as Component)?.transform ?? (value as GameObject)?.transform) is Transform held && held.IsChildOf(root.transform)) KeepObject(value);
 
             while (pending.Count > 0)
             {
@@ -134,8 +138,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (component is MeshFilter) return false; // Only through its renderer.
             if (component is ParticleSystemRenderer) return false; // With its system.
             if (component is IConstraint) return false; // Kept with its transform below.
-            if (component.GetType().Name == "VRCPhysBoneCollider") return false; // Kept through the PhysBones that use it.
             if (!CanBeActive(component.gameObject, analysis)) return false;
+            // Kept through the PhysBones that use it, unless Global Collision is on: then it can push PhysBones that never list it
+            // (other players' included).
+            if (component.GetType().Name == "VRCPhysBoneCollider")
+                return GlobalCollision(component, analysis) && (((Behaviour)component).enabled || analysis.IsAnimated(component, p => p == "m_Enabled"));
             // Spatial audio settings act through their AudioSource only.
             if (component.GetType().Name == "VRCSpatialAudioSource") return component.GetComponent<AudioSource>() is AudioSource source && source && CanRun(source, analysis);
             if (component is Renderer renderer)
@@ -159,13 +166,41 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return true; // ParticleSystem: plays whenever its object is active.
         }
 
+        private static bool GlobalCollision(Component collider, AvatarAnalysis analysis)
+        {
+            if (analysis.IsAnimated(collider, p => p.StartsWith("globalCollision", StringComparison.Ordinal))) return true;
+            using (var serialized = new UnityEditor.SerializedObject(collider))
+            {
+                var global = serialized.FindProperty("globalCollision");
+                return global != null && (global.propertyType == UnityEditor.SerializedPropertyType.Boolean ? global.boolValue : global.intValue != 0);
+            }
+        }
+
         // VRChat SDK 3.8+: a PhysBone with Ignore Other Phys Bones on treats the root of every other PhysBone in its chain
         // as ignored, enabled or not. Removing such a PhysBone would hand its bones to the outer one, so its root is first
         // written into the outer PhysBone's own ignore list, which is what the SDK already did.
         internal static void KeepIgnoredByOthers(GameObject root, Component removed)
         {
             var removedRoot = PhysBoneRoot(removed);
-            foreach (var other in root.GetComponentsInChildren<Component>(true).Where(c => c && c != removed && c.GetType().Name == "VRCPhysBone"))
+            foreach (var other in IgnoringOuters(root, removed).ToList())
+                using (var serialized = new UnityEditor.SerializedObject(other))
+                {
+                    var ignored = serialized.FindProperty("ignoreTransforms");
+                    ignored.arraySize++;
+                    ignored.GetArrayElementAtIndex(ignored.arraySize - 1).objectReferenceValue = removedRoot;
+                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                }
+        }
+
+        // Whether removing this PhysBone would have to write into an excluded PhysBone's ignore list; such a PhysBone stays, as
+        // Arclight Exclude leaves its components untouched and skipping the write would hand its bones to the outer chain.
+        internal static bool NeedsExcludedWrite(GameObject root, Component physBone) => IgnoringOuters(root, physBone).Any(Exclusions.Excluded);
+
+        // The other PhysBones whose ignore list must gain this PhysBone's root if it goes.
+        private static IEnumerable<Component> IgnoringOuters(GameObject root, Component removed)
+        {
+            var removedRoot = PhysBoneRoot(removed);
+            foreach (var other in root.GetComponentsInChildren<Component>(true).Where(c => c && c != removed && c.GetType().Name == "VRCPhysBone").ToList())
             {
                 var otherRoot = PhysBoneRoot(other);
                 if (removedRoot == otherRoot || !removedRoot.IsChildOf(otherRoot)) continue;
@@ -176,10 +211,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (ignoreOthers == null || !ignoreOthers.boolValue || ignored == null || !ignored.isArray) continue;
                     bool listed = false;
                     for (int i = 0; i < ignored.arraySize && !listed; i++) listed = ignored.GetArrayElementAtIndex(i).objectReferenceValue == removedRoot;
-                    if (listed) continue;
-                    ignored.arraySize++;
-                    ignored.GetArrayElementAtIndex(ignored.arraySize - 1).objectReferenceValue = removedRoot;
-                    serialized.ApplyModifiedPropertiesWithoutUndo();
+                    if (!listed) yield return other;
                 }
             }
         }
@@ -188,6 +220,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             using (var serialized = new UnityEditor.SerializedObject(physBone))
                 return serialized.FindProperty("rootTransform")?.objectReferenceValue is Transform root && root ? root : physBone.transform;
+        }
+
+        // Whether the PhysBone rotates its root transform. It does unless Multi-Child Type is Ignore and the root has more
+        // than one child the chain simulates; a single child, or an endpoint alone, swings the root.
+        internal static bool RootMoves(Component physBone)
+        {
+            var start = PhysBoneRoot(physBone);
+            using (var serialized = new UnityEditor.SerializedObject(physBone))
+            {
+                var type = serialized.FindProperty("multiChildType");
+                if (type == null || type.enumValueIndex != 0) return true;
+                var ignoreList = serialized.FindProperty("ignoreTransforms");
+                var ignored = new HashSet<Transform>();
+                for (int i = 0; ignoreList != null && i < ignoreList.arraySize; i++)
+                    if (ignoreList.GetArrayElementAtIndex(i).objectReferenceValue is Transform t && t) ignored.Add(t);
+                return start.Cast<Transform>().Count(child => !ignored.Contains(child)) <= 1;
+            }
         }
 
         private static bool CanBeActive(GameObject gameObject, AvatarAnalysis analysis)

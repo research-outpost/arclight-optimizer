@@ -94,6 +94,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var mesh in users.Keys)
                 if (analysis.ReferencesTo(mesh).Any(c => !(c is MeshFilter) && !(c is SkinnedMeshRenderer))) blocked.Add(mesh);
             foreach (var pair in users) if (pair.Value.Any(Exclusions.Excluded)) blocked.Add(pair.Key);
+            // A particle shape that names the renderer emits from its mesh (positions, normals, colours, UVs), whatever the materials read.
+            foreach (var pair in users) if (pair.Value.Any(r => analysis.ReferencesTo(r).Any(c => c is ParticleSystem))) blocked.Add(pair.Key);
 
             foreach (var pair in users)
             {

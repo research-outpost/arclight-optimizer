@@ -47,7 +47,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             foreach (string file in Directory.GetFiles(folder).Select(p => p.Replace('\\', '/')).OrderBy(p => p, StringComparer.Ordinal))
             {
-                if (file.EndsWith(".png.writing", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(file).StartsWith(SourceImages.TempPrefix, StringComparison.Ordinal))
+                // Only names Arclight makes: "_flatten_" plus a 32-digit GUID (SourceImages, TextureSafety), or a PNG being written.
+                if (file.EndsWith(".png.writing", StringComparison.OrdinalIgnoreCase) ||
+                    System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(file), "^" + SourceImages.TempPrefix + @"[0-9a-f]{32}\.[a-z0-9]+$"))
                 {
                     plan.StagingFiles.Add(file);
                     plan.Bytes += new FileInfo(file).Length;
@@ -74,7 +76,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (string file in Directory.GetFiles(folder).Select(p => p.Replace('\\', '/')).OrderBy(p => p, StringComparer.Ordinal))
             {
                 if (file.EndsWith(".meta", StringComparison.Ordinal)) continue;
-                bool decode = decodeCopies && Path.GetFileNameWithoutExtension(file).EndsWith("_decode", StringComparison.Ordinal);
+                // AudioMonoConverter names its decode copies by 12 hex digits of the clip hash plus "_decode".
+                bool decode = decodeCopies && System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(file), "^[0-9A-Fa-f]{12}_decode$");
                 if (!decode && !generated(file)) continue;
                 if (!decode && !usage.TryGetValue(file, out int day)) { usage[file] = plan.Today; recorded = true; continue; }
                 if (!decode && !IsStale(plan, usage[file])) continue;

@@ -109,7 +109,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             string path = AssetDatabase.GetAssetPath(asset);
             return path.Length == 0 || path.StartsWith("Packages/nadena.dev.ndmf/__Generated/", System.StringComparison.Ordinal) ||
-                path.IndexOf("/TrashBin/", System.StringComparison.Ordinal) >= 0;
+                D4rkOrdering.IsD4rkOutput(asset);
         }
     }
 }

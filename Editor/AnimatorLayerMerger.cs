@@ -51,7 +51,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     internal static class AnimatorLayerMerger
     {
         // The always-1 weight parameter of this build's merged layers: "Arclight/AlwaysOne", with a number added when the avatar
-        // already names that anywhere (a parameter, a blend tree, a behaviour, an expression parameter), so nothing else can
+        // already names that anywhere (a parameter, a blend tree, a state, a behaviour, an animated Animator property, an expression parameter), so nothing else can
         // write it and no authored tree can pass for a merged one (AnimationAnalysis.FoldedLayers). Null until Run picks it.
         internal static string AlwaysOne { get; private set; }
 
@@ -70,7 +70,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         foreach (var child in tree.Children) named.Add(child.DirectBlendParameter ?? "");
                     }
                     else if (node is VirtualTransitionBase transition) foreach (var condition in transition.Conditions) named.Add(condition.parameter);
-                    else if (node is VirtualState state) foreach (var behaviour in state.Behaviours) ParameterCleaner.Strings(behaviour, named);
+                    else if (node is VirtualState state)
+                    {
+                        named.UnionWith(new[] { state.SpeedParameter, state.TimeParameter, state.CycleOffsetParameter, state.MirrorParameter }.Where(p => p != null));
+                        foreach (var behaviour in state.Behaviours) ParameterCleaner.Strings(behaviour, named);
+                    }
+                    else if (node is VirtualClip clip) named.UnionWith(clip.GetFloatCurveBindings().Where(b => b.type == typeof(Animator)).Select(b => b.propertyName));
                     else if (node is VirtualStateMachine machine) foreach (var behaviour in machine.Behaviours) ParameterCleaner.Strings(behaviour, named);
                 foreach (var behaviour in controller.Layers.SelectMany(l => l.SyncedLayerBehaviourOverrides.Values.SelectMany(v => v))) ParameterCleaner.Strings(behaviour, named);
             }
