@@ -47,7 +47,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var replace = new Dictionary<UnityEngine.Object, UnityEngine.Object>();
             if (merge)
             {
-                result.Meshes = MergeIdentical(references.OfType<Mesh>(), MeshSignature, replace);
+                BuildTimings.Step("Duplicate meshes");
+                result.Meshes = MergeIdentical(references.OfType<Mesh>(), MeshSignature, replace, MeshShape);
+                BuildTimings.Step("Duplicate audio");
                 result.AudioClips = MergeIdentical(references.OfType<AudioClip>(), AudioSignature, replace);
                 foreach (var dropped in replace.Keys)
                     if (dropped is Mesh mesh) result.MeshBytes += MeshBytes(mesh);
@@ -57,6 +59,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         else result.AudioUnmeasured++;
                     }
             }
+            BuildTimings.Step("Index compaction");
             if (compact)
                 foreach (var mesh in references.OfType<Mesh>().Where(m => !replace.ContainsKey(m)).ToArray())
                 {
@@ -75,6 +78,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             if (monoAudio)
             {
+                BuildTimings.Step("Mono audio");
                 // Judged after merging, on the clips the components now hold.
                 var mono = AudioMonoConverter.Convert(ClipReferences(components).Where(r => !excluded.Contains(r.Item2)).ToList(), monoVetoed);
                 if (mono.Count > 0)
@@ -181,9 +185,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Points each object at the first identical one; returns how many were replaced. Null signatures never merge.
+        // shape: a cheap key that identical items always share; an item whose shape no other item has cannot be a duplicate, so
+        // its full signature (every vertex and blend shape delta, for a mesh) is never read.
         private static int MergeIdentical<T>(IEnumerable<T> items, Func<T, byte[]> signature,
-            Dictionary<UnityEngine.Object, UnityEngine.Object> replace) where T : UnityEngine.Object
+            Dictionary<UnityEngine.Object, UnityEngine.Object> replace, Func<T, string> shape = null) where T : UnityEngine.Object
         {
+            if (shape != null)
+            {
+                var list = items.ToList();
+                string Shape(T item) { try { return shape(item); } catch (Exception) { return null; } } // Unknown: compared in full.
+                var shapes = list.Distinct().ToDictionary(item => item, Shape);
+                var shared = new HashSet<string>(shapes.Values.Where(s => s != null).GroupBy(s => s, StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.Key), StringComparer.Ordinal);
+                items = list.Where(item => shapes[item] == null || shared.Contains(shapes[item]));
+            }
             var keepers = new Dictionary<string, List<(T Item, byte[] Data)>>(StringComparer.Ordinal);
             int merged = 0;
             foreach (var item in items)
@@ -199,6 +213,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 else { replace.Add(item, keeper); merged++; }
             }
             return merged;
+        }
+
+        // Counts and layout that MeshSignature also writes, so identical meshes always share it.
+        internal static string MeshShape(Mesh mesh)
+        {
+            long indices = 0;
+            for (int i = 0; i < mesh.subMeshCount; i++) indices += mesh.GetIndexCount(i);
+            return mesh.vertexCount + "|" + (int)mesh.indexFormat + "|" + mesh.subMeshCount + "|" + indices + "|" + mesh.blendShapeCount + "|" +
+                string.Join(",", mesh.GetVertexAttributes().Select(a => (int)a.attribute + ":" + (int)a.format + ":" + a.dimension + ":" + a.stream));
         }
 
         internal static byte[] MeshSignature(Mesh mesh)

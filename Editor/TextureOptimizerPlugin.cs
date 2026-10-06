@@ -375,6 +375,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 result.MeshBytes += frozen.Bytes;
                 if (state.OptimizeMeshes)
                 {
+                    BuildTimings.Step("Reference rescan");
                     analysis.RescanReferences(); // Merging and compaction replaced meshes.
                     BuildTimings.Step("VertexStreamStripper");
                     var stripped = VertexStreamStripper.Run(analysis, ReplacementRegistry.Register);
