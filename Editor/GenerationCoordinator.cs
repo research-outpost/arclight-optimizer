@@ -312,6 +312,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     importer.userData = userData;
                     importer.SaveAndReimport();
                 }
+                TextureSafety.DropReadable(importer);
                 // Decided on the written output: clearing unused pixels can leave its alpha fully opaque.
                 standaloneFormat = ChannelFormat(importer, expected.All(p => p.a == 255));
                 if (standaloneFormat != null)

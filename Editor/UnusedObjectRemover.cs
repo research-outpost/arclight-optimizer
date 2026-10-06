@@ -160,6 +160,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // Animator Play Audio behaviour names it, so it is silent in every state.
             if (component is AudioSource audio && !audio.playOnAwake && !analysis.IsAnimated(audio, p => p == "m_PlayOnAwake") && !analysis.CanStartAudio(audio))
                 return false;
+            // No clip, muted or at volume 0, with no animation and no Play Audio behaviour that could change that: silent in every state.
+            if (component is AudioSource silent && (!silent.clip || silent.mute || silent.volume == 0) && !analysis.IsAnimated(silent) && !analysis.CanStartAudio(silent))
+                return false;
             // An Animator with no controller plays nothing and writes no pose, however its humanoid Avatar maps the bones. Outfit
             // model roots merged into the avatar keep one, and its humanoid map then pins and "moves" the whole outfit armature.
             // It goes unless an animation could give it a controller or switch it (the avatar root's own Animator always stays).

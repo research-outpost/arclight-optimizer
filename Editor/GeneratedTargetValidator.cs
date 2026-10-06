@@ -25,7 +25,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var originalImporter = TextureSafety.Validate(source);
             var outputImporter = TextureSafety.Validate(replacement);
             bool changed = standaloneFormat != 0;
-            if (TextureSafety.SettingsFingerprint(originalImporter, changed) != TextureSafety.SettingsFingerprint(outputImporter, changed) ||
+            if (TextureSafety.SettingsFingerprint(originalImporter, changed, ignoreReadable: true) != TextureSafety.SettingsFingerprint(outputImporter, changed, ignoreReadable: true) ||
                 (changed && !ChannelFormats.Matches(originalImporter, outputImporter, (TextureImporterFormat)standaloneFormat)))
                 throw new InvalidOperationException("Generated importer settings differ from the source; output retained but not mapped.");
             if (source.width != replacement.width || source.height != replacement.height || source.mipmapCount != replacement.mipmapCount)

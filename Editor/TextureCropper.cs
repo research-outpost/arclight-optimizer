@@ -254,6 +254,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 throw new InvalidOperationException("The one-colour copy did not import with the original's settings.");
             }
             if (!Checked(texture, imported, outPath)) throw new InvalidOperationException("The one-colour copy decodes to a different value.");
+            TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(outPath));
             AudioMonoConverter.MarkUsed(outPath);
             return imported;
         }
@@ -446,6 +447,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             try { same = SameRegion(texture, imported, crop); }
             finally { if (!same) AssetDatabase.DeleteAsset(outPath); }
             if (!same) throw new InvalidOperationException("The cropped texture decodes differently from that part of the original.");
+            TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(outPath));
             AudioMonoConverter.MarkUsed(outPath); // Starts its 30 days for the cache cleanup.
             return imported;
         }

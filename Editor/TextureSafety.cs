@@ -63,18 +63,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return importer;
         }
 
-        // withoutStandalone leaves out the Standalone platform settings, which a channel format change replaces.
-        public static string SettingsFingerprint(TextureImporter importer, bool withoutStandalone = false)
+        // withoutStandalone leaves out the Standalone platform settings, which a channel format change replaces. ignoreReadable leaves
+        // out Read/Write, which generated copies turn off (see DropReadable).
+        public static string SettingsFingerprint(TextureImporter importer, bool withoutStandalone = false, bool ignoreReadable = false)
         {
             var settings = new TextureImporterSettings();
             importer.ReadTextureSettings(settings);
+            if (ignoreReadable) settings.readable = false;
             return JsonUtility.ToJson(settings) + "|" +
                 importer.textureCompression + "|" + importer.compressionQuality + "|" + importer.crunchedCompression + "|" +
                 importer.maxTextureSize + "|" + importer.streamingMipmaps + "|" + importer.streamingMipmapsPriority + "|" +
-                importer.isReadable + "|" + importer.ignorePngGamma + "|" +
+                (ignoreReadable ? "" : importer.isReadable.ToString()) + "|" + importer.ignorePngGamma + "|" +
                 JsonUtility.ToJson(importer.GetDefaultPlatformTextureSettings()) + "|" +
                 (withoutStandalone ? "" : JsonUtility.ToJson(importer.GetPlatformTextureSettings("Standalone"))) + "|" +
                 JsonUtility.ToJson(importer.GetPlatformTextureSettings("Android"));
+        }
+
+        // A readable texture keeps a CPU copy in the uploaded avatar that nothing on an avatar reads (shaders sample the GPU copy), so a
+        // generated copy turns Read/Write off: the same texture, less RAM for everyone who loads the avatar. Reimports when it changes.
+        internal static void DropReadable(TextureImporter importer)
+        {
+            if (!importer.isReadable) return;
+            importer.isReadable = false;
+            importer.SaveAndReimport();
         }
 
         public static void CopyImporter(TextureImporter source, TextureImporter destination)
