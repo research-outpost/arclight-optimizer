@@ -131,7 +131,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // decodes it to exactly 1, as BC1 does; GenerationCoordinator decides that), BC1 keeps that colour at half the size.
     // A linear texture read only through .r becomes BC4 instead (from DXT5 or DXT1), which stores its one channel
     // more precisely than a BC1/BC3 colour channel; from DXT1 that is the same size, so it is a quality gain only.
-    // BC7, crunched, uncompressed and Android formats are never changed.
+    // An uncompressed (RGBA32, ARGB32 or RGB24) linear texture read only through .r becomes R8: the same red bytes, a quarter or
+    // a third of the size. BC7, crunched and Android formats, and other uncompressed ones, are never changed.
     internal static class ChannelFormats
     {
         public static TextureImporterFormat? Choose(TextureImporter importer, TextureChannels read)
@@ -139,13 +140,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (importer.textureType != TextureImporterType.Default || (read & TextureChannels.A) != 0) return null;
             var format = Current(importer);
             bool redOnly = read == TextureChannels.R && !importer.sRGBTexture;
+            if (Uncompressed(format)) return redOnly ? TextureImporterFormat.R8 : (TextureImporterFormat?)null;
             if (format == TextureImporterFormat.DXT1) return redOnly ? TextureImporterFormat.BC4 : (TextureImporterFormat?)null;
             if (format != TextureImporterFormat.DXT5) return null;
             return redOnly ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
         }
 
-        // True when the chosen format halves the stored size (DXT5 source), which alone can justify a replacement.
-        public static bool Shrinks(TextureImporter importer) => Current(importer) == TextureImporterFormat.DXT5;
+        // True when the chosen format shrinks the stored size (a DXT5 or uncompressed source), which alone can justify a replacement.
+        public static bool Shrinks(TextureImporter importer) => Current(importer) == TextureImporterFormat.DXT5 || Uncompressed(Current(importer));
+
+        private static bool Uncompressed(TextureImporterFormat format) =>
+            format == TextureImporterFormat.RGBA32 || format == TextureImporterFormat.ARGB32 || format == TextureImporterFormat.RGB24;
 
         private static TextureImporterFormat Current(TextureImporter importer)
         {

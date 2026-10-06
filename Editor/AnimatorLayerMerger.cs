@@ -606,14 +606,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static VirtualMotion Mergeable(VirtualLayer layer)
         {
             var machine = layer.StateMachine;
-            if (machine == null || layer.AvatarMask != null || layer.BlendingMode != AnimatorLayerBlendingMode.Override || layer.DefaultWeight != 1 || layer.IKPass) return null;
+            if (machine == null || layer.BlendingMode != AnimatorLayerBlendingMode.Override || layer.DefaultWeight != 1 || layer.IKPass) return null;
             if (machine.States.Count != 1 || machine.StateMachines.Count != 0 || machine.Behaviours.Count != 0 ||
                 machine.AnyStateTransitions.Count != 0 || machine.EntryTransitions.Count != 0 || machine.StateMachineTransitions.Count != 0) return null;
             var state = machine.States[0].State;
-            if (state == null || machine.DefaultState != state || !state.WriteDefaultValues || state.Behaviours.Count != 0 ||
+            // Write Defaults off is the same here: one state playing constant clips writes their values every frame either way, which
+            // is what the folded child does. Only for a single clip (Write Defaults off changes how a blend tree mixes).
+            if (state == null || machine.DefaultState != state || !state.WriteDefaultValues && !(state.Motion is VirtualClip) || state.Behaviours.Count != 0 ||
                 state.Transitions.Count != 0 || state.TimeParameter != null || state.Mirror || state.MirrorParameter != null || state.Motion == null) return null;
             if (state.Motion.AllReachableNodes().OfType<VirtualClip>().Any(c => !Constant(c))) return null;
             if (state.Motion.AllReachableNodes().OfType<VirtualBlendTree>().Any(t => t.BlendType == BlendTreeType.Direct && t.NormalizedBlendValues)) return null;
+            // An avatar mask filters only Transform and humanoid (Animator) curves; with none of those it changes nothing (MaskFilteringTests).
+            if (layer.AvatarMask != null && state.Motion.AllReachableNodes().OfType<VirtualClip>()
+                    .Any(c => c.GetFloatCurveBindings().Concat(c.GetObjectCurveBindings()).Any(b => b.type == typeof(Transform) || b.type == typeof(Animator)))) return null;
             return state.Motion;
         }
 

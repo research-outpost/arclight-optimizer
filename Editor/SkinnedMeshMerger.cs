@@ -468,25 +468,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 throw new InvalidOperationException("Merged vertex data differs from its sources.");
             mesh.subMeshCount = submeshes.Count;
             for (int s = 0; s < submeshes.Count; s++) mesh.SetTriangles(submeshes[s], s, false);
-            if (bonesPerVertex.All(c => c <= 4))
-            {
-                // Classic four-weight layout, which every skinning path accepts.
-                var classic = new BoneWeight[bonesPerVertex.Count];
-                for (int v = 0, w = 0; v < classic.Length; w += bonesPerVertex[v], v++)
-                {
-                    var b = new BoneWeight();
-                    if (bonesPerVertex[v] > 0) { b.boneIndex0 = weights[w].boneIndex; b.weight0 = weights[w].weight; }
-                    if (bonesPerVertex[v] > 1) { b.boneIndex1 = weights[w + 1].boneIndex; b.weight1 = weights[w + 1].weight; }
-                    if (bonesPerVertex[v] > 2) { b.boneIndex2 = weights[w + 2].boneIndex; b.weight2 = weights[w + 2].weight; }
-                    if (bonesPerVertex[v] > 3) { b.boneIndex3 = weights[w + 3].boneIndex; b.weight3 = weights[w + 3].weight; }
-                    classic[v] = b;
-                }
-                mesh.boneWeights = classic;
-            }
-            else
-                using (var perVertexArray = new Unity.Collections.NativeArray<byte>(bonesPerVertex.ToArray(), Unity.Collections.Allocator.Temp))
-                using (var weightArray = new Unity.Collections.NativeArray<BoneWeight1>(weights.ToArray(), Unity.Collections.Allocator.Temp))
-                    mesh.SetBoneWeights(perVertexArray, weightArray);
+            // Per-vertex counts as the sources had them: Unity sizes the skin weight stream by the most influences any vertex has,
+            // so pieces with one or two influences stay at 4 or 16 bytes per vertex instead of the classic layout's 32 (the same
+            // weights, so skinning is identical).
+            using (var perVertexArray = new Unity.Collections.NativeArray<byte>(bonesPerVertex.ToArray(), Unity.Collections.Allocator.Temp))
+            using (var weightArray = new Unity.Collections.NativeArray<BoneWeight1>(weights.ToArray(), Unity.Collections.Allocator.Temp))
+                mesh.SetBoneWeights(perVertexArray, weightArray);
             mesh.bindposes = bindposes.ToArray();
             var dv = new Vector3[0]; var dn = new Vector3[0]; var dt = new Vector3[0];
             foreach (var (renderer, offset) in shapeSources)
