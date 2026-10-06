@@ -127,7 +127,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     }
 
     // A PC texture Unity compresses to DXT5 (BC3) stores its colour in the same block format as BC1, plus a
-    // separate alpha block. When no shader reading the texture uses alpha, BC1 keeps that colour at half the size.
+    // separate alpha block. When no shader reading the texture uses alpha, or its alpha is 255 in every texel (DXT5 then
+    // decodes it to exactly 1, as BC1 does; GenerationCoordinator decides that), BC1 keeps that colour at half the size.
     // A linear texture read only through .r becomes BC4 instead (from DXT5 or DXT1), which stores its one channel
     // more precisely than a BC1/BC3 colour channel; from DXT1 that is the same size, so it is a quality gain only.
     // BC7, crunched, uncompressed and Android formats are never changed.

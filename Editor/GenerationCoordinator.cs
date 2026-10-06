@@ -202,10 +202,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (repair) mask = sampled; // Repair existing padding; preserve only the modeled sampled coverage.
             // Channels any use can read. Only the Standalone (PC) import is ever given a smaller format.
             var channels = group.ActiveUses.Aggregate((TextureChannels)0, (read, use) => read | use.Sampling.Channels);
-            TextureImporterFormat? ChannelFormat(TextureImporter importer) =>
-                GeneratedTargetValidator.IsStandalone ? ChannelFormats.Choose(importer, channels) : null;
-            // A texture with (almost) nothing to clear can still shrink through its format alone.
-            bool formatOnly = ChannelFormat(sourceImporter) != null && ChannelFormats.Shrinks(sourceImporter);
+            // opaque: the texture written has alpha 255 in every texel. DXT5 then decodes alpha to exactly 1 at every mip level, as
+            // DXT1 does, so a shader reading alpha sees the same value and the alpha read no longer blocks DXT1.
+            TextureImporterFormat? ChannelFormat(TextureImporter importer, bool opaque) =>
+                GeneratedTargetValidator.IsStandalone ? ChannelFormats.Choose(importer, opaque && !normal && importer.alphaSource != TextureImporterAlphaSource.FromGrayScale ? channels & ~TextureChannels.A : channels) : null;
+            // A texture with (almost) nothing to clear can still shrink through its format alone (texels kept as they are decide
+            // whether it stays opaque).
+            bool keptOpaque = Enumerable.Range(0, pixels.Length).All(i => !mask[i] || pixels[i].a == 255);
+            bool formatOnly = ChannelFormat(sourceImporter, keptOpaque) != null && ChannelFormats.Shrinks(sourceImporter);
             TextureImporterFormat? standaloneFormat = null;
             var candidates = repair ? new[] { BackgroundValueDetector.DetectUsed(pixels, sampled).Value }
                 : normal ? new[] { new Color32(128, 128, 255, 255) }
@@ -308,8 +312,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     importer.userData = userData;
                     importer.SaveAndReimport();
                 }
-                // Decided on the imported output: clearing unused pixels can already leave its alpha fully opaque.
-                standaloneFormat = ChannelFormat(importer);
+                // Decided on the written output: clearing unused pixels can leave its alpha fully opaque.
+                standaloneFormat = ChannelFormat(importer, expected.All(p => p.a == 255));
                 if (standaloneFormat != null)
                 {
                     progress?.Stage("Importing with " + standaloneFormat.Value + " format", false);

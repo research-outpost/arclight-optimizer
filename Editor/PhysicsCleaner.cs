@@ -9,15 +9,18 @@ using Object = UnityEngine.Object;
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
     // Small PhysBone and contact cleanups, each with no effect on what anyone sees or what any animator reads:
-    //  - A PhysBone's parameter is cleared when no animator or expression parameter is named after it (the prefix
-    //    itself or prefix_ followed by anything: _IsGrabbed, _IsPosed, _Angle, _Stretch, _Squish) and no other
-    //    component names it. The values it would write reach nothing: OSC and the animator only see parameters the
-    //    animator declares. With no parameter, the unobserved-PhysBone rules can then apply.
-    //  - A contact receiver goes when its parameter is empty or named by no animator or expression parameter and no
+    //  - A PhysBone's parameter is cleared when no animator reads (a condition, blend tree, state parameter, behaviour field,
+    //    Animator curve or menu control; ParameterCleaner.AnimatorReads) and no expression parameter is named after it (the
+    //    prefix itself or prefix_ followed by anything: _IsGrabbed, _IsPosed, _Angle, _Stretch, _Squish), and no other
+    //    component names it. Declaring the parameter is not reading it; the parameter cleaner removes such a declaration
+    //    afterwards. The values it would write reach nothing (OSC is limited to expression parameters, as the parameter cleaner
+    //    also assumes). With no parameter, the unobserved-PhysBone rules can then apply.
+    //  - A contact receiver goes when its parameter is empty or read by no animator, named by no expression parameter and no
     //    other component, and nothing references the receiver. A receiver does nothing but write that parameter.
     //    Senders stay: other avatars read them.
-    //  - Empty entries, and entries repeating the one directly before, leave PhysBone collider lists. Back to back, the
-    //    second push out of the same shape finds nothing to correct.
+    //  - Empty entries, entries repeating the one directly before, and colliders on objects that are never active leave
+    //    PhysBone collider lists. Back to back, the second push out of the same shape finds nothing to correct; a collider
+    //    whose object never activates never registers.
     //  - Is Animated is turned off when nothing but the PhysBone itself moves any transform of its chain (root
     //    included): no animation, humanoid mapping, constraint, physics body, Head Chop or other PhysBone. The pose
     //    it would blend with never changes.
@@ -65,7 +68,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         {
                             var entry = colliders.GetArrayElementAtIndex(i);
                             if (entry.propertyType != SerializedPropertyType.ObjectReference) break;
-                            if (entry.objectReferenceValue && entry.objectReferenceValue != previous) { previous = entry.objectReferenceValue; continue; }
+                            // A collider on an object that is never active never registers, so it pushes nothing; its entry goes and the
+                            // object sweep can then remove it and the hidden objects above it.
+                            bool inert = entry.objectReferenceValue is Component listed && listed && !UnusedObjectRemover.CanBeActive(listed.gameObject, analysis);
+                            if (!inert && entry.objectReferenceValue && entry.objectReferenceValue != previous) { previous = entry.objectReferenceValue; continue; }
                             entry.objectReferenceValue = null; // Unity keeps the element when a set reference is cleared once.
                             colliders.DeleteArrayElementAtIndex(i--);
                             result.Colliders++;

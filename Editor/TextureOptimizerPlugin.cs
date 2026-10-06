@@ -191,11 +191,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         layerMerge = !analysis.Complete ? new AnimatorLayerMerger.Result() : AnimatorLayerMerger.Run(controllers.Controllers.Select(e => (e.Key is Animator a && a ? a.transform : ctx.AvatarRootObject.transform, e.Value)),
                             vrcfuryPending ? null : AnimatorLayerMerger.WholeValues(ctx.AvatarRootObject), removeInert: !vrcfuryPending,
                             playables: controllers.Controllers.Where(e => e.Value != null && e.Key is Enum).GroupBy(e => e.Value).ToDictionary(g => g.Key, g => g.First().Key.ToString()));
+                        BuildTimings.Step("PhysicsCleaner");
+                        // What the animators and menu read, not what they declare: a receiver's parameter that nothing tests is dead even
+                        // though declared, and once the receiver goes, the parameter cleaner below removes the declaration too.
+                        var reads = ParameterCleaner.AnimatorReads(ctx.AvatarRootObject, controllers.Controllers.Values, analysis) ??
+                            new HashSet<string>(controllers.Controllers.Values.Where(c => c != null).SelectMany(c => c.Parameters.Keys));
+                        physics = vrcfuryPending ? new PhysicsCleaner.Result() : PhysicsCleaner.Run(analysis, reads,
+                            PhysicsCleaner.ExpressionParameters(ctx.AvatarRootObject).ToList());
                         BuildTimings.Step("ParameterCleaner");
                         unusedParameters = vrcfuryPending ? new ParameterCleaner.Result() : ParameterCleaner.Run(ctx.AvatarRootObject, controllers.Controllers.Values, analysis, ReplacementRegistry.Register);
-                        BuildTimings.Step("PhysicsCleaner");
-                        physics = vrcfuryPending ? new PhysicsCleaner.Result() : PhysicsCleaner.Run(analysis, controllers.Controllers.Values.Where(c => c != null).SelectMany(c => c.Parameters.Keys),
-                            PhysicsCleaner.ExpressionParameters(ctx.AvatarRootObject).ToList());
                     }
                     finally { ControllerCommit.Preserving(ctx.AvatarRootObject, () => ctx.DeactivateExtensionContext<VirtualControllerContext>()); }
                     if (physics.Parameters + physics.Receivers + physics.Colliders + physics.NotAnimated + physics.MergedColliders > 0)
@@ -233,6 +237,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         string summary = "Removed " +
                             unusedParameters.Animator + " animator parameter(s) that nothing reads: " + string.Join(", ", unusedParameters.Names.Take(20)) +
                             (unusedParameters.Names.Count > 20 ? ", ..." : "") + ".";
+                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                        state.Report?.Add(null, summary);
+                    }
+                    BuildTimings.Step("MenuIconMerger");
+                    int icons = vrcfuryPending ? 0 : MenuIconMerger.Run(ctx.AvatarRootObject);
+                    if (icons > 0)
+                    {
+                        string summary = "Pointed the expressions menu at one copy of " + icons + " duplicate icon file(s) (identical bytes and import settings).";
                         Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, summary);
                     }
@@ -446,7 +458,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static void Crop(BuildContext ctx)
         {
             BuildTimings.Step("Cropping");
-            try { CropTextures(ctx); }
+            try
+            {
+                CropTextures(ctx);
+                BuildTimings.Step("MeshReadWrite");
+                int unreadable = MeshReadWrite.Run(ctx.AvatarRootObject);
+                if (unreadable > 0) ctx.GetState<SubstitutionState>().Report?.Add(null, "Turned off Read/Write on " + unreadable + " mesh(es) this build made, so the avatar does not keep a second copy of them in memory.");
+            }
             finally
             {
                 // The last Optimizing pass: report where this build spent its time.

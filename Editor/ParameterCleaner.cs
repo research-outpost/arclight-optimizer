@@ -27,6 +27,43 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var descriptor = root.GetComponents<Component>().FirstOrDefault(c => c && c.GetType().Name == "VRCAvatarDescriptor");
             if (!descriptor) return result;
 
+            var used = AnimatorReads(root, list, analysis);
+            if (used == null) return result;
+            foreach (var component in root.GetComponentsInChildren<Component>(true))
+            {
+                if (!component || component == descriptor || component is Transform) continue;
+                if (component.GetType().Name == "VRCPhysBone")
+                    using (var serialized = new SerializedObject(component))
+                    {
+                        string prefix = serialized.FindProperty("parameter")?.stringValue;
+                        if (!string.IsNullOrEmpty(prefix)) used.Add(prefix + "_*"); // Matched by prefix below.
+                    }
+                Strings(component, used);
+            }
+            var prefixes = used.Where(u => u.EndsWith("_*", StringComparison.Ordinal)).Select(u => u.Substring(0, u.Length - 1)).ToList();
+            bool Used(string name) => used.Contains(name) || prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
+
+            foreach (var controller in list)
+            {
+                var unused = controller.Parameters.Keys.Where(name => !Used(name)).ToList();
+                if (unused.Count == 0) continue;
+                controller.Parameters = controller.Parameters.RemoveRange(unused);
+                result.Animator += unused.Count;
+                result.Names.AddRange(unused);
+            }
+
+            result.Names = result.Names.Distinct().ToList();
+            return result;
+        }
+
+        // Parameter names the animators and the menu read: transition conditions, blend trees, state parameters, behaviour fields
+        // (synced layer overrides too), Animator curves and menu controls. Not component fields. Null when a controller or the
+        // menu cannot be read.
+        internal static HashSet<string> AnimatorReads(GameObject root, IEnumerable<VirtualAnimatorController> controllers, AvatarAnalysis analysis)
+        {
+            var list = controllers.Where(c => c != null).ToList();
+            var descriptor = root.GetComponents<Component>().FirstOrDefault(c => c && c.GetType().Name == "VRCAvatarDescriptor");
+            if (!descriptor) return null;
             var used = new HashSet<string>(StringComparer.Ordinal);
             try
             {
@@ -49,22 +86,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             break;
                     }
             }
-            catch (Exception) { return result; }
+            catch (Exception) { return null; }
             // A synced layer keeps its own behaviours for the states it shares; AllReachableNodes does not visit them.
             foreach (var behaviour in list.SelectMany(c => c.Layers).SelectMany(l => l.SyncedLayerBehaviourOverrides.Values.SelectMany(v => v)))
                 Strings(behaviour, used);
             foreach (var binding in analysis.Bindings.Where(b => b.Curve.type == typeof(Animator))) used.Add(binding.Property);
-            foreach (var component in root.GetComponentsInChildren<Component>(true))
-            {
-                if (!component || component == descriptor || component is Transform) continue;
-                if (component.GetType().Name == "VRCPhysBone")
-                    using (var serialized = new SerializedObject(component))
-                    {
-                        string prefix = serialized.FindProperty("parameter")?.stringValue;
-                        if (!string.IsNullOrEmpty(prefix)) used.Add(prefix + "_*"); // Matched by prefix below.
-                    }
-                Strings(component, used);
-            }
 
             Object menu;
             using (var serialized = new SerializedObject(descriptor))
@@ -73,22 +99,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // separately.
                 menu = serialized.FindProperty("expressionsMenu")?.objectReferenceValue;
             }
-            if (menu && !MenuStrings(menu, used, new HashSet<Object>())) return result;
+            if (menu && !MenuStrings(menu, used, new HashSet<Object>())) return null;
             used.Remove(null); // Inactive state parameters.
-            var prefixes = used.Where(u => u.EndsWith("_*", StringComparison.Ordinal)).Select(u => u.Substring(0, u.Length - 1)).ToList();
-            bool Used(string name) => used.Contains(name) || prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
-
-            foreach (var controller in list)
-            {
-                var unused = controller.Parameters.Keys.Where(name => !Used(name)).ToList();
-                if (unused.Count == 0) continue;
-                controller.Parameters = controller.Parameters.RemoveRange(unused);
-                result.Animator += unused.Count;
-                result.Names.AddRange(unused);
-            }
-
-            result.Names = result.Names.Distinct().ToList();
-            return result;
+            return used;
         }
 
         // VRChat's built-in parameters: VRChat or OSC may read them whatever the animators do, so drivers writing them stay.

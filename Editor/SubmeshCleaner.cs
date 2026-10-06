@@ -10,9 +10,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Fewer submeshes and material slots, so fewer draw calls, with the same pixels:
     //  - Empty submeshes (no indices) draw nothing; they and their slots go.
     //  - Submeshes beyond the renderer's slot count have no material and are never drawn; they go.
-    //  - A submesh whose material is identical in everything Unity serializes (the same material, or a copy) to the
-    //    slot drawn just before it joins that slot: its triangles are appended, so no other slot changes order relative
-    //    to it. Only order-independent materials (see SkinnedMeshMerger.OrderIndependent).
+    //  - A submesh whose material is identical in everything Unity serializes (the same material, or a copy) to an
+    //    earlier slot joins it when every slot drawn between them is order-independent too (opaque state, see
+    //    SkinnedMeshMerger.OrderIndependent) and none of them is swapped: its triangles are appended to that slot, and among
+    //    such materials drawing them earlier changes nothing.
     // Slots an animation swaps are never merged; animations of the remaining slots are renumbered. Only meshes that
     // one renderer uses, that nothing else references or swaps, with no more slots than submeshes and triangle topology.
     // Nothing changes when the avatar's animation cannot be read.
@@ -69,13 +70,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     if (mesh.GetIndexCount(s) == 0 && !swapped.Contains(s)) { target[s] = -1; removed++; continue; }
                     int into = -1;
-                    // Only into the slot drawn just before it, so no other slot changes order relative to it.
-                    int previous = keptSlots.Count - 1;
-                    if (!swapped.Contains(s) && SkinnedMeshMerger.OrderIndependent(materials[s]) && signatures[s] != null && previous >= 0)
-                    {
-                        int k = keptSlots[previous];
-                        if (!swapped.Contains(k) && materials[k] && signatures[k] != null && signatures[k].SequenceEqual(signatures[s])) into = previous;
-                    }
+                    // Into the nearest earlier identical slot, provided every slot drawn between them is order-independent and
+                    // never swapped too: among such materials, drawing these triangles earlier changes nothing.
+                    if (!swapped.Contains(s) && SkinnedMeshMerger.OrderIndependent(materials[s]) && signatures[s] != null)
+                        for (int previous = keptSlots.Count - 1; previous >= 0; previous--)
+                        {
+                            int k = keptSlots[previous];
+                            if (swapped.Contains(k) || !materials[k]) break;
+                            if (signatures[k] != null && signatures[k].SequenceEqual(signatures[s])) { into = previous; break; }
+                            if (!SkinnedMeshMerger.OrderIndependent(materials[k])) break;
+                        }
                     if (into >= 0) { target[s] = into; merged++; continue; }
                     target[s] = keptSlots.Count;
                     keptSlots.Add(s);

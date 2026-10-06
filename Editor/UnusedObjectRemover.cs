@@ -160,10 +160,28 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // Animator Play Audio behaviour names it, so it is silent in every state.
             if (component is AudioSource audio && !audio.playOnAwake && !analysis.IsAnimated(audio, p => p == "m_PlayOnAwake") && !analysis.CanStartAudio(audio))
                 return false;
+            // An Animator with no controller plays nothing and writes no pose, however its humanoid Avatar maps the bones. Outfit
+            // model roots merged into the avatar keep one, and its humanoid map then pins and "moves" the whole outfit armature.
+            // It goes unless an animation could give it a controller or switch it (the avatar root's own Animator always stays).
+            if (component is Animator idle && !idle.runtimeAnimatorController && !analysis.IsAnimated(idle)) return false;
+            // A contact sender with no collision tags matches no receiver (contacts meet only on a shared tag), here or on anyone else.
+            if (component.GetType().Name == "VRCContactSender" && NoTags(component, analysis)) return false;
             if (component is Behaviour behaviour) return behaviour.enabled || analysis.IsAnimated(behaviour, p => p == "m_Enabled");
             if (component is Cloth cloth) return cloth.enabled || analysis.IsAnimated(cloth, p => p == "m_Enabled");
             if (component is Collider collider) return collider.enabled || analysis.IsAnimated(collider, p => p == "m_Enabled");
             return true; // ParticleSystem: plays whenever its object is active.
+        }
+
+        private static bool NoTags(Component contact, AvatarAnalysis analysis)
+        {
+            if (analysis.IsAnimated(contact)) return false;
+            using (var serialized = new UnityEditor.SerializedObject(contact))
+            {
+                var tags = serialized.FindProperty("collisionTags");
+                if (tags == null || !tags.isArray) return false;
+                for (int i = 0; i < tags.arraySize; i++) if (!string.IsNullOrEmpty(tags.GetArrayElementAtIndex(i).stringValue)) return false;
+                return true;
+            }
         }
 
         private static bool GlobalCollision(Component collider, AvatarAnalysis analysis)
@@ -239,7 +257,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
         }
 
-        private static bool CanBeActive(GameObject gameObject, AvatarAnalysis analysis)
+        internal static bool CanBeActive(GameObject gameObject, AvatarAnalysis analysis)
         {
             for (var t = gameObject.transform; t; t = t == analysis.Root.transform ? null : t.parent)
                 if (!t.gameObject.activeSelf && !analysis.IsAnimated(t.gameObject, p => p == "m_IsActive")) return false;

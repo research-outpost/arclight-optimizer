@@ -12,10 +12,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Merges skinned meshes that always render together into one SkinnedMeshRenderer, so the avatar skins and
     // counts one mesh instead of several. Only merges that keep every frame identical:
     //  - Same toggles: the objects whose activation an animation can change on each renderer's path to the root must
-    //    be the same, or animated identically (same starting state, same clips and curves; see ToggleSignature), and
+    //    be the same, or animated identically (same starting state, same clips and curves; see ToggleSignature); a renderer
+    //    whose own enabled flag is animated merges only with renderers animated identically, and the host keeps its curve; and
     //    nothing else on the path is hidden. The merged renderer lives on the first renderer's object, under toggles
     //    that are always in the same state as every other member's.
-    //  - Untouched renderers: no animation binds to the renderer (materials, blend shapes, enabling), nothing else
+    //  - Untouched renderers: no animation binds to the renderer except movable blend shape, material and enabled curves, nothing else
     //    references it, no Cloth, its mesh is not swapped, its material count equals its submesh count.
     //  - Same frame of reference: the same root bone (skinned vertices are rendered in its space, so object-space
     //    shader effects and bounds stay put) and the same renderer settings (shadows, probes, anchors, layers,
@@ -115,7 +116,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static EditorCurveBinding? Retarget(Transform owner, EditorCurveBinding binding, GameObject root, Dictionary<GameObject, Move> moves)
         {
-            if (owner != root.transform || binding.type != typeof(SkinnedMeshRenderer)) return null;
+            // m_Enabled stays where it is: the host's identical curve already switches the merged renderer.
+            if (owner != root.transform || binding.type != typeof(SkinnedMeshRenderer) || binding.propertyName == "m_Enabled") return null;
             var targets = AvatarAnalysis.Resolve(owner, binding.path).ToList();
             if (targets.Count != 1 || !moves.TryGetValue(targets[0].gameObject, out var move)) return null;
             string property = binding.propertyName ?? "";
@@ -143,7 +145,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Animation of these renderer properties can be moved to the merged renderer exactly.
         private static bool Movable(AvatarAnalysis.Binding binding, GameObject root) =>
             !binding.Legacy && binding.Owner == root.transform && (binding.Property.StartsWith("blendShape.", StringComparison.Ordinal) ||
-            binding.Property.StartsWith("material.", StringComparison.Ordinal) || binding.Property.StartsWith("m_Materials.Array.data[", StringComparison.Ordinal));
+            binding.Property.StartsWith("material.", StringComparison.Ordinal) || binding.Property.StartsWith("m_Materials.Array.data[", StringComparison.Ordinal) ||
+            // Merged only with renderers whose own on/off animation is identical (see KeyParts), so the host's curve already does it.
+            binding.Property == "m_Enabled" && binding.FloatCurve != null);
 
         private static bool UniquePath(Transform transform, Transform root)
         {
@@ -160,7 +164,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var mesh = renderer.sharedMesh;
             if (!mesh || Exclusions.Excluded(renderer)) return "no mesh, or excluded from Arclight";
-            if (!renderer.enabled) return "the renderer is disabled";
+            if (!renderer.enabled && !analysis.IsAnimated(renderer, p => p == "m_Enabled")) return "the renderer is disabled";
             if (meshSwaps.Contains(mesh)) return "an animation swaps its mesh";
             if (renderer.GetComponent<Cloth>()) return "Cloth simulates it";
             if (TextureUsageScanner.HasPropertyBlock(renderer)) return "a material property block sets values on it";
@@ -184,15 +188,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // that clip and the exact curve. Two curves in one clip share its layer, weight and time, so they always give the same
         // value; avatar masks never filter activation (MaskFilteringTests). Objects with equal signatures are therefore always
         // active together. Anything else (a legacy Animation clip) keeps the object's own identity.
-        private static string ToggleSignature(GameObject toggled, AvatarAnalysis analysis)
+        private static string ToggleSignature(GameObject toggled, AvatarAnalysis analysis) => Signature(toggled, toggled.activeSelf, "m_IsActive", analysis);
+
+        // The same for any animated on/off value: a GameObject's activation or a renderer's enabled flag.
+        private static string Signature(Object toggled, bool start, string property, AvatarAnalysis analysis)
         {
-            var bindings = analysis.BindingsOn(toggled, p => p == "m_IsActive").ToList();
+            var bindings = analysis.BindingsOn(toggled, p => p == property).ToList();
             // A path that names two same-named siblings reaches only one of them in Unity, so such objects keep their identity.
             if (bindings.Any(b => b.Legacy || b.FloatCurve == null || AvatarAnalysis.Resolve(b.Owner, b.Curve.path).Count() != 1))
                 return "object:" + toggled.GetInstanceID();
             string Curve(AnimationCurve c) => (int)c.preWrapMode + "/" + (int)c.postWrapMode + "/" + string.Join(",", c.keys.Select(k =>
                 string.Join(" ", new[] { k.time, k.value, k.inTangent, k.outTangent, k.inWeight, k.outWeight }.Select(f => f.ToString("R"))) + " " + (int)k.weightedMode));
-            return toggled.activeSelf + ":" + string.Join(";", bindings.Select(b => b.ClipKey + "=" + Curve(b.FloatCurve)).OrderBy(s => s, StringComparer.Ordinal));
+            return start + ":" + string.Join(";", bindings.Select(b => b.ClipKey + "=" + Curve(b.FloatCurve)).OrderBy(s => s, StringComparer.Ordinal));
         }
 
         // Toggles, root bone and every renderer setting that changes how the merged mesh would render.
@@ -204,6 +211,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var toggles = new List<string>();
             for (var t = r.transform; t != analysis.Root.transform; t = t.parent)
                 if (analysis.IsAnimated(t.gameObject, p => p == "m_IsActive")) toggles.Add(ToggleSignature(t.gameObject, analysis));
+            if (analysis.IsAnimated(r, p => p == "m_Enabled")) toggles.Add("renderer " + Signature(r, r.enabled, "m_Enabled", analysis));
             toggles.Sort(StringComparer.Ordinal);
             var rootBone = r.rootBone ? r.rootBone : r.transform;
             return new[]
