@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
-    // Arclight replaces Avatar Optimizer (AAO) and does not run alongside it. NDMF has no way to declare one plugin
+    // Arclight does not run alongside Avatar Optimizer (AAO). NDMF has no way to declare one plugin
     // incompatible with another, so an avatar carrying any AAO component gets a blocking build error instead, and no
     // Arclight pass runs. AAO only processes avatars with its components, so having the package installed is fine.
     internal static class AvatarOptimizerConflict
@@ -17,8 +17,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static readonly Dictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [Key] = "Arclight Optimizer cannot run with Avatar Optimizer",
-            [Key + ":description"] = "This avatar has Avatar Optimizer's {0} component on {1}. Arclight Optimizer replaces Avatar Optimizer and does not work alongside it, so none of its optimizations ran.",
-            [Key + ":hint"] = "Remove Avatar Optimizer's components from this avatar, or disable or remove the Arclight Optimizer component. Arclight covers most of Avatar Optimizer's automatic optimizations itself; it leaves out merging PhysBones on purpose. To remove parts of a mesh, as Avatar Optimizer's Remove Mesh components did, use Modular Avatar's Mesh Cutter.",
+            [Key + ":description"] = "This avatar has Avatar Optimizer's {0} component on {1}. Arclight Optimizer doesn't work alongside Avatar Optimizer, so none of its optimizations ran.",
+            [Key + ":hint"] = "Remove Avatar Optimizer's components from this avatar, or disable or remove the Arclight Optimizer component. To remove parts of a mesh, as Avatar Optimizer's Remove Mesh components did, use Modular Avatar's Mesh Cutter.",
         };
 
         private static readonly Localizer Localizer = new Localizer("en-US", () =>
