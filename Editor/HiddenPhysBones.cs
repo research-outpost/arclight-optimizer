@@ -74,7 +74,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // A bone's own active toggle (outfit bones merged into the armature keep the outfit's toggle) moves
                 // nothing and draws nothing by itself, so only its observers matter.
                 if (analysis.IsAnimated(t) || analysis.IsAnimated(t.gameObject, p => p != "m_IsActive")) return null;
-                foreach (var c in analysis.ReferencesTo(t).Concat(analysis.ReferencesTo(t.gameObject)))
+                foreach (var c in analysis.ReferencesTo(t).Concat(analysis.ReferencesTo(t.gameObject).Where(c => c.GetType().Name != "VRCAvatarDescriptor"))) // Network IDs only name it.
                 {
                     if (c == physBone) continue;
                     if (!(c is Renderer renderer)) return null;

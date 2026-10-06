@@ -167,7 +167,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (t == start && !UnusedObjectRemover.RootMoves(physBone)) continue;
                 if (t.GetComponents<Component>().Any(c => c && !(c is Transform) && c != physBone)) return true;
                 if (analysis.ReferencesTo(t).Any(c => c != physBone)) return true;
-                if (analysis.ReferencesTo(t.gameObject).Any(c => c != physBone && c.gameObject != t.gameObject)) return true;
+                // The descriptor's PhysBone network ID list names the PhysBone's own object; that identifies it, it observes nothing.
+                if (analysis.ReferencesTo(t.gameObject).Any(c => c != physBone && c.gameObject != t.gameObject && c.GetType().Name != "VRCAvatarDescriptor")) return true;
             }
             return false;
         }
