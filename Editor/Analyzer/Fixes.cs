@@ -1,0 +1,258 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using UnityEditor;
+using UnityEditor.Animations;
+using UnityEngine;
+using Object = UnityEngine.Object;
+
+namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+{
+    // One-click fixes for findings whose fix is unambiguous. They run only when the user presses the button, and every one can be
+    // undone with Edit > Undo. Each returns a sentence saying what it did.
+    internal static class Fixes
+    {
+        // What a missing-parameter finding's Data holds: the names to add and their types.
+        internal sealed class Parameters { public List<(string Name, AnimatorControllerParameterType Type)> Names = new List<(string, AnimatorControllerParameterType)>(); }
+        // Layers to remove by name (only when no Layer Control could be pointing at a layer index that would shift).
+        internal sealed class Layers { public List<string> Names = new List<string>(); }
+        internal sealed class Scripts { public List<GameObject> Objects = new List<GameObject>(); }
+        // Reference fields showing "Missing": (component, property path).
+        internal sealed class References { public List<(Object Component, string Path)> Fields = new List<(Object, string)>(); }
+        // Animator parameters to list in Expression Parameters, not synced (face tracking fills them locally over OSC).
+        internal sealed class ExpressionAdds { public List<(string Name, AnimatorControllerParameterType Type)> Names = new List<(string, AnimatorControllerParameterType)>(); }
+        // Curves animating things the avatar doesn't have.
+        internal sealed class Curves { public List<(AnimationClip Clip, EditorCurveBinding Binding, bool ObjectReference)> Bindings = new List<(AnimationClip, EditorCurveBinding, bool)>(); }
+
+        // A clip the fix may edit: its own .anim file in Assets (not inside a model, a controller or a read-only package).
+        private static bool Editable(AnimationClip clip) => clip && AssetDatabase.IsMainAsset(clip) &&
+            AssetDatabase.GetAssetPath(clip) is string path && path.StartsWith("Assets/", StringComparison.Ordinal) && path.EndsWith(".anim", StringComparison.OrdinalIgnoreCase);
+
+        // The asset files a fix changes, so they can be backed up first.
+        private static List<Object> Changes(Finding finding) =>
+            finding.Data is Curves c ? c.Bindings.Select(b => b.Clip).Where(Editable).Distinct().Cast<Object>().ToList()
+            : (finding.Data is Parameters || finding.Data is Layers || finding.Data is ExpressionAdds) && finding.Target && AssetDatabase.GetAssetPath(finding.Target).Length > 0 ? new List<Object> { finding.Target }
+            : new List<Object>();
+
+        // The button label and action, or null when the finding has no safe fix (or what it would change is gone).
+        internal static (string Label, Func<string> Apply)? For(Finding finding)
+        {
+            switch (finding.Data)
+            {
+                case Parameters p when finding.Target is AnimatorController controller:
+                    return ("Add them", () =>
+                    {
+                        Undo.RecordObject(controller, "Add missing parameters");
+                        var have = new HashSet<string>(controller.parameters.Select(q => q.name), StringComparer.Ordinal);
+                        var added = p.Names.Where(n => have.Add(n.Name)).ToList();
+                        foreach (var (name, type) in added) controller.AddParameter(name, type);
+                        EditorUtility.SetDirty(controller);
+                        return "Added " + added.Count + " parameter(s) to " + controller.name + ".";
+                    });
+                case Layers l when finding.Target is AnimatorController controller:
+                    return ("Remove them", () =>
+                    {
+                        Undo.RegisterCompleteObjectUndo(controller, "Remove unused layers");
+                        int removed = 0;
+                        for (int i = controller.layers.Length - 1; i > 0; i--)
+                            if (l.Names.Contains(controller.layers[i].name)) { controller.RemoveLayer(i); removed++; }
+                        EditorUtility.SetDirty(controller);
+                        return "Removed " + removed + " layer(s) from " + controller.name + ".";
+                    });
+                case Scripts s:
+                    return ("Remove them", () =>
+                    {
+                        int removed = 0, kept = 0;
+                        foreach (var o in s.Objects.Where(o => o))
+                        {
+                            int before = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(o);
+                            Undo.RegisterCompleteObjectUndo(o, "Remove missing scripts");
+                            GameObjectUtility.RemoveMonoBehavioursWithMissingScript(o);
+                            int after = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(o);
+                            removed += before - after; kept += after;
+                        }
+                        return "Removed " + removed + " missing script(s)." + (kept > 0 ? " " + kept + " sit inside a prefab; open the prefab to remove them there." : "");
+                    });
+                case References r:
+                    return ("Clear them", () =>
+                    {
+                        int cleared = 0;
+                        foreach (var group in r.Fields.Where(f => f.Component).GroupBy(f => f.Component))
+                            using (var serialized = new SerializedObject(group.Key))
+                            {
+                                foreach (var (_, path) in group)
+                                {
+                                    var property = serialized.FindProperty(path);
+                                    if (property == null || property.objectReferenceValue || property.objectReferenceInstanceIDValue == 0) continue;
+                                    property.objectReferenceValue = null;
+                                    cleared++;
+                                }
+                                serialized.ApplyModifiedProperties(); // Recorded for Undo.
+                            }
+                        return "Cleared " + cleared + " missing reference(s). References to objects outside the avatar were left for you to point at the right object.";
+                    });
+                case ExpressionAdds e when finding.Target:
+                    return ("Add them", () =>
+                    {
+                        int added = 0;
+                        using (var serialized = new SerializedObject(finding.Target))
+                        {
+                            var array = serialized.FindProperty("parameters");
+                            var have = new HashSet<string>(Enumerable.Range(0, array.arraySize).Select(i => array.GetArrayElementAtIndex(i).FindPropertyRelative("name").stringValue), StringComparer.Ordinal);
+                            foreach (var (name, type) in e.Names.Where(n => have.Add(n.Name)))
+                            {
+                                array.arraySize++;
+                                var entry = array.GetArrayElementAtIndex(array.arraySize - 1);
+                                entry.FindPropertyRelative("name").stringValue = name;
+                                entry.FindPropertyRelative("valueType").intValue = type == AnimatorControllerParameterType.Int ? 0 : type == AnimatorControllerParameterType.Bool ? 2 : 1;
+                                entry.FindPropertyRelative("defaultValue").floatValue = 0;
+                                var saved = entry.FindPropertyRelative("saved"); if (saved != null) saved.boolValue = false;
+                                var synced = entry.FindPropertyRelative("networkSynced"); if (synced != null) synced.boolValue = false;
+                                added++;
+                            }
+                            serialized.ApplyModifiedProperties(); // Recorded for Undo.
+                        }
+                        return "Added " + added + " parameter(s) to " + finding.Target.name + ", not synced (they use no synced bits).";
+                    });
+                case Curves c when c.Bindings.Any(b => Editable(b.Clip)):
+                    return ("Remove them", () =>
+                    {
+                        int removed = 0;
+                        foreach (var group in c.Bindings.Where(b => Editable(b.Clip)).GroupBy(b => b.Clip))
+                        {
+                            Undo.RecordObject(group.Key, "Remove animations of missing things");
+                            foreach (var (_, binding, objectReference) in group)
+                            {
+                                if (objectReference) AnimationUtility.SetObjectReferenceCurve(group.Key, binding, null);
+                                else AnimationUtility.SetEditorCurve(group.Key, binding, null);
+                                removed++;
+                            }
+                            EditorUtility.SetDirty(group.Key);
+                        }
+                        int skipped = c.Bindings.Count(b => !Editable(b.Clip));
+                        return "Removed " + removed + " curve(s) from " + c.Bindings.Select(b => b.Clip).Where(Editable).Distinct().Count() + " clip(s)." +
+                            (skipped > 0 ? " " + skipped + " sit in clips inside a model, controller or package, which were left alone." : "");
+                    });
+                default:
+                    return null;
+            }
+        }
+
+        // Fix history: every fix is logged; a controller is copied before it changes, so it can be restored exactly after Unity's own
+        // Undo history is gone. Kept in the project (not the Optimizer's cache, which cleans itself).
+        internal static string Folder = "Assets/Arclight/Analyzer"; // Tests point it elsewhere.
+        private static string HistoryFile => Folder + "/FixHistory.json";
+
+        [Serializable] internal sealed class Entry { public string time, avatar, action, asset, backup, hashAfter; }
+        [Serializable] private sealed class Log { public List<Entry> entries = new List<Entry>(); }
+
+        internal static List<Entry> History()
+        {
+            try { return File.Exists(HistoryFile) ? JsonUtility.FromJson<Log>(File.ReadAllText(HistoryFile))?.entries ?? new List<Entry>() : new List<Entry>(); }
+            catch (Exception) { return new List<Entry>(); }
+        }
+
+        private static void Save(List<Entry> entries)
+        {
+            Directory.CreateDirectory(Folder);
+            File.WriteAllText(HistoryFile, JsonUtility.ToJson(new Log { entries = entries }, true));
+            AssetDatabase.ImportAsset(HistoryFile);
+        }
+
+        private static string Hash(string path)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(path))).Replace("-", "");
+        }
+
+        // Applies the finding's fix: backs up the controller it changes, runs it, and logs it. Returns what was done.
+        internal static string Apply(Finding finding, string avatar)
+        {
+            var fix = For(finding);
+            if (!fix.HasValue) return null;
+            var entry = new Entry { time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), avatar = avatar };
+            // Each file this fix changes is copied first; several files are kept one per line in asset, backup and hashAfter.
+            var changes = Changes(finding);
+            var assets = new List<string>();
+            var backups = new List<string>();
+            if (changes.Count > 0)
+            {
+                string folder = Folder + "/Backups/" + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
+                Directory.CreateDirectory(folder);
+                foreach (var asset in changes)
+                {
+                    AssetDatabase.SaveAssetIfDirty(asset);
+                    string path = AssetDatabase.GetAssetPath(asset);
+                    // A .bak copy is not imported as a second asset; restoring writes these exact bytes back.
+                    string backup = folder + "/" + assets.Count + "_" + Path.GetFileName(path) + ".bak";
+                    File.Copy(path, backup, true);
+                    assets.Add(path);
+                    backups.Add(backup);
+                }
+                entry.asset = string.Join("\n", assets);
+                entry.backup = string.Join("\n", backups);
+            }
+            entry.action = fix.Value.Apply();
+            if (changes.Count > 0)
+            {
+                foreach (var asset in changes) AssetDatabase.SaveAssetIfDirty(asset);
+                entry.hashAfter = string.Join("\n", assets.Select(Hash));
+            }
+            var entries = History();
+            entries.Add(entry);
+            Save(entries);
+            return entry.action;
+        }
+
+        // Puts the backed-up controller back. False when the user declines because it changed since the fix (or the backup is gone).
+        internal static bool Restore(Entry entry, bool ask = true)
+        {
+            if (!CanRestore(entry)) return false;
+            var assets = entry.asset.Split('\n');
+            var backups = entry.backup.Split('\n');
+            var hashes = (entry.hashAfter ?? "").Split('\n');
+            bool changedSince = assets.Select((a, i) => i >= hashes.Length || Hash(a) != hashes[i]).Any(c => c);
+            if (ask && changedSince &&
+                !EditorUtility.DisplayDialog("Restore " + Label(entry) + "?",
+                    "It was changed after this fix. Restoring puts back the version from before the fix, so those later changes are lost too.", "Restore", "Cancel"))
+                return false;
+            for (int i = 0; i < assets.Length; i++)
+            {
+                File.Copy(backups[i], assets[i], true);
+                AssetDatabase.ImportAsset(assets[i], ImportAssetOptions.ForceUpdate);
+            }
+            var entries = History();
+            entries.Add(new Entry { time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), avatar = entry.avatar, action = "Restored " + Label(entry) + " to before: " + entry.action });
+            Save(entries);
+            return true;
+        }
+
+        // Every backed-up file of the entry is still there.
+        internal static bool CanRestore(Entry entry) =>
+            !string.IsNullOrEmpty(entry.backup) && !string.IsNullOrEmpty(entry.asset) &&
+            entry.backup.Split('\n').All(File.Exists) && entry.asset.Split('\n').All(File.Exists) && entry.backup.Split('\n').Length == entry.asset.Split('\n').Length;
+
+        // "FX.controller", or "3 files".
+        internal static string Label(Entry entry)
+        {
+            var assets = (entry.asset ?? "").Split('\n');
+            return assets.Length == 1 ? Path.GetFileName(assets[0]) : assets.Length + " files";
+        }
+
+        internal static long BackupBytes() =>
+            Directory.Exists(Folder + "/Backups") ? new DirectoryInfo(Folder + "/Backups").GetFiles("*.bak", SearchOption.AllDirectories).Sum(f => f.Length) : 0;
+
+        // Deletes backups older than the given number of days; their history entries stay, without Restore.
+        internal static int DeleteBackups(int olderThanDays)
+        {
+            if (!Directory.Exists(Folder + "/Backups")) return 0;
+            int deleted = 0;
+            foreach (var dir in new DirectoryInfo(Folder + "/Backups").GetDirectories().Where(d => d.CreationTime < DateTime.Now.AddDays(-olderThanDays)))
+            {
+                if (!AssetDatabase.DeleteAsset(Folder + "/Backups/" + dir.Name)) { dir.Delete(true); File.Delete(dir.FullName + ".meta"); }
+                deleted++;
+            }
+            return deleted;
+        }
+    }
+}

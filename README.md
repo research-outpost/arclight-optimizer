@@ -1,6 +1,6 @@
 # Arclight Optimizer
 
-Smaller, lighter VRChat avatars, optimized on a copy at build time. It strips data your materials and shaders never use, removes what can never be seen, heard or used, and merges what can be merged, without changing how the avatar looks, sounds or behaves (beyond the few accepted differences listed below). Since 1.1.0 it replaces Avatar Optimizer (AAO).
+Smaller, lighter VRChat avatars, optimized on a copy at build time. It strips data your materials and shaders never use, removes what can never be seen, heard or used, and merges what can be merged, without changing how the avatar looks, sounds or behaves (beyond the few accepted differences listed below).
 
 ## What it does
 
