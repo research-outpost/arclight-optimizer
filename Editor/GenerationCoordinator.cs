@@ -324,6 +324,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 progress?.Stage("Validating imported PNG", false);
                 var imported = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
                 GeneratedTargetValidator.ValidatePair(source, imported, repair || estimate, (int)(standaloneFormat ?? 0));
+                // DXT1 for a texture whose alpha a shader reads relies on the encoder never using its transparent index on opaque
+                // input; the GPU's decode confirms it where the active platform imports the DXT1 (Fable final review).
+                if (standaloneFormat == TextureImporterFormat.DXT1 && (channels & TextureChannels.A) != 0 && imported.format == TextureFormat.DXT1 &&
+                    !TextureCropper.OpaqueOnGpu(imported))
+                {
+                    AssetDatabase.DeleteAsset(outPath);
+                    throw new InvalidOperationException("The DXT1 replacement decodes a texel with alpha below 1.");
+                }
                 return (outPath, imported);
             }
 

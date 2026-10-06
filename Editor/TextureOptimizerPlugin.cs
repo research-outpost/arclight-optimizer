@@ -24,6 +24,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .Run("Record exclusions and check for Avatar Optimizer", ctx =>
                 {
                     Exclusions.Record(ctx.AvatarRootObject);
+                    ctx.GetState<SubstitutionState>().SourceMeshes = MeshReadWrite.Record(ctx.AvatarRootObject);
                     var config = ctx.AvatarRootObject.GetComponent<AvatarTextureOptimizer>();
                     if (config && config.enabled && AvatarOptimizerConflict.Report(ctx.AvatarRootObject))
                         ctx.GetState<SubstitutionState>().AvatarOptimizerConflict = true;
@@ -165,10 +166,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (state.OptimizeMeshes)
                 {
                     BuildTimings.Step("UnusedObjectRemover");
+                    int animators = ctx.AvatarRootObject.GetComponentsInChildren<Animator>(true).Length;
                     var removed = UnusedObjectRemover.Run(analysis);
                     if (removed.GameObjects + removed.Components > 0)
                     {
-                        analysis.RescanReferences();
+                        // A removed Animator no longer marks its bones as moving; only a full rebuild refreshes that (Fable final review).
+                        if (ctx.AvatarRootObject.GetComponentsInChildren<Animator>(true).Length < animators) analysis = AvatarAnalysis.Build(ctx);
+                        else analysis.RescanReferences();
                         string summary = "Removed " + removed.GameObjects + " object(s) and " + removed.Components +
                             " component(s) that can never be seen, heard or used: " + string.Join(", ", removed.Names.Take(20)) +
                             (removed.Names.Count > 20 ? ", ..." : "") + ".";
@@ -209,6 +213,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             physics.NotAnimated + " PhysBone(s) whose bones nothing else moves.";
                         Debug.Log("Arclight Optimizer: " + physicsSummary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, physicsSummary);
+                    }
+                    if (physics.Receivers + physics.Colliders + physics.MergedColliders > 0)
+                    {
+                        // Objects kept only for a removed receiver or collider entry can go now (Fable final review).
+                        BuildTimings.Step("UnusedObjectRemover");
+                        var swept = UnusedObjectRemover.Run(analysis);
+                        if (swept.GameObjects + swept.Components > 0)
+                        {
+                            analysis.RescanReferences();
+                            string summary = "Removed " + swept.GameObjects + " object(s) and " + swept.Components + " component(s) nothing used once the physics cleanup ran: " +
+                                string.Join(", ", swept.Names.Take(20)) + (swept.Names.Count > 20 ? ", ..." : "") + ".";
+                            Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                            state.Report?.Add(null, summary);
+                        }
                     }
                     WhyNotLine(state, "animator layer(s) not folded", layerMerge.WhyNot);
                     if (layerMerge.Inert > 0)
@@ -462,7 +480,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 CropTextures(ctx);
                 BuildTimings.Step("MeshReadWrite");
-                int unreadable = MeshReadWrite.Run(ctx.AvatarRootObject);
+                int unreadable = MeshReadWrite.Run(ctx.AvatarRootObject, ctx.GetState<SubstitutionState>().SourceMeshes);
                 if (unreadable > 0) ctx.GetState<SubstitutionState>().Report?.Add(null, "Turned off Read/Write on " + unreadable + " mesh(es) this build made, so the avatar does not keep a second copy of them in memory.");
             }
             finally
@@ -556,6 +574,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal bool VrcfuryPending;
         // The component's MMD Support setting: keep the shapes MMD dance worlds animate.
         internal bool KeepMmdShapes = true;
+        // Non-asset meshes the avatar had before any pass ran; they belong to the user's scene (see MeshReadWrite.Record).
+        internal HashSet<Mesh> SourceMeshes;
         public int AppliedTextures;
         public readonly HashSet<Texture> MergedDuplicates = new HashSet<Texture>();
         internal AnimationSnapshot SerializedAnimation;

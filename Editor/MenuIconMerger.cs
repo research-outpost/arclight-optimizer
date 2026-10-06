@@ -86,9 +86,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static string Key(Texture2D texture)
         {
             string path = AssetDatabase.GetAssetPath(texture);
-            if (string.IsNullOrEmpty(path) || !AssetDatabase.IsMainAsset(texture) || !(AssetImporter.GetAtPath(path) is TextureImporter importer) || !File.Exists(path))
+            if (string.IsNullOrEmpty(path) || !AssetDatabase.IsMainAsset(texture) || !(AssetImporter.GetAtPath(path) is TextureImporter importer) || !File.Exists(LongPath.For(path)))
                 return null;
-            return FingerprintService.Hash(File.ReadAllBytes(path)) + "|" + Path.GetExtension(path).ToLowerInvariant() + "|" + TextureSafety.SettingsFingerprint(importer);
+            return FingerprintService.FileHash(path) + "|" + Path.GetExtension(path).ToLowerInvariant() + "|" + TextureSafety.SettingsFingerprint(importer);
         }
     }
 }

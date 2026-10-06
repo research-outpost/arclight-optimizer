@@ -80,12 +80,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // A readable texture keeps a CPU copy in the uploaded avatar that nothing on an avatar reads (shaders sample the GPU copy), so a
-        // generated copy turns Read/Write off: the same texture, less RAM for everyone who loads the avatar. Reimports when it changes.
-        internal static void DropReadable(TextureImporter importer)
+        // generated copy turns Read/Write off: the same texture, less RAM for everyone who loads the avatar. Reimports when it changes;
+        // true then (the .meta changed).
+        internal static bool DropReadable(TextureImporter importer)
         {
-            if (!importer.isReadable) return;
+            if (!importer.isReadable) return false;
             importer.isReadable = false;
             importer.SaveAndReimport();
+            return true;
         }
 
         public static void CopyImporter(TextureImporter source, TextureImporter destination)

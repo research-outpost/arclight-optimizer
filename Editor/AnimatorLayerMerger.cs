@@ -295,6 +295,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var host = merge[merge.Count - 1].Layer;
                     Empty(host);
                     host.DefaultWeight = 1;
+                    // A masked member only folds when its clips hold nothing a mask filters, so the merged layer needs no mask; a
+                    // masked host keeping it would filter the other members' bone curves (Fable final review).
+                    host.AvatarMask = null;
                     var hostState = host.StateMachine.AddState("Arclight merged layers", tree);
                     hostState.WriteDefaultValues = true;
                     host.StateMachine.DefaultState = hostState;

@@ -231,7 +231,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (File.Exists(outPath) && AssetImporter.GetAtPath(outPath) is TextureImporter cachedImporter && cachedImporter.userData == userData)
             {
                 var cached = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
-                if (cached && cached.width == 4 && cached.height == 4 && Checked(texture, cached, outPath)) { AudioMonoConverter.MarkUsed(outPath); return cached; }
+                if (cached && cached.width == 4 && cached.height == 4 && Checked(texture, cached, outPath)) { TextureSafety.DropReadable(cachedImporter); AudioMonoConverter.MarkUsed(outPath); return cached; } // Copies made before 1.1.13 lose Read/Write.
             }
             if (File.Exists(outPath) || File.Exists(outPath + ".meta")) outPath = AssetDatabase.GenerateUniqueAssetPath(outPath);
 
@@ -303,6 +303,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 RenderTexture.ReleaseTemporary(target);
                 Object.DestroyImmediate(read);
             }
+        }
+
+        // True when the GPU decodes alpha 1 everywhere: level 0 in 512-texel tiles at 1:1, then the whole texture into 64, 4, 2 and
+        // 1 pixels for the coarser levels. Guards DXT1 replacements a shader reads alpha from (Fable final review).
+        internal static bool OpaqueOnGpu(Texture2D texture)
+        {
+            const int tile = 512;
+            for (int y = 0; y < texture.height; y += tile)
+                for (int x = 0; x < texture.width; x += tile)
+                {
+                    int w = Math.Min(tile, texture.width - x), h = Math.Min(tile, texture.height - y);
+                    var scale = new Vector2((float)w / texture.width, (float)h / texture.height);
+                    if (Read(texture, w, h, scale, new Vector2((float)x / texture.width, (float)y / texture.height)).Any(c => c.a != 1f)) return false;
+                }
+            return new[] { 64, 4, 2, 1 }.All(size => Sampled(texture, size, false).All(c => c.a == 1f));
         }
 
         // Draws both textures into float targets and compares what the GPU read: a 64-texel part at 1:1 (level 0), then
@@ -413,7 +428,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // A cached crop passes the same import and GPU checks as a new one (it may have been edited, or imported for
                 // another platform); otherwise it is made again.
                 var cached = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
-                if (cached && SameImport(cached, texture, importedW, importedH) && SameRegion(texture, cached, crop)) { AudioMonoConverter.MarkUsed(outPath); return cached; }
+                if (cached && SameImport(cached, texture, importedW, importedH) && SameRegion(texture, cached, crop)) { TextureSafety.DropReadable(cachedImporter); AudioMonoConverter.MarkUsed(outPath); return cached; } // Copies made before 1.1.13 lose Read/Write.
                 AssetDatabase.DeleteAsset(outPath);
             }
             if (File.Exists(outPath) || File.Exists(outPath + ".meta")) outPath = AssetDatabase.GenerateUniqueAssetPath(outPath);

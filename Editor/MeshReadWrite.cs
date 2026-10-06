@@ -13,7 +13,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // particle system emits from or draws (both read the CPU copy at runtime), and anything under Arclight Exclude.
     internal static class MeshReadWrite
     {
-        internal static int Run(GameObject root)
+        // Meshes already on the avatar when the build starts that are not asset files: scene-stored meshes (ProBuilder, scene
+        // tools) the build clone shares with the user's scene. They are source objects, so their flag is never changed.
+        internal static HashSet<Mesh> Record(GameObject root) => new HashSet<Mesh>(
+            root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Select(r => r.sharedMesh)
+                .Concat(root.GetComponentsInChildren<MeshFilter>(true).Select(f => f.sharedMesh))
+                .Where(m => m && AssetDatabase.GetAssetPath(m).Length == 0));
+
+        internal static int Run(GameObject root, ICollection<Mesh> sourceMeshes = null)
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode) return 0;
             if (D4rkOrdering.MayRun(root)) return 0; // d4rk reads these meshes after Arclight.
@@ -41,7 +48,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             int count = 0;
             foreach (var mesh in renderers.Select(MeshOf).Where(m => m).Distinct())
             {
-                if (!mesh.isReadable || !BuildOwned(mesh) || particleMeshes.Contains(mesh)) continue;
+                if (!mesh.isReadable || !BuildOwned(mesh) || particleMeshes.Contains(mesh) || sourceMeshes != null && sourceMeshes.Contains(mesh)) continue;
                 using (var serialized = new SerializedObject(mesh))
                 {
                     var readable = serialized.FindProperty("m_IsReadable");

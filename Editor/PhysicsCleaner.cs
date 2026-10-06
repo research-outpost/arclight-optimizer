@@ -98,7 +98,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 Object.DestroyImmediate(receiver);
                 result.Receivers++;
             }
-            if (result.Receivers + result.Parameters + result.MergedColliders > 0) analysis.RescanReferences();
+            if (result.Receivers + result.Parameters + result.MergedColliders + result.Colliders > 0) analysis.RescanReferences();
             return result;
         }
 

@@ -174,7 +174,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                     result.CacheLookup = true;
                                     result.CacheValidation = true;
                                     progress?.Stage("Validating cached replacement");
-                                    TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(mapping.replacement))); // Copies made before 1.1.13.
+                                    // Copies made before 1.1.13. The .meta changes, so its recorded hash follows, or the next build would remake it.
+                                    if (TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(mapping.replacement))))
+                                    {
+                                        mapping.outputImporterHash = FingerprintService.ImporterHash(mapping.replacement);
+                                        EditorUtility.SetDirty(cache);
+                                    }
                                     GeneratedTargetValidator.ValidatePair((Texture2D)group.Source, mapping.replacement, TextureFileSizePolicy.SkipsPngGate(mapping), mapping.standaloneFormat);
                                     if (!GeneratedTargetValidator.IsValidated(mapping))
                                     {
