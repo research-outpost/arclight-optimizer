@@ -7,14 +7,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 {
     // Meshes this build made (merged, stripped or otherwise copied) are created readable, so the uploaded avatar would keep a
     // second, CPU-side copy of each in memory that nothing on an avatar reads: skinning, blend shapes and drawing use the GPU
-    // copy. Their Read/Write flag goes off at the end of Arclight's passes, on upload builds only. The Editor keeps the data, so
-    // d4rk and the post-d4rk passes still read them. Left readable: source assets (never edited), meshes Cloth simulates or a
+    // copy. Their Read/Write flag goes off at the end of Arclight's passes, on upload builds only, and never when d4rk Avatar
+    // Optimizer may run afterwards: its mesh merge reads vertices, normals, UVs and indices and fails on a non-readable mesh (an
+    // upload failed this way on 1.1.13). Left readable: source assets (never edited), meshes Cloth simulates or a
     // particle system emits from or draws (both read the CPU copy at runtime), and anything under Arclight Exclude.
     internal static class MeshReadWrite
     {
         internal static int Run(GameObject root)
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode) return 0;
+            if (D4rkOrdering.MayRun(root)) return 0; // d4rk reads these meshes after Arclight.
             var particleMeshes = new HashSet<Mesh>();
             var particleRenderers = new HashSet<Renderer>();
             foreach (var system in root.GetComponentsInChildren<ParticleSystem>(true))
