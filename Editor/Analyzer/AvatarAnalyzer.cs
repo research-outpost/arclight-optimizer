@@ -39,8 +39,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         private static readonly string[] LayerNames = { "Base", "Layer 1", "Additive", "Gesture", "Action", "FX", "Sitting", "TPose", "IKPose" };
 
         internal sealed class Playable { public string Name; public AnimatorController Controller; }
-        internal sealed class ExpressionParameter { public string Name; public AnimatorControllerParameterType Type; public bool Synced; public float Default; }
-        internal sealed class MenuControl { public string Path; public string Parameter; public Object Menu; public string Type; }
+        internal sealed class ExpressionParameter { public string Name; public AnimatorControllerParameterType Type; public bool Synced, Saved; public float Default; }
+        internal sealed class MenuControl { public string Path; public string Parameter; public Object Menu; public string Type; public float Value; }
 
         internal sealed class Avatar
         {
@@ -96,7 +96,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         int valueType = entry.FindPropertyRelative("valueType")?.intValue ?? 1;
                         avatar.Expressions.Add(new ExpressionParameter
                         {
-                            Name = name, Synced = entry.FindPropertyRelative("networkSynced")?.boolValue ?? true, Default = entry.FindPropertyRelative("defaultValue")?.floatValue ?? 0,
+                            Name = name, Synced = entry.FindPropertyRelative("networkSynced")?.boolValue ?? true, Default = entry.FindPropertyRelative("defaultValue")?.floatValue ?? 0, Saved = entry.FindPropertyRelative("saved")?.boolValue ?? false,
                             Type = valueType == 0 ? AnimatorControllerParameterType.Int : valueType == 2 ? AnimatorControllerParameterType.Bool : AnimatorControllerParameterType.Float
                         });
                     }
@@ -135,10 +135,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     string type = typeProperty != null && typeProperty.propertyType == SerializedPropertyType.Enum && typeProperty.enumValueIndex >= 0 ? typeProperty.enumNames[typeProperty.enumValueIndex]
                         : code == 101 ? "Button" : code == 102 ? "Toggle" : code == 103 ? "SubMenu" : code > 200 && code < 300 ? "Puppet" : "";
                     string parameter = control.FindPropertyRelative("parameter.name")?.stringValue;
-                    if (!string.IsNullOrEmpty(parameter)) avatar.Controls.Add(new MenuControl { Path = here, Parameter = parameter, Menu = menu, Type = type });
+                    if (!string.IsNullOrEmpty(parameter)) avatar.Controls.Add(new MenuControl { Path = here, Parameter = parameter, Menu = menu, Type = type, Value = control.FindPropertyRelative("value")?.floatValue ?? 1 });
                     var subs = control.FindPropertyRelative("subParameters");
                     bool anySub = false;
-                    for (int j = 0; subs != null && j < subs.arraySize; j++)
+                    // Only puppets use sub-parameters; a Toggle or Button keeps stale ones from before its type was changed.
+                    for (int j = 0; subs != null && type.Contains("Puppet") && j < subs.arraySize; j++)
                     {
                         string sub = subs.GetArrayElementAtIndex(j).FindPropertyRelative("name")?.stringValue;
                         if (string.IsNullOrEmpty(sub)) continue;
@@ -200,7 +201,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         }
 
         // Problems judged on the uploaded version: tools that run at upload often fix them (Modular Avatar, VRCFury).
-        internal static bool Breakage(Finding f) => new[] { "missing|", "menu|", "menus|", "budget", "puppet|", "ft|" }.Any(p => f.Key.StartsWith(p, StringComparison.Ordinal));
+        internal static bool Breakage(Finding f) => new[] { "missing|", "menu|", "menus|", "menuvalue", "budget", "puppet|", "ft|" }.Any(p => f.Key.StartsWith(p, StringComparison.Ordinal));
 
         // True while CheckBuilt runs the upload steps, so the upload report (UploadReport) stays quiet for that copy.
         internal static bool Building { get; private set; }
@@ -248,7 +249,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             {
                 MissingParameters(avatar, playable, findings);
                 AnimationTargets(avatar, playable, findings);
-                if (!built) { WriteDefaults(playable, findings); DeadLayers(avatar, playable, findings); MaskedMoves(playable, findings); }
+                if (!built) { WriteDefaults(playable, findings); DeadLayers(avatar, playable, findings); MaskedMoves(playable, findings); DeadStates(playable, findings); }
             }
             DriverTargets(avatar, findings);
             MenuStructure(avatar, findings);
@@ -345,7 +346,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 Key = "missing|" + playable.Name, Playable = playable.Name,
                 Title = all.Count == 1 ? playable.Name + " uses a parameter it doesn't have: \"" + all[0].Key + "\"" : playable.Name + " uses " + all.Count + " parameters it doesn't have",
                 Detail = string.Join("\n", lines),
-                Fix = "Press Add, or open the " + playable.Name + " controller, go to its Parameters tab and add " + string.Join(", ", all.Take(20).Select(p => "\"" + p.Key + "\" (" + TypeOf(p.Key, p.Value.Type) + ")")) +
+                Fix = "Open the " + playable.Name + " controller, go to its Parameters tab and add " + string.Join(", ", all.Take(20).Select(p => "\"" + p.Key + "\" (" + TypeOf(p.Key, p.Value.Type) + ")")) +
                     (all.Count > 20 ? " and " + (all.Count - 20) + " more" : "") + ". If these came with a template (face tracking, for example), its setup guide lists them.",
                 Target = controller,
                 Data = new Fixes.Parameters { Names = all.Select(p => (p.Key, TypeOf(p.Key, p.Value.Type))).ToList() }
@@ -411,8 +412,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Target = group.First().Menu
                 });
 
-            // Radial and axis puppets only write Floats, so one on a Bool or Int parameter does nothing.
             var types = avatar.Expressions.GroupBy(e => e.Name).ToDictionary(g => g.Key, g => g.First().Type, StringComparer.Ordinal);
+            // Toggle and Button values the parameter can't hold (an Int toggle at 0 is fine: swap menus use it to pick option 0):
+            // an Int that isn't a whole number from 0 to 255, or a Float outside -1 to 1.
+            var badValues = avatar.Controls.Where(c => (c.Type == "Toggle" || c.Type == "Button") && types.TryGetValue(c.Parameter, out var t) &&
+                (t == AnimatorControllerParameterType.Int && (c.Value < 0 || c.Value > 255 || c.Value != Mathf.Round(c.Value)) ||
+                 t == AnimatorControllerParameterType.Float && (c.Value < -1 || c.Value > 1))).ToList();
+            if (badValues.Count > 0)
+                findings.Add(new Finding
+                {
+                    Severity = Severity.Broken, Key = "menuvalue", Target = badValues[0].Menu,
+                    Title = N(badValues.Count, "menu control", "sets", "set") + " a value its parameter can't use",
+                    Detail = "Ints hold whole numbers from 0 to 255 and Floats -1 to 1, so these controls can't set what they ask for:\n" +
+                        string.Join("\n", badValues.Take(8).Select(c => "• " + c.Path + " (\"" + c.Parameter + "\" = " + c.Value + ")")) + (badValues.Count > 8 ? "\n• and " + (badValues.Count - 8) + " more" : ""),
+                    Fix = "Give each control a value its parameter can hold."
+                });
+
+            // Radial and axis puppets only write Floats, so one on a Bool or Int parameter does nothing.
             foreach (var group in avatar.Controls.Where(c => c.Type == "Sub" && types.TryGetValue(c.Parameter, out var t) && t != AnimatorControllerParameterType.Float).GroupBy(c => c.Parameter))
                 findings.Add(new Finding
                 {
@@ -426,8 +442,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
 
             // Face tracking (VRCFaceTracking) sets its parameters over OSC, which only reaches Expression Parameters; an animator
             // parameter named like one ("FT/v2/..." or "v2/...") that isn't listed there never receives a value.
-            var unreachable = animatorTypes.Keys.Where(n => (n.StartsWith("FT/v2/", StringComparison.Ordinal) || n.StartsWith("v2/", StringComparison.Ordinal)) && !expressionNames.Contains(n))
+            // Names the animator writes itself (a clip's Animator curve or a Parameter Driver, as binary decoders do) aren't fed by OSC.
+            var written = new HashSet<string>(avatar.Playables.SelectMany(p => ClipsOf(p.Controller))
+                .SelectMany(c => AnimationUtility.GetCurveBindings(c)).Where(b => b.type == typeof(Animator) && b.path.Length == 0).Select(b => b.propertyName), StringComparer.Ordinal);
+            written.UnionWith(DriverSets(avatar));
+            var unreachable = animatorTypes.Keys.Where(n => (n.StartsWith("FT/v2/", StringComparison.Ordinal) || n.StartsWith("v2/", StringComparison.Ordinal)) && !expressionNames.Contains(n) && !written.Contains(n))
                 .OrderBy(n => n, StringComparer.Ordinal).ToList();
+            // Binary bits (JawOpen1, JawOpen2, ...Negative) carry the synced data, so they must be synced; the plain values can stay local.
+            bool Bit(string n) => char.IsDigit(n[n.Length - 1]) || n.EndsWith("Negative", StringComparison.Ordinal);
+            var values = unreachable.Where(n => !Bit(n)).ToList();
+            var bits = unreachable.Where(Bit).ToList();
             if (unreachable.Count > 0)
                 findings.Add(new Finding
                 {
@@ -435,8 +459,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Title = N(unreachable.Count, "face-tracking parameter", "can't receive", "can't receive") + " tracking data",
                     Detail = "Face tracking can only send values to Expression Parameters. " + (unreachable.Count == 1 ? "This one is in the animator but missing from Expression Parameters, so it never moves: " : "These are in the animator but missing from Expression Parameters, so they never move: ") +
                         Join(unreachable, 8) + ".",
-                    Fix = "Press Add to list them in Expression Parameters, not synced (they then cost no synced bits), or reinstall the face-tracking template's parameters.",
-                    Data = avatar.ExpressionAsset ? new Fixes.ExpressionAdds { Names = unreachable.Select(n => (n, animatorTypes[n][0].Type)).ToList() } : null
+                    Fix = (values.Count > 0 && avatar.ExpressionAsset ? "List " + Join(values, 4) + " in Expression Parameters with Synced off (no synced bits). " : "") +
+                        (bits.Count > 0 ? "Add " + Join(bits, 4) + " to Expression Parameters by hand with Synced on: they carry the tracking to other players and cost " +
+                            N(bits.Count, "synced bit") + ". " : "") + "Reinstalling the face-tracking template's parameters also works.",
+                    // Only the plain values get a button; binary bits must be synced, which spends the user's bit budget.
+                    Data = values.Count > 0 && avatar.ExpressionAsset ? new Fixes.ExpressionAdds { Names = values.Select(n => (n, animatorTypes[n][0].Type)).ToList() } : null
                 });
 
             if (built) return;

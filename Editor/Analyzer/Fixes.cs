@@ -29,6 +29,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         private static bool Editable(AnimationClip clip) => clip && AssetDatabase.IsMainAsset(clip) &&
             AssetDatabase.GetAssetPath(clip) is string path && path.StartsWith("Assets/", StringComparison.Ordinal) && path.EndsWith(".anim", StringComparison.OrdinalIgnoreCase);
 
+        // Not a file inside a package: those are read-only (VCC reinstalls them), so a fix there would not last.
+        internal static bool Writable(Object asset) => !AssetDatabase.GetAssetPath(asset).StartsWith("Packages/", StringComparison.Ordinal);
+
         // The asset files a fix changes, so they can be backed up first.
         private static List<Object> Changes(Finding finding) =>
             finding.Data is Curves c ? c.Bindings.Select(b => b.Clip).Where(Editable).Distinct().Cast<Object>().ToList()
@@ -40,7 +43,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         {
             switch (finding.Data)
             {
-                case Parameters p when finding.Target is AnimatorController controller:
+                case Parameters p when finding.Target is AnimatorController controller && Writable(controller):
                     return ("Add them", () =>
                     {
                         Undo.RecordObject(controller, "Add missing parameters");
@@ -50,7 +53,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         EditorUtility.SetDirty(controller);
                         return "Added " + added.Count + " parameter(s) to " + controller.name + ".";
                     });
-                case Layers l when finding.Target is AnimatorController controller:
+                case Layers l when finding.Target is AnimatorController controller && Writable(controller):
                     return ("Remove them", () =>
                     {
                         Undo.RegisterCompleteObjectUndo(controller, "Remove unused layers");
@@ -92,7 +95,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             }
                         return "Cleared " + cleared + " missing reference(s). References to objects outside the avatar were left for you to point at the right object.";
                     });
-                case ExpressionAdds e when finding.Target:
+                case ExpressionAdds e when finding.Target && Writable(finding.Target):
                     return ("Add them", () =>
                     {
                         int added = 0;
@@ -165,7 +168,37 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             using (var sha = System.Security.Cryptography.SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(path))).Replace("-", "");
         }
 
-        // Applies the finding's fix: backs up the controller it changes, runs it, and logs it. Returns what was done.
+        // Saves every object in the asset's file (states, transitions and blend trees are separate sub-assets of a controller), so the
+        // file on disk holds any unsaved editor work.
+        private static void SaveFile(string path) => AssetDatabase.SaveAssetIfDirty(AssetDatabase.GUIDFromAssetPath(path));
+
+        private static bool Unsaved(string path) => AssetDatabase.LoadAllAssetsAtPath(path).Any(o => o && EditorUtility.IsDirty(o));
+
+        // The asset files this fix would change, for a confirmation when another avatar also uses them.
+        internal static List<string> Files(Finding finding) => Changes(finding).Select(AssetDatabase.GetAssetPath).ToList();
+
+        // Other avatars in the open scenes whose playable layers use one of these files (a shared controller, or a clip in one).
+        internal static List<string> SharedWith(Finding finding, GameObject self)
+        {
+            var files = new HashSet<string>(Files(finding), StringComparer.Ordinal);
+            if (files.Count == 0) return new List<string>();
+            var others = new List<string>();
+            for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded) continue;
+                foreach (var descriptor in scene.GetRootGameObjects().SelectMany(g => g.GetComponentsInChildren<Component>(true)).Where(c => c && c.GetType().Name == "VRCAvatarDescriptor"))
+                {
+                    if (descriptor.gameObject == self) continue;
+                    var used = AvatarAnalyzer.Read(descriptor.gameObject).Playables.SelectMany(p => new[] { AssetDatabase.GetAssetPath(p.Controller) }
+                        .Concat(AvatarAnalyzer.ClipsOf(p.Controller).Select(AssetDatabase.GetAssetPath)));
+                    if (used.Any(files.Contains)) others.Add(descriptor.gameObject.name);
+                }
+            }
+            return others.Distinct().ToList();
+        }
+
+        // Applies the finding's fix: backs up the files it changes, runs it, and logs it. Returns what was done.
         internal static string Apply(Finding finding, string avatar)
         {
             var fix = For(finding);
@@ -177,13 +210,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             var backups = new List<string>();
             if (changes.Count > 0)
             {
-                string folder = Folder + "/Backups/" + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
+                // "Backups~" is hidden from Unity (no import, no .meta); a unique name keeps two fixes in the same second apart.
+                string folder = Folder + "/Backups~/" + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + "_" + Guid.NewGuid().ToString("N").Substring(0, 6);
                 Directory.CreateDirectory(folder);
                 foreach (var asset in changes)
                 {
-                    AssetDatabase.SaveAssetIfDirty(asset);
                     string path = AssetDatabase.GetAssetPath(asset);
-                    // A .bak copy is not imported as a second asset; restoring writes these exact bytes back.
+                    SaveFile(path);
                     string backup = folder + "/" + assets.Count + "_" + Path.GetFileName(path) + ".bak";
                     File.Copy(path, backup, true);
                     assets.Add(path);
@@ -192,10 +225,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 entry.asset = string.Join("\n", assets);
                 entry.backup = string.Join("\n", backups);
             }
-            entry.action = fix.Value.Apply();
+            try { entry.action = fix.Value.Apply(); }
+            catch (Exception e)
+            {
+                // Nothing was logged; put the files back as they were and leave no orphan backup.
+                for (int i = 0; i < assets.Count; i++) { File.Copy(backups[i], assets[i], true); AssetDatabase.ImportAsset(assets[i], ImportAssetOptions.ForceUpdate); }
+                if (backups.Count > 0) Directory.Delete(Path.GetDirectoryName(backups[0]), true);
+                return "The fix failed and nothing was changed: " + e.Message;
+            }
             if (changes.Count > 0)
             {
-                foreach (var asset in changes) AssetDatabase.SaveAssetIfDirty(asset);
+                foreach (string path in assets) SaveFile(path);
                 entry.hashAfter = string.Join("\n", assets.Select(Hash));
             }
             var entries = History();
@@ -211,10 +251,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             var assets = entry.asset.Split('\n');
             var backups = entry.backup.Split('\n');
             var hashes = (entry.hashAfter ?? "").Split('\n');
-            bool changedSince = assets.Select((a, i) => i >= hashes.Length || Hash(a) != hashes[i]).Any(c => c);
+            // Unsaved edits in the editor count as changes too: restoring would throw them away.
+            bool changedSince = assets.Select((a, i) => i >= hashes.Length || Unsaved(a) || Hash(a) != hashes[i]).Any(c => c);
             if (ask && changedSince &&
                 !EditorUtility.DisplayDialog("Restore " + Label(entry) + "?",
-                    "It was changed after this fix. Restoring puts back the version from before the fix, so those later changes are lost too.", "Restore", "Cancel"))
+                    "It was changed after this fix (saved or not). Restoring puts back the version from before the fix, so those later changes are lost too.", "Restore", "Cancel"))
                 return false;
             for (int i = 0; i < assets.Length; i++)
             {
@@ -239,19 +280,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             return assets.Length == 1 ? Path.GetFileName(assets[0]) : assets.Length + " files";
         }
 
-        internal static long BackupBytes() =>
-            Directory.Exists(Folder + "/Backups") ? new DirectoryInfo(Folder + "/Backups").GetFiles("*.bak", SearchOption.AllDirectories).Sum(f => f.Length) : 0;
+        // Backups live in "Backups~" (hidden from Unity); older versions used "Backups".
+        private static IEnumerable<string> BackupFolders() => new[] { Folder + "/Backups~", Folder + "/Backups" }.Where(Directory.Exists);
+
+        internal static long BackupBytes() => BackupFolders().Sum(f => new DirectoryInfo(f).GetFiles("*.bak", SearchOption.AllDirectories).Sum(x => x.Length));
 
         // Deletes backups older than the given number of days; their history entries stay, without Restore.
         internal static int DeleteBackups(int olderThanDays)
         {
-            if (!Directory.Exists(Folder + "/Backups")) return 0;
             int deleted = 0;
-            foreach (var dir in new DirectoryInfo(Folder + "/Backups").GetDirectories().Where(d => d.CreationTime < DateTime.Now.AddDays(-olderThanDays)))
-            {
-                if (!AssetDatabase.DeleteAsset(Folder + "/Backups/" + dir.Name)) { dir.Delete(true); File.Delete(dir.FullName + ".meta"); }
-                deleted++;
-            }
+            foreach (string root in BackupFolders().ToList())
+                foreach (var dir in new DirectoryInfo(root).GetDirectories().Where(d => d.CreationTime < DateTime.Now.AddDays(-olderThanDays)))
+                {
+                    if (!AssetDatabase.DeleteAsset(root + "/" + dir.Name)) { dir.Delete(true); File.Delete(dir.FullName + ".meta"); }
+                    deleted++;
+                }
             return deleted;
         }
     }

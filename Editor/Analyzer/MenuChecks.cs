@@ -24,7 +24,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             { "empty", (Severity.Broken, n => N(n, "submenu button", "opens", "open") + " nothing", "No submenu is set on them, so pressing them does nothing", "Pick the submenu each button should open, or remove the button.") },
             { "loop", (Severity.WorthChecking, n => N(n, "submenu", "opens", "open") + " a menu above " + (n == 1 ? "it" : "them"), "They lead back to a menu that's already open, which is confusing to use and usually a mistake",
                 "Point each one at the submenu you meant.") },
-            { "nothing", (Severity.WorthChecking, n => N(n, "puppet control", "has", "have") + " no parameter", "A radial or axis puppet with no parameter does nothing when you move it", "Pick the parameter each puppet should change, or remove it.") },
+            { "nothing", (Severity.WorthChecking, n => N(n, "puppet control", "has", "have") + " no rotation or axis parameter", "A radial or axis puppet without a rotation or axis parameter does nothing when you move it", "Pick the parameter each puppet should change, or remove it.") },
         };
 
         private static void MenuStructure(Avatar avatar, List<Finding> findings)
@@ -99,7 +99,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 Title = N(different.Count, "object", "starts", "start") + " differently in game than in your scene",
                 Detail = "In game, each toggle starts from its parameter's default value, which doesn't match what you see in Unity:\n" +
                     string.Join("\n", different.Take(8).Select(s => "• " + s.Key.name + ": " + (s.Value.On ? "on" : "off") + " in game, " + (s.Value.On ? "off" : "on") + " in the scene (layer \"" + s.Value.Layer + "\")")) +
-                    (different.Count > 8 ? "\n• and " + (different.Count - 8) + " more" : ""),
+                    (different.Count > 8 ? "\n• and " + (different.Count - 8) + " more" : "") +
+                    (avatar.Expressions.Any(e => e.Saved) ? "\nToggles set to Saved start from your last choice instead, so for those this only applies the first time." : ""),
                 Fix = "Decide which is right. To match the game, turn the object on or off in the scene. To match the scene, change the parameter's default in Expression Parameters."
             });
         }

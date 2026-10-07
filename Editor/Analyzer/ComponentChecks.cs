@@ -12,7 +12,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
     {
         private static void Components(Avatar avatar, List<Finding> findings, ICollection<string> laterNames)
         {
-            var objects = avatar.Root.GetComponentsInChildren<Transform>(true).Select(t => t.gameObject).ToList();
+            // EditorOnly objects (and everything under them) are stripped at upload, so problems on them don't matter in game.
+            var objects = avatar.Root.GetComponentsInChildren<Transform>(true).Where(t => !EditorOnly(t, avatar.Root.transform)).Select(t => t.gameObject).ToList();
 
             var scripts = objects.Where(o => GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(o) > 0).ToList();
             if (scripts.Count > 0)
@@ -22,7 +23,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Title = N(scripts.Count, "object", "has", "have") + " missing scripts",
                     Detail = "A script they use is no longer in the project (its package was removed or isn't installed), so those components do nothing:\n" +
                         Bullets(scripts.Select(o => PathOf(avatar, o))),
-                    Fix = "If you still need them, install the package they came from. Otherwise press Remove, or remove each empty component in the Inspector.",
+                    Fix = "If you still need them, install the package they came from. Otherwise remove each empty component in the Inspector.",
                     Data = new Fixes.Scripts { Objects = scripts }
                 });
 
@@ -56,7 +57,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Title = N(broken.Count, "reference", "points", "point") + " at something deleted or outside the avatar",
                     Detail = (broken.Count == 1 ? "This field shows \"Missing\" in the Inspector, or points at an object outside this avatar, which isn't uploaded with it. Whatever it was for is skipped in game:\n"
                         : "These fields show \"Missing\" in the Inspector, or point at an object outside this avatar, which isn't uploaded with it. Whatever they were for is skipped in game:\n") + Bullets(broken),
-                    Fix = "Drag the right object or asset from this avatar into each field. If a field is no longer needed, press Clear.",
+                    Fix = "Drag the right object or asset from this avatar into each field. If a field is no longer needed, clear it.",
                     Data = missing.Fields.Count > 0 ? missing : null,
                 });
 
@@ -80,6 +81,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         : "They detect touches, but no animator has the parameters they set, so nothing happens:\n") + Bullets(receivers),
                     Fix = "Add the parameter to the animator that should react (usually FX), fix the name on the receiver, or remove the receiver."
                 });
+
+            // A PhysBone with a Parameter name sends <name>_IsGrabbed, _IsPosed, _Angle, _Stretch and _Squish; when no animator has any of
+            // them, the name does nothing.
+            string[] suffixes = { "_IsGrabbed", "_IsPosed", "_Angle", "_Stretch", "_Squish" };
+            bool Reacts(string name) => suffixes.Any(s => parameters.Contains(name + s) || laterNames != null && laterNames.Contains(name + s));
+            var bones = new List<string>();
+            GameObject bone = null;
+            foreach (var component in objects.SelectMany(o => o.GetComponents<Component>()).Where(c => c && c.GetType().Name == "VRCPhysBone"))
+                using (var serialized = new SerializedObject(component))
+                {
+                    string name = serialized.FindProperty("parameter")?.stringValue;
+                    if (string.IsNullOrEmpty(name) || Reacts(name) || BuildTool(avatar, component.transform)) continue;
+                    bones.Add(PathOf(avatar, component.gameObject) + " (\"" + name + "\")");
+                    if (!bone) bone = component.gameObject;
+                }
+            if (bones.Count > 0)
+                findings.Add(new Finding
+                {
+                    Severity = Severity.TidyUp, Key = "physbones", Target = bone,
+                    Title = N(bones.Count, "PhysBone", "has", "have") + " a parameter name nothing uses",
+                    Detail = "No animator has any of the parameters " + (bones.Count == 1 ? "it sends" : "they send") + " (the name with _IsGrabbed, _IsPosed, _Angle, _Stretch or _Squish added), so grabbing or posing does nothing extra:\n" + Bullets(bones),
+                    Fix = "Add the parameters you want to react to (for example \"Name_IsGrabbed\") to your FX controller, or clear the Parameter field on the PhysBone."
+                });
         }
 
         // Inside a VRCFury or Modular Avatar prefab, whose parameters those tools rename and wire up at upload.
@@ -88,6 +112,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             for (; transform && transform != avatar.Root.transform; transform = transform.parent)
                 if (transform.GetComponents<Component>().Any(c => c && (c.GetType().Name.Contains("VRCFury") || c.GetType().Namespace?.StartsWith("nadena.dev.modular_avatar", StringComparison.Ordinal) == true)))
                     return true;
+            return false;
+        }
+
+        private static bool EditorOnly(Transform t, Transform root)
+        {
+            for (; t && t != root; t = t.parent) if (t.CompareTag("EditorOnly")) return true;
             return false;
         }
 

@@ -29,12 +29,49 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 Severity = Severity.WorthChecking,
                 Key = "wd|" + playable.Name, Playable = playable.Name,
                 Title = playable.Name + " mixes Write Defaults on and off, which can make toggles misbehave",
-                Detail = "Most states (" + (states.Count - fewer.Count) + ") have Write Defaults " + otherName + "; " + AvatarAnalyzer.N(fewer.Count, "state", "has", "have") + " it " + fewerName +
+                Detail = (fewer.Count * 2 == states.Count ? "Half the states (" + (states.Count - fewer.Count) + ") have" : "Most states (" + (states.Count - fewer.Count) + ") have") + " Write Defaults " + otherName + "; " + AvatarAnalyzer.N(fewer.Count, "state", "has", "have") + " it " + fewerName +
                     ". Mixing the two is a common reason toggles stick or snap back.\nThe odd " + (fewer.Count == 1 ? "one is" : "ones are") + " in " + (layers.Count == 1 ? "layer " : "layers ") +
                     AvatarAnalyzer.Join(layers, 8) + ".",
                 Fix = "Set every state in " + playable.Name + " to Write Defaults " + otherName + ", the setting most already use. Layers a tool installed with its own setting (face tracking, for example) can stay as they are.",
                 Target = playable.Controller
             });
+        }
+
+        // States that can't do what they look like: a Write Defaults off state with no animation keeps whatever the previous state
+        // set (the classic stuck toggle), and a state with an animation whose transition out has no conditions and no exit time
+        // leaves at once, so its animation never plays. Judged as authored.
+        private static void DeadStates(Playable playable, List<Finding> findings)
+        {
+            var empty = new List<string>();
+            var skipped = new List<string>();
+            foreach (var layer in playable.Controller.layers.Where(l => l.syncedLayerIndex < 0))
+                foreach (var (machine, state) in States(layer.stateMachine))
+                {
+                    // FX only: hand-pose layers in Gesture often leave idle states empty on purpose.
+                    if (playable.Name == "FX" && !state.writeDefaultValues && !state.motion)
+                        empty.Add("\"" + state.name + "\" in layer \"" + layer.name + "\"");
+                    // A state with no animation passing straight on is a deliberate router, so only states with one count.
+                    if (state.motion && state.transitions.Any(t => t && !t.mute && !t.hasExitTime && t.conditions.Length == 0))
+                        skipped.Add("\"" + state.name + "\" in layer \"" + layer.name + "\"");
+                }
+            if (empty.Count > 0)
+                findings.Add(new Finding
+                {
+                    Severity = Severity.WorthChecking, Key = "emptywd|" + playable.Name, Playable = playable.Name, Target = playable.Controller,
+                    Title = AvatarAnalyzer.N(empty.Count, "state") + " in " + playable.Name + (empty.Count == 1 ? " has" : " have") + " Write Defaults off and no animation",
+                    Detail = "With Write Defaults off, a state with no animation changes nothing, so whatever the previous state set stays. That's a common reason a toggle won't turn off:\n" +
+                        string.Join("\n", empty.Take(8).Select(s => "• " + s)) + (empty.Count > 8 ? "\n• and " + (empty.Count - 8) + " more" : ""),
+                    Fix = "Give each one an animation that sets the values it should have (for an \"off\" state, a clip that turns the things off), or turn Write Defaults on for that layer."
+                });
+            if (skipped.Count > 0)
+                findings.Add(new Finding
+                {
+                    Severity = Severity.Broken, Key = "instant|" + playable.Name, Playable = playable.Name, Target = playable.Controller,
+                    Title = AvatarAnalyzer.N(skipped.Count, "state") + " in " + playable.Name + (skipped.Count == 1 ? " never plays its" : " never play their") + " animation",
+                    Detail = "A transition out has no conditions and no exit time, so it fires at once and the animation is skipped:\n" +
+                        string.Join("\n", skipped.Take(8).Select(s => "• " + s)) + (skipped.Count > 8 ? "\n• and " + (skipped.Count - 8) + " more" : ""),
+                    Fix = "Give that transition a condition, or tick Has Exit Time so the animation plays before it leaves."
+                });
         }
 
         // Layers at weight 0 that no layer control ever raises, and layers with no states: they never do anything.
@@ -63,6 +100,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 else if (layers[i].defaultWeight == 0 && !raised.Contains(i) && !Acts(layers[i], machine)) { dead.Add("\"" + layers[i].name + "\" (weight 0)"); deadNames.Add(layers[i].name); }
             }
             if (dead.Count == 0) return;
+            // Removing is safe only when no layer index can shift under a Layer Control or a synced layer, and names are unique.
+            bool removable = controls == 0 && layers.All(l => l.syncedLayerIndex < 0) && layers.Select(l => l.name).Distinct().Count() == layers.Length;
             findings.Add(new Finding
             {
                 Severity = Severity.TidyUp,
@@ -71,11 +110,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 Detail = (dead.Count == 1 ? "It's empty, or its weight is 0 and nothing ever turns it up, so it has no effect in game:\n"
                     : "They're empty, or their weight is 0 and nothing ever turns them up, so they have no effect in game:\n") +
                     string.Join("\n", dead.Take(8).Select(d => "• " + d)) + (dead.Count > 8 ? "\n• and " + (dead.Count - 8) + " more" : ""),
-                Fix = (dead.Count == 1 ? "It's safe to remove (press Remove). If it should play, set its weight to 1 in the Layers tab instead." : "They're safe to remove (press Remove). If one of them should play, set its weight to 1 in the Layers tab instead."),
+                Fix = (dead.Count == 1 ? "It's safe to remove. If it should play, set its weight to 1 in the Layers tab instead." : "They're safe to remove. If one of them should play, set its weight to 1 in the Layers tab instead.") +
+                    (removable ? "" : " Remove " + (dead.Count == 1 ? "it" : "them") + " by hand and check your Animator Layer Controls afterwards: they point at layers by number, and removing one shifts the rest."),
                 Target = playable.Controller,
-                // Removing is safe only when no layer index can shift under a Layer Control or a synced layer, and names are unique.
-                Data = controls == 0 && layers.All(l => l.syncedLayerIndex < 0) && layers.Select(l => l.name).Distinct().Count() == layers.Length
-                    ? new Fixes.Layers { Names = deadNames } : null
+                Data = removable ? new Fixes.Layers { Names = deadNames } : null
             });
         }
 
@@ -162,6 +200,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         }
 
         // The controller's clips, walked by hand: AnimatorController.animationClips logs an error for every missing parameter.
+        internal static IEnumerable<AnimationClip> ClipsOf(AnimatorController controller) => Clips(controller);
+
         private static IEnumerable<AnimationClip> Clips(AnimatorController controller)
         {
             var seen = new HashSet<Motion>();
@@ -182,9 +222,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         }
 
         // Parameter driver entries that set or copy a parameter that no playable layer and no Expression Parameter has.
+        // Every parameter name a Parameter Driver on the avatar sets.
+        internal static IEnumerable<string> DriverSets(Avatar avatar)
+        {
+            foreach (var playable in avatar.Playables)
+                foreach (var driver in Behaviours(playable.Controller).Where(b => b && b.GetType().Name == "VRCAvatarParameterDriver"))
+                    using (var serialized = new SerializedObject(driver))
+                    {
+                        var entries = serialized.FindProperty("parameters");
+                        for (int i = 0; entries != null && i < entries.arraySize; i++)
+                        {
+                            string name = entries.GetArrayElementAtIndex(i).FindPropertyRelative("name")?.stringValue;
+                            if (!string.IsNullOrEmpty(name)) yield return name;
+                        }
+                    }
+        }
+
         private static void DriverTargets(Avatar avatar, List<Finding> findings)
         {
-            var known = new HashSet<string>(avatar.Playables.SelectMany(p => p.Controller.parameters.Select(q => q.name)).Concat(avatar.Expressions.Select(e => e.Name)), StringComparer.Ordinal);
+            // VRChat's own controllers (left as default, so not read here) use these built-ins.
+            var known = new HashSet<string>(avatar.Playables.SelectMany(p => p.Controller.parameters.Select(q => q.name)).Concat(avatar.Expressions.Select(e => e.Name))
+                .Concat(new[] { "VRCEmote", "VRCFaceBlendH", "VRCFaceBlendV" }), StringComparer.Ordinal);
             foreach (var playable in avatar.Playables)
                 foreach (var driver in Behaviours(playable.Controller).Where(b => b && b.GetType().Name == "VRCAvatarParameterDriver"))
                     using (var serialized = new SerializedObject(driver))
@@ -222,7 +280,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Detail = "Those parts of the animations do nothing here. Usually an object was renamed or removed, or the animation was made for a different avatar:\n" +
                         string.Join("\n", targets.Take(6).Select(f => "• " + f.Title)) + (targets.Count > 6 ? "\n• and " + (targets.Count - 6) + " more" : "") +
                         "\nUsed in " + (clips.Count == 1 ? "the clip " : "the clips ") + AvatarAnalyzer.Join(clips, 4) + ".",
-                    Fix = "If an object was renamed or moved, rename it back or fix the path in the clip (the Animation window shows missing properties in yellow). If they aren't needed, press Remove to delete those parts from the clips (each clip is backed up first), or ignore this."
+                    Fix = "If an object was renamed or moved, rename it back or fix the path in the clip (the Animation window shows missing properties in yellow). If they aren't needed, delete those parts from the clips, or ignore this."
                 });
             }
             var drivers = findings.Where(f => f.Key.StartsWith("driver|", StringComparison.Ordinal)).GroupBy(f => f.Title).Select(g => g.First()).ToList();

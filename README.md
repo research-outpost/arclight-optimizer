@@ -20,9 +20,9 @@ It runs automatically on build and in Play Mode. Your project files are never mo
 **Tools → Arclight → Analyzer** finds setup mistakes and says how to fix them:
 
 - **Parameters**: missing from a controller, unused, menu controls that do nothing, or types that lose values.
-- **Animators**: mixed Write Defaults, layers that never play, animations of things the avatar doesn't have, drivers aimed at nothing, masks blocking their own layer.
-- **Menus**: over 8 controls, empty or looping submenus, puppets on the wrong type.
-- **Objects**: toggles that start differently in game, missing scripts, broken references, receivers nothing reacts to.
+- **Animators**: mixed Write Defaults, layers that never play, states that never play or leave values stuck, animations of things the avatar doesn't have, drivers aimed at nothing, masks blocking their own layer.
+- **Menus**: over 8 controls, empty or looping submenus, puppets on the wrong type, values a parameter can't hold.
+- **Objects**: toggles that start differently in game, missing scripts, broken references, receivers and PhysBone parameters nothing reacts to.
 - **Sync budget**: synced bits used out of 256.
 
 It also checks the avatar as uploaded, so Modular Avatar and VRCFury additions count. Fix buttons (**Add**, **Remove**, **Clear**) only run when pressed, support Undo, and back up changed files for **Fix history**. **Ignore** hides a card.
