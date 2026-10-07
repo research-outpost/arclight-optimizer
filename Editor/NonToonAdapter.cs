@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
-    // lilxyzw NonToon 0.1.3 on Shader Core 0.1.12, built-in pipeline passes. Shader Core generates the
+    // lilxyzw NonToon 0.1.3 on Shader Core 0.1.12 and NonToon 0.3.0 on Shader Core 0.3.0, built-in pipeline passes. Shader Core generates the
     // shader at import from the .scshader, its shader library and the modules enabled for it in
     // ProjectSettings/jp.lilxyzw.shadercore.asset, so support is pinned to the audited generated source.
     // Forward, add, outline, shadow-caster and meta passes all read textures at interpolated mesh UVs
@@ -27,12 +27,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal const string Details = "_jp_lilxyzw_nontoon_details_";
         private const string SdfMap = "_jp_lilxyzw_nontoon_shade_SDFMap";
         // SHA-256 of each generated "Shader Source" sub-asset (line endings normalized) with all ten
-        // NonToon modules enabled, the package default.
+        // NonToon modules enabled, the package default. 0.3.0 changes no texture lookup: its masks still read
+        // sd.mask[<...MaskChannel>] (now through SCRemap, a saturate of a * x + y), and fog, lighting and fur shell
+        // placement changes move no UV (fur shells still interpolate inside each triangle).
         // ponytail: exact source pin; other module selections or releases are retained until audited.
-        private static readonly Dictionary<string, string> AuditedSources = new Dictionary<string, string>(StringComparer.Ordinal)
+        private static readonly Dictionary<string, string[]> AuditedSources = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            { ShaderPath, "2134c34d1ec033eb46446cb4ad7a415113256b72a663f7e218a98ad4389224c8" },
-            { FurShaderPath, "905fe45a3113e2f3528e11c35138819915830f171209e32a3ab51a6ac3cabc62" }
+            { ShaderPath, new[] { "2134c34d1ec033eb46446cb4ad7a415113256b72a663f7e218a98ad4389224c8", "df1169f7e197e9fcbb4b3695106280cc259c5286ba4eb6cb2e79f6532f51ed65" } },
+            { FurShaderPath, new[] { "905fe45a3113e2f3528e11c35138819915830f171209e32a3ab51a6ac3cabc62", "14ba2bf702aa338939b401c8ae993aa61f0614c18021806ac4c96200279215b8" } }
         };
 
         public bool Matches(Material material) => material.shader &&
@@ -124,7 +126,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var source = AssetDatabase.LoadAllAssetsAtPath(path).OfType<TextAsset>().FirstOrDefault();
                 return source ? FingerprintService.Hash(Encoding.UTF8.GetBytes(source.text.Replace("\r\n", "\n"))) : null;
             },
-            "The generated NonToon shader differs from the audited NonToon 0.1.3 / Shader Core 0.1.12 build with all ten NonToon modules; original retained.");
+            "The generated NonToon shader differs from the audited NonToon 0.1.3 / Shader Core 0.1.12 and NonToon 0.3.0 / Shader Core 0.3.0 builds with all ten NonToon modules; original retained.");
 
         private static TextureSemantics NormalSemantics(Material material) =>
             MaterialInputs.Int(material, "_NormalMapWithRoughness") != 0 ? TextureSemantics.Data : TextureSemantics.Normal;

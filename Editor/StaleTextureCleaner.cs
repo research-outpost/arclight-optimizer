@@ -180,7 +180,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (source == null) return new HashSet<string>(StringComparer.Ordinal);
             stale.RemoveWhere(name => source.Contains("[" + name + "]"));
             if (stale.Count == 0) return stale;
-            var read = VertexStreamStripper.Uniforms(material);
+            var read = VertexStreamStripper.Uniforms(material, stale.Select(name => new[] { name }).ToList());
             if (read == null) return new HashSet<string>(StringComparer.Ordinal);
             stale.ExceptWith(read);
             return stale;
@@ -244,17 +244,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // feature compiled out of this entry or by the material's keywords, or a slot kept only for other render pipelines,
             // such as lilToon's _BaseMap). Animation cannot change keywords, so the variants are fixed for the build.
             HashSet<string> bound = null;
+            // Its tiling (_ST), size (_TexelSize) and HDR decode values come from the same saved entry, so none may be read either.
+            string[] Uses(string name) => new[] { name, name + "_ST", name + "_TexelSize", name + "_HDR" };
+            var asked = new List<string[]>(); // Every name NeverBound will be asked about, so the compile can stop once each is found.
             bool Unbound(string name) => audited || NeverBound(name);
             bool NeverBound(string name)
             {
                 if (!GeneratedTargetValidator.IsStandalone || SkinnedMeshMerger.Broken(material.shader)) return false;
-                if (bound == null) bound = VertexStreamStripper.Uniforms(material) ?? new HashSet<string> { null };
-                // Its tiling (_ST), size (_TexelSize) and HDR decode values come from the same saved entry, so none may be read either.
-                return !bound.Contains(null) && !new[] { name, name + "_ST", name + "_TexelSize", name + "_HDR" }.Any(bound.Contains);
+                if (bound == null) bound = VertexStreamStripper.Uniforms(material, asked) ?? new HashSet<string> { null };
+                // A partial set only answers the names it was asked about; any other name gets the complete one.
+                var answer = asked.Any(g => g[0] == name) ? bound : VertexStreamStripper.Uniforms(material) ?? new HashSet<string> { null };
+                return !answer.Contains(null) && !Uses(name).Any(answer.Contains);
             }
+            bool Candidate(string name, Object texture) => texture && (!(FallbackSlots.Contains(name) || fallback == null || fallback.Contains(name)) || errorShader);
             using (var serialized = new SerializedObject(material))
             {
                 var textures = serialized.FindProperty("m_SavedProperties.m_TexEnvs");
+                for (int i = 0; textures != null && i < textures.arraySize; i++)
+                {
+                    var entry = textures.GetArrayElementAtIndex(i);
+                    string name = entry.FindPropertyRelative("first").stringValue;
+                    if (Candidate(name, entry.FindPropertyRelative("second.m_Texture").objectReferenceValue) && !errorShader && !switchedOff.Contains(name) &&
+                        (material.shader.FindPropertyIndex(name) >= 0 || !audited)) asked.Add(Uses(name));
+                }
                 for (int i = 0; textures != null && i < textures.arraySize; i++)
                 {
                     var entry = textures.GetArrayElementAtIndex(i);

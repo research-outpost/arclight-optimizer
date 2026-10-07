@@ -76,10 +76,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // For adapters pinned to an audited source hash: hashes each source once per scan. Returns the
         // failure reason, or null when the hash matches.
-        internal static string PinnedSourceFailure(string key, string expectedHash, System.Func<string> hash, string failure)
+        internal static string PinnedSourceFailure(string key, string expectedHash, System.Func<string> hash, string failure) =>
+            PinnedSourceFailure(key, new[] { expectedHash }, hash, failure);
+
+        // Accepts any of several audited sources (one per audited release).
+        internal static string PinnedSourceFailure(string key, string[] expectedHashes, System.Func<string> hash, string failure)
         {
             if (!pinnedSourceFailures.TryGetValue(key, out string cached))
-                pinnedSourceFailures[key] = cached = hash() == expectedHash ? null : failure;
+                pinnedSourceFailures[key] = cached = System.Array.IndexOf(expectedHashes, hash()) >= 0 ? null : failure;
             return cached;
         }
 

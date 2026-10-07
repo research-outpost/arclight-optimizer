@@ -64,6 +64,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             CompiledInputs.Clear();
             CompiledUniforms.Clear();
+            PartialUniforms.Clear();
             SkinnedMeshMerger.VertexIdReaders.Clear();
             DegenerateTriangleRemover.Safe.Clear();
         }
@@ -284,6 +285,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static readonly Dictionary<string, HashSet<string>> CompiledUniforms = new Dictionary<string, HashSet<string>>();
+        private static readonly Dictionary<string, HashSet<string>> PartialUniforms = new Dictionary<string, HashSet<string>>();
 
         // The code tables the compiled facts depend on; part of their disk key, so changing a table recompiles.
         private static string compileTables;
@@ -300,11 +302,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Names of every uniform any stage of any pass reads, in each variant the material can draw with on PC (its
         // keywords alone, with each global keyword, and with the lighting sets above), or null if any variant fails to
         // compile or cannot be listed.
-        internal static HashSet<string> Uniforms(Material material)
+        // needed (early stop): groups of names the caller asks about; once every group has a name the compiles already found,
+        // the rest are skipped and that partial set is returned. It answers "read" for every asked name, which is all a caller
+        // concludes from it (a name found is kept whatever later variants hold, and a failed variant would keep it too), so the
+        // outcome is the same. A partial set is kept in memory only, never on disk or as the complete answer.
+        internal static HashSet<string> Uniforms(Material material, IEnumerable<string[]> needed = null)
         {
             var shader = material.shader;
             string key = CacheKey(material);
             if (CompiledUniforms.TryGetValue(key, out var cached)) return cached;
+            var groups = needed?.ToList();
+            bool Covered(HashSet<string> found) => groups != null && groups.All(g => g.Any(found.Contains));
+            if (PartialUniforms.TryGetValue(key, out var partial) && Covered(partial)) return partial;
             string fact = ShaderFacts.Key(material, "d3d", "uniforms|" + CompileTables);
             if (ShaderFacts.TryGet("uniforms", fact, out string known))
                 return CompiledUniforms[key] = new HashSet<string>(known.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
@@ -345,6 +354,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             }
                             // A failed variant may be one VRChat draws (the failure can be a one-off), so the check stops: every value stays.
                             else return CompiledUniforms[key] = null;
+                            if (Covered(names)) return PartialUniforms[key] = names;
                         }
                     }
                 }
