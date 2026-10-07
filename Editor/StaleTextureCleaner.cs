@@ -26,6 +26,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             { "_MainTex", "_BumpMap", "_EmissionMap", "_MetallicGlossMap", "_OcclusionMap", "_DetailNormalMap", "_DetailAlbedoMap", "_MatCap",
               "_SpecGlossMap", "_ParallaxMap", "_DetailMask" };
 
+        // A material tagged VRCFallback=toonstandard is shown with Toon Standard, which copies every property of the same
+        // name (ramp, masks, colours, toggles). Null keeps everything: the SDK's Toon Standard could not be found.
+        private static readonly string[] ToonStandardShaders = { "VRChat/Mobile/Toon Standard", "VRChat/Mobile/Toon Standard (Outline)" };
+        internal static HashSet<string> ToonStandardFallbackNames(Material material)
+        {
+            var empty = new HashSet<string>(StringComparer.Ordinal);
+            if (!material.shader || Array.IndexOf(ToonStandardShaders, material.shader.name) >= 0 ||
+                material.GetTag("VRCFallback", false, "").IndexOf("toonstandard", StringComparison.OrdinalIgnoreCase) < 0) return empty;
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string shaderName in ToonStandardShaders)
+            {
+                var shader = Shader.Find(shaderName);
+                if (!shader) return null;
+                for (int i = 0; i < shader.GetPropertyCount(); i++)
+                {
+                    string name = shader.GetPropertyName(i);
+                    names.Add(name);
+                    if (shader.GetPropertyType(i) == UnityEngine.Rendering.ShaderPropertyType.Texture) names.Add(name + "_ST");
+                }
+            }
+            return names;
+        }
+
         internal sealed class Result { public int Materials, Textures, Keywords, Values; }
 
         internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register, AnimationRewriter rewriter)
@@ -42,6 +65,22 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .Where(m => m && m.shader && !untouched.Contains(m)).Distinct().ToList();
             var animated = new HashSet<string>(analysis.Bindings.Where(b => b.Property.StartsWith("material.", StringComparison.Ordinal))
                 .Select(b => b.Property.Substring(9).Split('.')[0]), StringComparer.Ordinal);
+            // A feature switch only matters on the materials of the renderers it animates: each material gets the switches animated on
+            // the renderers that draw it or swap it in. Curves whose renderer cannot be told, and materials an animation swaps in on a
+            // renderer that cannot be found, keep the avatar-wide set.
+            var unplacedNames = new HashSet<string>(analysis.Bindings.Where(b => b.Property.StartsWith("material.", StringComparison.Ordinal) &&
+                !(b.Target is Renderer r && renderers.Contains(r))).Select(b => b.Property.Substring(9).Split('.')[0]), StringComparer.Ordinal);
+            var perMaterial = new Dictionary<Material, HashSet<string>>();
+            foreach (var renderer in renderers)
+            {
+                var names = analysis.AnimatedMaterialProperties(renderer).ToList();
+                foreach (var m in renderer.sharedMaterials.Concat(analysis.SwappedMaterials(renderer)).Where(m => m))
+                {
+                    if (!perMaterial.TryGetValue(m, out var set)) perMaterial[m] = set = new HashSet<string>(unplacedNames, StringComparer.Ordinal);
+                    set.UnionWith(names);
+                }
+            }
+            Func<string, bool> AnimatedOn(Material m) => perMaterial.TryGetValue(m, out var set) ? set.Contains : (Func<string, bool>)animated.Contains;
             // A material with a missing shader keeps VRChat's fallback slots when an animation can swap between it and a
             // material that is not pink (on the same renderer): the swap may be how the avatar shows it, so nothing more than
             // before is cleared there. A swap among pink materials only clears them fully; a material an animation swaps in on a
@@ -61,7 +100,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var replacements = new Dictionary<Material, Material>();
             foreach (var material in materials)
             {
-                var stale = StaleTextures(material, animated.Contains);
+                var stale = StaleTextures(material, AnimatedOn(material));
                 if (swapped.Contains(material)) stale.ExceptWith(FallbackSlots);
                 int keywords = InvalidKeywords(material);
                 var values = StaleValues(material);
@@ -78,7 +117,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         for (int i = array == null ? -1 : array.arraySize - 1; i >= 0; i--)
                             if (values.Contains(array.GetArrayElementAtIndex(i).FindPropertyRelative("first").stringValue)) array.DeleteArrayElementAtIndex(i);
                     }
-                    serialized.FindProperty("m_InvalidKeywords")?.ClearArray();
+                    if (keywords > 0) serialized.FindProperty("m_InvalidKeywords")?.ClearArray();
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
                 replacements[material] = copy;
@@ -120,6 +159,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var stale = new HashSet<string>(StringComparer.Ordinal);
             var shader = material.shader;
             if (SkinnedMeshMerger.Broken(shader) || !GeneratedTargetValidator.IsStandalone) return stale; // Only PC compiles are read.
+            var fallback = ToonStandardFallbackNames(material);
+            if (fallback == null) return stale;
             using (var serialized = new SerializedObject(material))
                 foreach (string list in ValueLists)
                 {
@@ -127,7 +168,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     for (int i = 0; array != null && i < array.arraySize; i++)
                     {
                         string name = array.GetArrayElementAtIndex(i).FindPropertyRelative("first").stringValue;
-                        if (shader.FindPropertyIndex(name) < 0 && !FallbackValues.Contains(name)) stale.Add(name);
+                        if (shader.FindPropertyIndex(name) < 0 && !FallbackValues.Contains(name) && !fallback.Contains(name)) stale.Add(name);
                     }
                 }
             if (stale.Count == 0) return stale;
@@ -181,6 +222,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // Only a missing shader, drawn with the error shader on every machine. ShaderHasError can report a variant or platform
             // this material never uses, and isSupported answers for this editor's graphics device, not the players'.
             bool errorShader = material.shader.name == "Hidden/InternalErrorShader";
+            var fallback = ToonStandardFallbackNames(material);
             var switchedOff = new HashSet<string>(StringComparer.Ordinal);
             if (VertexStreamStripper.IsAuditedLilToonShader(material.shader, out bool outline))
             {
@@ -218,7 +260,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var entry = textures.GetArrayElementAtIndex(i);
                     string name = entry.FindPropertyRelative("first").stringValue;
                     var texture = entry.FindPropertyRelative("second.m_Texture").objectReferenceValue;
-                    if (!texture || FallbackSlots.Contains(name) && !errorShader) continue; // Without its shader the material is broken for everyone; nothing is kept for the fallback.
+                    if (!texture || (FallbackSlots.Contains(name) || fallback == null || fallback.Contains(name)) && !errorShader) continue; // Without its shader the material is broken for everyone; nothing is kept for the fallback.
                     if (errorShader || switchedOff.Contains(name) ||
                         (material.shader.FindPropertyIndex(name) < 0 ? Unbound(name) : NeverBound(name))) stale.Add(name);
                 }
@@ -248,6 +290,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Keywords Unity keeps on the material that its shader does not declare (it never compiles them).
         internal static int InvalidKeywords(Material material)
         {
+            // Toon Standard's features are keywords the fallback copies from the material.
+            var fallback = ToonStandardFallbackNames(material);
+            if (fallback == null || fallback.Count > 0) return 0;
             using (var serialized = new SerializedObject(material))
                 return serialized.FindProperty("m_InvalidKeywords")?.arraySize ?? 0;
         }

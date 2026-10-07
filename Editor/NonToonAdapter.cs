@@ -51,13 +51,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         //    rendering mode 0 (Opaque) resets to 1 before any use; modules read albedoAlpha.rgb only.
         //  - _SharedMask: every read is sd.mask[<...MaskChannel>] (sd.maskTexture is assigned but never read),
         //    so it reads the union of the channels the material's mask-channel selectors pick.
-        // Detail textures multiply into albedo alpha and detail masks read all four channels.
+        // Detail masks read all four channels.
         private static TextureChannels Channels(Material material, string property)
         {
             if (property == SdfMap) return TextureChannels.RGB;
             if (property == "_FurNoiseMask") return TextureChannels.R;
-            if (property == "_BaseTexture")
-                return AssetDatabase.GetAssetPath(material.shader) == FurShaderPath || (material.HasProperty("_RenderingMode") && Value(material, "_RenderingMode") == 0)
+            // Details phase_base.hlsl 5-20: each detail texture multiplies into sd.albedoAlpha (alpha times 1), so its alpha reaches
+            // only the same sd.col.a as the base texture's.
+            if (property == "_BaseTexture" || property.StartsWith(Details + "Detail", StringComparison.Ordinal) && property.EndsWith("Texture", StringComparison.Ordinal))
+                return !ShaderAdapterRegistry.FallbackReadsAlpha(material) &&
+                    (AssetDatabase.GetAssetPath(material.shader) == FurShaderPath || (material.HasProperty("_RenderingMode") && Value(material, "_RenderingMode") == 0))
                     ? TextureChannels.RGB : TextureChannels.All;
             if (property != "_SharedMask") return TextureChannels.All;
             TextureChannels read = 0;

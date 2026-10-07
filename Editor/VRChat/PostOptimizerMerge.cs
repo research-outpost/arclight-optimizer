@@ -71,6 +71,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         Note($"Merged {same} animation clip(s) that became identical once redundant keys and curves were removed.");
                 }
                 if (streams && StripAfterD4rk(avatarGameObject, bindings) is string stripped) Note(stripped);
+                // d4rk has finished reading and writing meshes: its final meshes and NDMF's can drop their CPU copy now. Only meshes in
+                // this build's own asset containers (never a scene-stored or source mesh), and none an excluded object could hold.
+                if (streams && !Exclusions.Any)
+                {
+                    int unreadable = MeshReadWrite.Run(avatarGameObject, afterD4rk: true, eligible: mesh => AssetDatabase.Contains(mesh) && IsBuildOwned(mesh));
+                    if (unreadable > 0) Note("Turned off Read/Write on " + unreadable + " mesh(es) after d4rk's merge, so the avatar does not keep a second copy of them in memory.");
+                }
             }
             catch (System.Exception e)
             {

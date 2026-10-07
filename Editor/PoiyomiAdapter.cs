@@ -61,6 +61,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             { "_DetailMask", TextureChannels.R | TextureChannels.G }, { "_LightDataSDFMap", TextureChannels.R | TextureChannels.G },
             { "_DetailTex", TextureChannels.RGB }, { "_BacklightColorTex", TextureChannels.RGB },
             { "_GlitterColorMap", TextureChannels.RGB }, { "_DepthTexture", TextureChannels.RGB },
+            // Checked on all seven Toon 10.0.23 entries: detail noise and fur noise .r, shadow strength mask .r only, the
+            // specular map into a half3, blur map .r/.g/.b, border mask .r/.g/.b/.rgb/.rgbr, flow textures .xy.
+            { "_DissolveDetailNoise", TextureChannels.R }, { "_FurNoiseMask", TextureChannels.R }, { "_ShadowStrengthMask", TextureChannels.R },
+            { "_HighColor_Tex", TextureChannels.RGB }, { "_MultilayerMathBlurMap", TextureChannels.RGB }, { "_ShadowBorderMask", TextureChannels.RGB },
+            { "_DistortionFlowTexture", TextureChannels.R | TextureChannels.G }, { "_DistortionFlowTexture1", TextureChannels.R | TextureChannels.G },
         };
         // Fields whose only sample site in every Toon 10.0.22 entry is tex[<channel property>]: one channel
         // chosen by a material value (0-3 = R, G, B, A).
@@ -90,14 +95,111 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static TextureChannels NineChannelsRead(Material material, string property) =>
             material.shader.name.IndexOf("Poiyomi Toon", StringComparison.Ordinal) >= 0 && NineToonChannels.TryGetValue(property, out var read) ? read : TextureChannels.All;
 
+        // Checked on all seven Toon 10.0.23 entries: fields read at channels several material values pick. Raw: tex[<selector>]
+        // (0-3, anything else undefined). Clamped: tex[min(<selector>, 3)]. Guarded: read only while the selector is below 4.
+        private static readonly Dictionary<string, string[]> RawSelectors = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            { "_AnisotropyMap", new[] { "_AnisotropyMapChannel" } },
+            { "_MatcapMask", new[] { "_MatcapMaskChannel", "_MatcapMaskSmoothnessChannel" } },
+            { "_Matcap2Mask", new[] { "_Matcap2MaskChannel", "_Matcap2MaskSmoothnessChannel" } },
+            { "_Matcap3Mask", new[] { "_Matcap3MaskChannel", "_Matcap3MaskSmoothnessChannel" } },
+            { "_Matcap4Mask", new[] { "_Matcap4MaskChannel", "_Matcap4MaskSmoothnessChannel" } },
+            { "_OutlineMask", new[] { "_OutlineMaskChannel", "_OutlineZOffsetChannel" } },
+            { "_PPMask", new[] { "_PPMaskChannel", "_PPHueOffsetMask" } },
+            { "_FurMask", new[] { "_FurAlphaChannel", "_FurLengthChannel" } },
+        };
+        private static readonly Dictionary<string, string[]> ClampedSelectors = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            { "_MochieMetallicMaps", new[] { "_MochieMetallicMapsMetallicChannel", "_MochieMetallicMapsRoughnessChannel", "_MochieMetallicMapsReflectionMaskChannel", "_MochieMetallicMapsSpecularMaskChannel" } },
+            { "_ClearCoatMaps", new[] { "_ClearCoatMapsClearCoatMaskChannel", "_ClearCoatMapsRoughnessChannel", "_ClearCoatMapsReflectionMaskChannel", "_ClearCoatMapsSpecularMaskChannel" } },
+        };
+        private static readonly Dictionary<string, string[]> GuardedSelectors = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            // decalMask = channel > 3 ? 1 : mask; then mask[min(channel, 3)], per decal 0-3.
+            { "_DecalMask", new[] { "_Decal0MaskChannel", "_Decal1MaskChannel", "_Decal2MaskChannel", "_Decal3MaskChannel" } },
+            { "_GrabPassBlendMap", new[] { "_GrabRefractionMaskChannel", "_GrabBlurMaskChannel", "_GrabColorMaskChannel", "_GrabAlphaMaskChannel", "_GrabPixelMaskChannel", "_GrabRampMaskChannel" } },
+        };
+        // lerp(1, tex.<c>, strength) per channel: with strength 0 the channel's value makes no difference.
+        private static readonly Dictionary<string, string[]> WeightedChannels = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            { "_LightingAOMaps", new[] { "_LightDataAOStrength" } },
+            { "_LightingDetailShadowMaps", new[] { "_LightingDetailShadowStrength", "_LightingAddDetailShadowStrength" } },
+            { "_LightingShadowMasks", new[] { "_LightingShadowMaskStrength" } },
+            // poiSampleMask: r * strength.x, then lerp(mask, blend(mask, g/b/a), strength.y/z/w).
+            { "_AlphaMask", new[] { "_AlphaMask" } },
+        };
+
+        private static TextureChannels Pick(Material material, string selector, bool clamped, bool guarded)
+        {
+            if (!material.HasProperty(selector)) return TextureChannels.All;
+            float value = Number(material, selector);
+            if (guarded && value >= 4) return 0;
+            if (value != Mathf.Floor(value) || value < 0) return TextureChannels.All;
+            if (value > 3) return clamped || guarded ? TextureChannels.A : TextureChannels.All;
+            return ChannelOf(value);
+        }
+
+        // A switch that counts as on when the material doesn't have it (a version without it is not assumed to skip the read).
+        private static bool Toggle(Material material, string property) => !material.HasProperty(property) || Number(material, property) != 0;
+
+        private static TextureChannels Weighted(Material material, string prefix)
+        {
+            TextureChannels read = 0;
+            foreach (var (suffix, channel) in new[] { ("R", TextureChannels.R), ("G", TextureChannels.G), ("B", TextureChannels.B), ("A", TextureChannels.A) })
+                if (!material.HasProperty(prefix + suffix) || Number(material, prefix + suffix) != 0) read |= channel;
+            return read;
+        }
+
         private static TextureChannels ToonChannelsRead(Material material, string property)
         {
             if (ToonChannels.TryGetValue(property, out var fixedRead)) return fixedRead;
+            if (RawSelectors.TryGetValue(property, out var raw)) return raw.Aggregate((TextureChannels)0, (read, s) => read | Pick(material, s, false, false));
+            if (ClampedSelectors.TryGetValue(property, out var clamped)) return clamped.Aggregate((TextureChannels)0, (read, s) => read | Pick(material, s, true, false));
+            if (GuardedSelectors.TryGetValue(property, out var guarded)) return guarded.Aggregate((TextureChannels)0, (read, s) => read | Pick(material, s, false, true));
+            if (WeightedChannels.TryGetValue(property, out var weights)) return weights.Aggregate((TextureChannels)0, (read, p) => read | Weighted(material, p));
+            // Vertex effects index an eight-entry array: texture R, G, B, A, then vertex colour R, G, B, A (no texture read).
+            if (property == "_VertexBasicsMask")
+            {
+                TextureChannels read = 0;
+                foreach (string basics in new[] { "_VertexBasicsMaskChannel", "_VertexManipulationHeightMaskChannel", "_VertexBarrelMaskChannel",
+                    "_VertexSphereMaskChannel", "_VertexTornadoMaskChannel", "_VertexWindMaskChannel", "_VertexRoundingMaskChannel" })
+                {
+                    if (!material.HasProperty(basics)) return TextureChannels.All;
+                    float value = Number(material, basics);
+                    if (value != Mathf.Floor(value) || value < 0 || value > 7) return TextureChannels.All;
+                    if (value <= 3) read |= ChannelOf(value);
+                }
+                return read;
+            }
+            // Cloth map: G always (cloth mask); R times _ClothMetallic, B times _ClothReflectance, A times _ClothSmoothness.
+            if (property == "_ClothMetallicSmoothnessMap")
+                return TextureChannels.G | (Toggle(material, "_ClothMetallic") ? TextureChannels.R : 0) |
+                    (Toggle(material, "_ClothReflectance") ? TextureChannels.B : 0) | (Toggle(material, "_ClothSmoothness") ? TextureChannels.A : 0);
+            // Look-at mask: each channel only in its own enabled branch, scaled by that colour's alpha.
+            if (property == "_LookAtMask")
+            {
+                TextureChannels read = 0;
+                foreach (var (color, channel) in new[] { ("Red", TextureChannels.R), ("Green", TextureChannels.G), ("Blue", TextureChannels.B), ("Alpha", TextureChannels.A) })
+                    if ((!material.HasProperty("_LookAt" + color + "MaskEnabled") || Number(material, "_LookAt" + color + "MaskEnabled") >= 0.5f) &&
+                        Toggle(material, "_LookAt" + color + "Alpha")) read |= channel;
+                return read;
+            }
+            // Rim masks: tex[<channel>] plus .a as the bias.
+            if (property == "_RimMask" || property == "_Rim2Mask")
+                return TextureChannels.A | Pick(material, property == "_RimMask" ? "_RimMaskChannel" : "_Rim2MaskChannel", false, false);
+            // Shade maps: .rgb always; .a as a shadow mask when its toggle is on. The second map becomes lerp(second, first,
+            // _Use_1stAs2nd), so the first map's alpha also reaches the second's shadow mask.
+            if (property == "_1st_ShadeMap")
+                return TextureChannels.RGB | (Toggle(material, "_Use_1stShadeMapAlpha_As_ShadowMask") ||
+                    Toggle(material, "_Use_1stAs2nd") && Toggle(material, "_Use_2ndShadeMapAlpha_As_ShadowMask") ? TextureChannels.A : 0);
+            if (property == "_2nd_ShadeMap")
+                return TextureChannels.RGB | (Toggle(material, "_Use_2ndShadeMapAlpha_As_ShadowMask") ? TextureChannels.A : 0);
             if (SelectedChannel.TryGetValue(property, out string selector))
                 return material.HasProperty(selector) ? ChannelOf(Number(material, selector)) : TextureChannels.All;
             // Every main-texture read is followed by mainTexture.a = max(mainTexture.a, _MainIgnoreTexAlpha), so the
             // texture's alpha is never used once Ignore Main Texture Alpha is 1 or more. (The video-pixelate resample
             // skips that line; it is already unsupported above.)
+            if (property == "_MainTex" && ShaderAdapterRegistry.FallbackReadsAlpha(material)) return TextureChannels.All;
             if (property == "_MainTex" && material.HasProperty("_MainIgnoreTexAlpha") && Number(material, "_MainIgnoreTexAlpha") >= 1)
                 return TextureChannels.RGB;
             if (property == "_MainTex" && ForcedOpaque(material)) return TextureChannels.RGB;

@@ -20,14 +20,52 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Copies float curves onto further bindings in the same clip; the map returns the bindings to copy to (or null).
         internal abstract void Copy(Func<Transform, EditorCurveBinding, IEnumerable<EditorCurveBinding>> map);
 
+        // Transform paths the layers' Avatar Masks name, with the transform they are relative to.
+        internal abstract IEnumerable<(Transform Owner, string Path)> MaskPaths();
+
+        // Renames Avatar Mask transform entries; the map returns the new path, or null to drop the entry.
+        internal abstract void RewriteMasks(Func<Transform, string, string> map);
+
         internal static AnimationRewriter For(BuildContext context) => new Ndmf(context);
-        internal static AnimationRewriter For(IEnumerable<(Transform Owner, AnimationClip Clip)> clips) => new Clips(clips.ToList());
+        internal static AnimationRewriter For(IEnumerable<(Transform Owner, AnimationClip Clip)> clips, IEnumerable<(Transform Owner, AvatarMask Mask)> masks = null) =>
+            new Clips(clips.ToList()) { Masks = masks?.ToList() ?? new List<(Transform, AvatarMask)>() };
 
         // Every clip reachable from the controllers NDMF knows (platform marker clips excepted).
         private sealed class Ndmf : AnimationRewriter
         {
             private readonly BuildContext context;
             internal Ndmf(BuildContext context) { this.context = context; }
+
+            private Transform Owner(object key) => key is Animator animator && animator ? animator.transform : context.AvatarRootObject.transform;
+
+            internal override IEnumerable<(Transform Owner, string Path)> MaskPaths()
+            {
+                var controllers = context.ActivateExtensionContext<VirtualControllerContext>();
+                try
+                {
+                    return controllers.Controllers.Where(e => e.Value != null).SelectMany(e => e.Value.Layers
+                        .Where(l => l.AvatarMask != null).SelectMany(l => l.AvatarMask.Elements.Keys.Select(k => (Owner(e.Key), k)))).ToList();
+                }
+                finally { ControllerCommit.Preserving(context.AvatarRootObject, () => context.DeactivateExtensionContext<VirtualControllerContext>()); }
+            }
+
+            internal override void RewriteMasks(Func<Transform, string, string> map)
+            {
+                var controllers = context.ActivateExtensionContext<VirtualControllerContext>();
+                try
+                {
+                    var done = new HashSet<VirtualAvatarMask>();
+                    foreach (var entry in controllers.Controllers.Where(e => e.Value != null))
+                        foreach (var mask in entry.Value.Layers.Select(l => l.AvatarMask).Where(m => m != null && done.Add(m)))
+                        {
+                            var elements = System.Collections.Immutable.ImmutableDictionary<string, float>.Empty.ToBuilder();
+                            foreach (var element in mask.Elements)
+                                if (map(Owner(entry.Key), element.Key) is string path) elements[path] = element.Value;
+                            mask.Elements = elements.ToImmutable();
+                        }
+                }
+                finally { ControllerCommit.Preserving(context.AvatarRootObject, () => context.DeactivateExtensionContext<VirtualControllerContext>()); }
+            }
 
             internal override void RewriteValues(Func<UnityEngine.Object, UnityEngine.Object> map)
             {
@@ -97,6 +135,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             private readonly List<(Transform Owner, AnimationClip Clip)> clips;
             internal Clips(List<(Transform, AnimationClip)> clips) { this.clips = clips; }
+            internal List<(Transform Owner, AvatarMask Mask)> Masks = new List<(Transform, AvatarMask)>();
+
+            internal override IEnumerable<(Transform Owner, string Path)> MaskPaths() =>
+                Masks.SelectMany(m => Enumerable.Range(0, m.Mask.transformCount).Select(i => (m.Owner, m.Mask.GetTransformPath(i)))).ToList();
+
+            internal override void RewriteMasks(Func<Transform, string, string> map)
+            {
+                foreach (var (owner, mask) in Masks)
+                {
+                    var elements = Enumerable.Range(0, mask.transformCount)
+                        .Select(i => (Path: map(owner, mask.GetTransformPath(i)), Active: mask.GetTransformActive(i))).Where(e => e.Path != null).ToList();
+                    mask.transformCount = elements.Count;
+                    for (int i = 0; i < elements.Count; i++) { mask.SetTransformPath(i, elements[i].Path); mask.SetTransformActive(i, elements[i].Active); }
+                }
+            }
 
             internal override void RewriteValues(Func<UnityEngine.Object, UnityEngine.Object> map)
             {

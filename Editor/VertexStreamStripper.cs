@@ -94,6 +94,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var mesh in users.Keys)
                 if (analysis.ReferencesTo(mesh).Any(c => !(c is MeshFilter) && !(c is SkinnedMeshRenderer))) blocked.Add(mesh);
             foreach (var pair in users) if (pair.Value.Any(Exclusions.Excluded)) blocked.Add(pair.Key);
+            // A property block can switch on a feature (and the inputs it reads) the material stores as off.
+            foreach (var pair in users) if (pair.Value.Any(TextureUsageScanner.HasPropertyBlock)) blocked.Add(pair.Key);
             // A particle shape that names the renderer emits from its mesh (positions, normals, colours, UVs), whatever the materials read.
             foreach (var pair in users) if (pair.Value.Any(r => analysis.ReferencesTo(r).Any(c => c is ParticleSystem))) blocked.Add(pair.Key);
 
@@ -140,6 +142,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (attribute == VertexAttribute.Tangent && material.HasProperty("_BumpMap") &&
                 (material.GetTexture("_BumpMap") || animated("_BumpMap"))) return true;
             if (attribute == VertexAttribute.Color && ParticleOrSpriteFallback(material)) return true;
+            // A Toon Standard fallback reads COLOR when its copied _VertexColor is on (ToonStandard VertexFragment.cginc).
+            if (attribute == VertexAttribute.Color && material.GetTag("VRCFallback", false, "").IndexOf("toonstandard", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
             // The lilToon rules rely on a stripped channel reading as Unity's default, verified on Direct3D 11 only. On Android
             // (where lilToon cannot be uploaded anyway) only channels no compiled pass declares are removed.
             if (!Android && IsAuditedLilToon(shader, out bool outline))
@@ -191,6 +196,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // instancing and stereo rendering).
         // Keyword sets the Built-in pipeline turns on together in VRChat (forward base and add lights with shadows, probes,
         // vertex lights and fog), for uniforms a shader declares only when two of them are on.
+        // Extra keyword sets to compile with the material's own keywords so every variant a world or the lighting can pick is seen:
+        // none, each global keyword alone, and VRChat's lighting sets (all globals at once is left out: exclusive light keywords
+        // together fail to compile in some shaders, and that compile logs an error). clean turns false when the shader's keyword
+        // space could not be read (the Built-in pipeline's globals are used alone).
+        internal static string[][] VariantSets(Shader shader, ref bool clean)
+        {
+            string[] globals;
+            try { globals = shader.keywordSpace.keywords.Where(k => k.isOverridable).Select(k => k.name).Union(BuiltInGlobals).ToArray(); }
+            catch (Exception) { globals = BuiltInGlobals; clean = false; }
+            return new[] { new string[0] }.Concat(globals.Select(g => new[] { g })).Concat(LightingSets).ToArray();
+        }
+
         private static readonly string[][] LightingSets =
         {
             new[] { "DIRECTIONAL", "LIGHTPROBE_SH" }, new[] { "DIRECTIONAL", "SHADOWS_SCREEN" }, new[] { "DIRECTIONAL", "LIGHTPROBE_SH", "SHADOWS_SCREEN" },

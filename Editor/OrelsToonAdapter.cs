@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
@@ -44,7 +45,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             switch (property)
             {
                 case "_MainTex":
-                    return Result(TextureSemantics.Color, Opaque.Contains(material.shader.name) ? TextureChannels.RGB : TextureChannels.All,
+                    return Result(TextureSemantics.Color,
+                        Opaque.Contains(material.shader.name) && !ShaderAdapterRegistry.FallbackReadsAlpha(material) ? TextureChannels.RGB : TextureChannels.All,
                         global, null);
                 case "_AlphaTex": return Result(TextureSemantics.Data, TextureChannels.R, global, Main(material));
                 case "_EmissionMap":
@@ -55,7 +57,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         v2 ? Channel(material, property == "_OcclusionMap" ? "_OcclusionChannel" : "_OcclusionDetailChannel") : TextureChannels.R,
                         Main(material));
                 case "_SpecularMap":
-                    return Tiled(material, "_Specular", global, TextureSemantics.Data, v2 ? TextureChannels.All : TextureChannels.RGB, Main(material));
+                    // v2 Specular.orlsource 98-100: each of three selectors reads specMap[min(c, 3)] unless it is above 3.
+                    return Tiled(material, "_Specular", global, TextureSemantics.Data,
+                        v2 ? Union(material, true, "_SpecIntensityChannel", "_SpecRoughnessChannel", "_SpecAlbedoTintChannel") : TextureChannels.RGB, Main(material));
                 case "_SpecularMask":
                     return Tiled(material, "_SpecularMask", global, TextureSemantics.Data,
                         v2 ? Channel(material, "_SpecularMaskChannel") : TextureChannels.R, Main(material));
@@ -90,10 +94,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         return Result(TextureSemantics.Data, TextureChannels.R | TextureChannels.A, Own(material, property, 0), Main(material));
                     case "_ReflectionMask":
                         return OwnSet(material, property, "_ReflectionMaskUVSet", TextureSemantics.Data, Channel(material, "_ReflectionMaskChannel"), Main(material));
-                    case "_DecalsMask": case "_MatcapsMask":
-                        return OwnSet(material, property, property + "UVSet", TextureSemantics.Data, TextureChannels.All, Main(material));
+                    // Decals.orlsource 322 (maskTexture[maskChannel] per decal), Matcaps.orlsource 262-301 and Normals.orlsource
+                    // 198-240 (mask[<layer's channel>]): the union of the four layers' selectors.
+                    // A layer's channel matters only while its mask strength (lerp(1, mask, strength)) and, for matcaps, its strength
+                    // (the product with _MatcapNStrength) are not 0.
+                    case "_DecalsMask":
+                        return OwnSet(material, property, property + "UVSet", TextureSemantics.Data, LiveLayers(material, i => "_Decal" + i, "_Decal{0}MaskStrength"), Main(material));
+                    case "_MatcapsMask":
+                        return OwnSet(material, property, property + "UVSet", TextureSemantics.Data,
+                            LiveLayers(material, i => "_Matcap" + i, "_Matcap{0}MaskStrength", "_Matcap{0}Strength"), Main(material));
                     case "_DetailNormalsMask":
-                        return OwnSet(material, property, "_DetailNormalsMaskUVSet", TextureSemantics.Data, TextureChannels.All, Bump(material));
+                        return OwnSet(material, property, "_DetailNormalsMaskUVSet", TextureSemantics.Data,
+                            LiveLayers(material, i => "_DetailNormals" + i, "_DetailNormals{0}MaskStrength"), Bump(material));
                     case "_DetailNormals0Map": case "_DetailNormals1Map": case "_DetailNormals2Map": case "_DetailNormals3Map":
                         return OwnSet(material, property, property.Replace("Map", "UVSet"), TextureSemantics.Normal, TextureChannels.All, Bump(material));
                 }
@@ -160,6 +172,31 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 case 3: return TextureChannels.A;
                 default: return TextureChannels.All;
             }
+        }
+
+        // The union of the four layers' mask channels, leaving out a layer whose strengths make the mask value irrelevant.
+        private static TextureChannels LiveLayers(Material material, Func<int, string> prefix, params string[] strengths)
+        {
+            var selectors = new List<string>();
+            for (int i = 0; i < 4; i++)
+            {
+                bool live = strengths.All(s => { string p = string.Format(s, i); return !material.HasProperty(p) || MaterialInputs.Float(material, p) != 0; });
+                if (live) selectors.Add(prefix(i) + "MaskChannel");
+            }
+            return Union(material, false, selectors.ToArray());
+        }
+
+        // The channels several selectors pick together. skipAbove3: a value above 3 reads nothing (it stands for None).
+        private static TextureChannels Union(Material material, bool skipAbove3, params string[] selectors)
+        {
+            TextureChannels read = 0;
+            foreach (string selector in selectors)
+            {
+                if (!material.HasProperty(selector)) return TextureChannels.All;
+                if (skipAbove3 && MaterialInputs.Float(material, selector) > 3) continue;
+                read |= Channel(material, selector);
+            }
+            return read;
         }
 
         // [Enum(RGB,0,R,1,G,2,B,3,A,4)] selectors.

@@ -38,7 +38,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Severity = kind.Severity, Key = "menus|" + group.Key, Target = group.First().Menu,
                     Title = kind.Title(places.Count),
                     Detail = kind.Detail + ":\n" + string.Join("\n", places.Take(8).Select(p => "• " + p)) + (places.Count > 8 ? "\n• and " + (places.Count - 8) + " more" : ""),
-                    Fix = kind.Fix
+                    Fix = kind.Fix,
+                    Identity = string.Join("\n", places)
                 });
             }
             int bits = SyncedBits(avatar);
@@ -81,14 +82,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 var state = Enter(machine);
                 if (!state) continue;
                 // One step on: an Any State or state transition that fires (an exit goes back through Entry).
-                var next = machine.anyStateTransitions.Concat(state.transitions).FirstOrDefault(t => Fires(t) && (t.destinationState || t.isExit));
+                // Unity ignores a state or Any State transition with no conditions and no exit time.
+                var next = machine.anyStateTransitions.Concat(state.transitions)
+                    .FirstOrDefault(t => Fires(t) && !Ignored(t) && (t.destinationState || t.isExit));
                 if (next) state = next.isExit ? Enter(machine) : next.destinationState;
                 if (!state || !(state.motion is AnimationClip clip)) continue;
                 foreach (var binding in AnimationUtility.GetCurveBindings(clip).Where(b => b.type == typeof(GameObject) && b.propertyName == "m_IsActive"))
                 {
                     var target = binding.path.Length == 0 ? null : avatar.Root.transform.Find(binding.path);
                     var curve = AnimationUtility.GetEditorCurve(clip, binding);
-                    if (target && curve != null && curve.length > 0) starts[target.gameObject] = (curve.keys[0].value >= .5f, layers[i].name);
+                    // Only a constant curve says how the object sits: one that changes over the clip (a blink, a fade) doesn't.
+                    if (target && curve != null && curve.length > 0 && curve.keys.All(k => k.value >= .5f == curve.keys[0].value >= .5f))
+                        starts[target.gameObject] = (curve.keys[0].value >= .5f, layers[i].name);
                 }
             }
             var different = starts.Where(s => s.Key.activeSelf != s.Value.On).OrderBy(s => s.Key.name, StringComparer.Ordinal).ToList();
@@ -101,9 +106,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     string.Join("\n", different.Take(8).Select(s => "• " + s.Key.name + ": " + (s.Value.On ? "on" : "off") + " in game, " + (s.Value.On ? "off" : "on") + " in the scene (layer \"" + s.Value.Layer + "\")")) +
                     (different.Count > 8 ? "\n• and " + (different.Count - 8) + " more" : "") +
                     (avatar.Expressions.Any(e => e.Saved) ? "\nToggles set to Saved start from your last choice instead, so for those this only applies the first time." : ""),
-                Fix = "Decide which is right. To match the game, turn the object on or off in the scene. To match the scene, change the parameter's default in Expression Parameters."
+                Fix = "Decide which is right. To match the game, turn the object on or off in the scene. To match the scene, change the parameter's default in Expression Parameters.",
+                Identity = string.Join("\n", different.Select(s => AnimationUtility.CalculateTransformPath(s.Key.transform, avatar.Root.transform) + " " + s.Value.On))
             });
         }
+
+        // A state or Any State transition Unity never takes ("needs at least one condition or an Exit Time to be valid").
+        internal static bool Ignored(AnimatorStateTransition transition) =>
+            transition && !transition.mute && !transition.hasExitTime && transition.conditions.Length == 0;
 
         private static bool Holds(AnimatorCondition condition, Dictionary<string, float> values)
         {

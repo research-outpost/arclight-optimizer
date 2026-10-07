@@ -88,14 +88,24 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             AutomaticTextureOptimizer.EnsureFolder(Folder);
             string safeName = new string(Path.GetFileNameWithoutExtension(path).Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_').Take(36).ToArray());
             string output = Folder + "/" + safeName + "_" + hash.Substring(0, 12) + "_mono.wav";
-            string userData = "ArclightMono:" + hash;
-            if (File.Exists(output) && AssetImporter.GetAtPath(output) is AudioImporter cached && cached.userData == userData)
+            string marker = "ArclightMono:" + hash;
+            if (File.Exists(output))
             {
+                // Only a file of ours is reused or replaced: anything else at this path is left alone.
+                if (!IsGenerated(output)) return null;
+                // Reused only while its audio is the bytes written (hash in the marker), its import settings still match the
+                // source's, and it decodes to the source's rate and length.
+                var cached = (AudioImporter)AssetImporter.GetAtPath(output);
                 var reused = AssetDatabase.LoadAssetAtPath<AudioClip>(output);
-                if (reused && reused.channels == 1) { MarkUsed(output); return reused; }
+                if (cached.userData == marker + ":" + FingerprintService.FileHash(output) && SameSettings(cached, importer) &&
+                    reused && reused.channels == 1 && reused.frequency == clip.frequency && reused.samples == clip.samples)
+                {
+                    MarkUsed(output);
+                    return reused;
+                }
             }
 
-            var samples = DecodedSamples(path, hash, out int frequency);
+            var samples = DecodedSamples(path, out int frequency);
             if (samples == null) return null;
             int frames = samples.Length / 2;
             var mono = new float[frames];
@@ -108,11 +118,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 mono[i] = boosted;
             }
 
-            string copiedMeta = CopiedAudioMeta(meta, userData);
+            var wav = FloatWav(mono, frequency);
+            string copiedMeta = CopiedAudioMeta(meta, marker + ":" + FingerprintService.Hash(wav));
             if (copiedMeta == null) return null;
-            if (File.Exists(output)) AssetDatabase.DeleteAsset(output); // A stale generated copy of ours.
+            if (File.Exists(output)) AssetDatabase.DeleteAsset(output); // A stale generated copy of ours (checked above).
             File.WriteAllText(output + ".meta", copiedMeta); // Before the audio, so it is never imported with defaults.
-            File.WriteAllBytes(output, FloatWav(mono, frequency));
+            File.WriteAllBytes(output, wav);
             AssetDatabase.ImportAsset(output, ImportAssetOptions.ForceSynchronousImport);
             var result = AssetDatabase.LoadAssetAtPath<AudioClip>(output);
             if (!result || result.channels != 1 || result.frequency != clip.frequency || result.samples != clip.samples)
@@ -126,10 +137,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // The source's samples as Unity decodes them, read from a temporary uncompressed copy (the source and its
         // importer are never changed).
-        private static float[] DecodedSamples(string path, string hash, out int frequency)
+        private static float[] DecodedSamples(string path, out int frequency)
         {
             frequency = 0;
-            string temp = Folder + "/" + hash.Substring(0, 12) + "_decode" + Path.GetExtension(path);
+            // A fresh name each time, so the cleanup below only ever deletes this call's own copy.
+            string temp = Folder + "/" + Guid.NewGuid().ToString("N") + "_decode" + Path.GetExtension(path);
             try
             {
                 File.Copy(LongPath.For(path), temp, true);
@@ -205,6 +217,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var usage = LoadUsage();
             usage[path] = CacheCleanup.Today;
             SaveUsage(usage);
+        }
+
+        // The copy imports with the source's .meta, so its settings match the source's until someone edits either.
+        private static bool SameSettings(AudioImporter a, AudioImporter b)
+        {
+            if (a.forceToMono != b.forceToMono || a.loadInBackground != b.loadInBackground || a.ambisonic != b.ambisonic ||
+                !a.defaultSampleSettings.Equals(b.defaultSampleSettings)) return false;
+            foreach (string platform in new[] { "Standalone", "Android" })
+                if (a.ContainsSampleSettingsOverride(platform) != b.ContainsSampleSettingsOverride(platform) ||
+                    !a.GetOverrideSampleSettings(platform).Equals(b.GetOverrideSampleSettings(platform))) return false;
+            return true;
         }
 
         internal static bool IsGenerated(string path) =>

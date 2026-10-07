@@ -35,6 +35,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var mesh = renderer.sharedMesh;
                 if (mesh.blendShapeCount < 2 || swaps.Contains(mesh) || renderers.Count(r => r.sharedMesh == mesh) != 1 || Exclusions.Excluded(renderer)) continue;
+                // A mesh swap whose idle state writes nothing leaves the current mesh out of the swapped values.
+                if (analysis.IsAnimated(renderer, p => p == "m_Mesh")) continue;
                 if (analysis.ReferencesTo(mesh).Any(c => c != renderer) || renderer.GetComponent<Cloth>()) continue;
                 if (analysis.ReferencesTo(renderer).Any(c => c.GetType().Name != "VRCAvatarDescriptor")) continue;
                 var bindings = analysis.BindingsOn(renderer, p => p.StartsWith("blendShape.", StringComparison.Ordinal)).ToList();

@@ -133,6 +133,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             value.Replace(" ", "").Replace("_", "").Replace("-", "")
                 .IndexOf("matcap", System.StringComparison.OrdinalIgnoreCase) >= 0;
 
+        // VRChat's shader fallback (what others see with shaders blocked) reads main alpha when the fallback tag, or the
+        // shader name when there is no tag, asks for cutout or transparency.
+        internal static bool FallbackReadsAlpha(Material material)
+        {
+            string fallback = material.GetTag("VRCFallback", false, "") + " " + material.shader.name;
+            return System.Array.Exists(new[] { "Cutout", "Transparent", "Fade" },
+                mode => fallback.IndexOf(mode, System.StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
         internal static SamplingDescription Unsupported(string id, string reason) =>
             new SamplingDescription { AdapterId = id, Reason = reason };
 
@@ -220,8 +229,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         public SamplingDescription Describe(Material material, string property)
         {
-            if (material.IsKeywordEnabled("_PARALLAXMAP") || material.GetTexture("_ParallaxMap"))
+            // Parallax is the _PARALLAXMAP shader_feature; without it no variant declares a parallax lookup.
+            if (material.IsKeywordEnabled("_PARALLAXMAP"))
                 return ShaderAdapterRegistry.Unsupported(Id, "Standard parallax offsets every texture lookup by view direction; original retained.");
+            if (property == "_ParallaxMap")
+                return new SamplingDescription { AdapterId = Id, Supported = true, NotSampled = true,
+                    Reason = "Standard reads the height map only with the _PARALLAXMAP keyword." };
             SamplingDescription result;
             if (MainUvFields.TryGetValue(property, out var semantics))
                 result = ShaderAdapterRegistry.UvPath(Id, semantics, 0, material, "_MainTex", croppable: true);
@@ -244,14 +257,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 case "_MainTex":
                     return albedoSmoothness || material.IsKeywordEnabled("_ALPHATEST_ON") || material.IsKeywordEnabled("_ALPHABLEND_ON") ||
-                        material.IsKeywordEnabled("_ALPHAPREMULTIPLY_ON") ? TextureChannels.All : TextureChannels.RGB;
-                case "_MetallicGlossMap": return albedoSmoothness ? TextureChannels.R : TextureChannels.R | TextureChannels.A;
-                case "_SpecGlossMap": return albedoSmoothness ? TextureChannels.RGB : TextureChannels.All;
+                        material.IsKeywordEnabled("_ALPHAPREMULTIPLY_ON") || ShaderAdapterRegistry.FallbackReadsAlpha(material) ? TextureChannels.All : TextureChannels.RGB;
+                // Gloss alpha is multiplied by _GlossMapScale, so a zero scale reads nothing from it.
+                case "_MetallicGlossMap": return albedoSmoothness || GlossScaleZero(material) ? TextureChannels.R : TextureChannels.R | TextureChannels.A;
+                case "_SpecGlossMap": return albedoSmoothness || GlossScaleZero(material) ? TextureChannels.RGB : TextureChannels.All;
                 case "_OcclusionMap": return TextureChannels.G;
                 case "_EmissionMap": case "_DetailAlbedoMap": return TextureChannels.RGB;
                 default: return TextureChannels.All; // _DetailMask reads alpha; normal maps keep their format.
             }
         }
+
+        private static bool GlossScaleZero(Material material) =>
+            material.HasProperty("_GlossMapScale") && MaterialInputs.Float(material, "_GlossMapScale") == 0;
     }
 
     internal sealed class KnownUnityShaderAdapter : ITextureSamplingAdapter
@@ -264,7 +281,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             if (property != "_MainTex") return ShaderAdapterRegistry.Unsupported("unity-unlit-v1", "Unverified texture property.");
             var result = ShaderAdapterRegistry.UvPath("unity-unlit-texture-v1", TextureSemantics.Color, 0, material, property, croppable: true);
-            result.Channels = TextureChannels.RGB; // The fragment ends with UNITY_OPAQUE_ALPHA.
+            // The fragment ends with UNITY_OPAQUE_ALPHA.
+            result.Channels = ShaderAdapterRegistry.FallbackReadsAlpha(material) ? TextureChannels.All : TextureChannels.RGB;
             return result;
         }
     }

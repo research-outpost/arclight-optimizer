@@ -20,10 +20,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .Concat(root.GetComponentsInChildren<MeshFilter>(true).Select(f => f.sharedMesh))
                 .Where(m => m && AssetDatabase.GetAssetPath(m).Length == 0));
 
-        internal static int Run(GameObject root, ICollection<Mesh> sourceMeshes = null)
+        // afterD4rk: called from the post-d4rk hook on d4rk's final meshes; only meshes eligible accepts (build-owned assets) are touched.
+        internal static int Run(GameObject root, ICollection<Mesh> sourceMeshes = null, bool afterD4rk = false, System.Func<Mesh, bool> eligible = null)
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode) return 0;
-            if (D4rkOrdering.MayRun(root)) return 0; // d4rk reads these meshes after Arclight.
+            if (!afterD4rk && D4rkOrdering.MayRun(root)) return 0; // d4rk reads these meshes after Arclight.
             var particleMeshes = new HashSet<Mesh>();
             var particleRenderers = new HashSet<Renderer>();
             foreach (var system in root.GetComponentsInChildren<ParticleSystem>(true))
@@ -45,10 +46,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var renderers = root.GetComponentsInChildren<Renderer>(true);
             // A mesh any protected user holds stays readable for every user.
             particleMeshes.UnionWith(renderers.Where(r => particleRenderers.Contains(r) || r.GetComponent<Cloth>() || Exclusions.Excluded(r)).Select(MeshOf).Where(m => m));
+            // A MeshCollider can cook its mesh at runtime (negative scale, non-default cooking options), which needs it readable.
+            particleMeshes.UnionWith(root.GetComponentsInChildren<MeshCollider>(true).Select(c => c.sharedMesh).Where(m => m));
             int count = 0;
             foreach (var mesh in renderers.Select(MeshOf).Where(m => m).Distinct())
             {
-                if (!mesh.isReadable || !BuildOwned(mesh) || particleMeshes.Contains(mesh) || sourceMeshes != null && sourceMeshes.Contains(mesh)) continue;
+                if (!mesh.isReadable || !(eligible != null ? eligible(mesh) : BuildOwned(mesh)) || particleMeshes.Contains(mesh) || sourceMeshes != null && sourceMeshes.Contains(mesh)) continue;
                 using (var serialized = new SerializedObject(mesh))
                 {
                     var readable = serialized.FindProperty("m_IsReadable");

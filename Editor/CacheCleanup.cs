@@ -66,7 +66,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Generated mono clips and texture crops (identified by importer userData) follow the same 30-day rule, using
-        // the last-used record their passes keep. A file with no record yet starts its 30 days now. Leftover temporary
+        // the last-used record their passes keep. A file with no record yet starts its 30 days now, except on a manual clear. Leftover temporary
         // audio decode copies from an interrupted build are removed.
         private static void PrepareTracked(Plan plan, string folder, Func<string, bool> generated, bool decodeCopies)
         {
@@ -76,11 +76,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (string file in Directory.GetFiles(folder).Select(p => p.Replace('\\', '/')).OrderBy(p => p, StringComparer.Ordinal))
             {
                 if (file.EndsWith(".meta", StringComparison.Ordinal)) continue;
-                // AudioMonoConverter names its decode copies by 12 hex digits of the clip hash plus "_decode".
-                bool decode = decodeCopies && System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(file), "^[0-9A-Fa-f]{12}_decode$");
+                // AudioMonoConverter names its decode copies by a GUID (12 hex digits of the clip hash before 1.2.3) plus "_decode".
+                bool decode = decodeCopies && System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(file), "^([0-9A-Fa-f]{12}|[0-9a-f]{32})_decode$");
                 if (!decode && !generated(file)) continue;
-                if (!decode && !usage.TryGetValue(file, out int day)) { usage[file] = plan.Today; recorded = true; continue; }
-                if (!decode && !IsStale(plan, usage[file])) continue;
+                // A manual clear (UnusedDays < 0) removes every generated file, recorded or not.
+                if (!decode && plan.UnusedDays >= 0 && !usage.ContainsKey(file)) { usage[file] = plan.Today; recorded = true; continue; }
+                if (!decode && plan.UnusedDays >= 0 && !IsStale(plan, usage[file])) continue;
                 plan.Assets.Add(file);
                 plan.Bytes += new FileInfo(file).Length;
             }

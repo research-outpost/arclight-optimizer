@@ -1,7 +1,9 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
@@ -93,9 +95,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             // No toggled object, but the one renderer drawing the chain is switched on and off itself (hand-made toggles often
             // animate the renderer instead of its object): while it is off nothing the chain moves is drawn either.
-            if (renderers.Count == 1 && analysis.IsAnimated(renderers.First(), p => p == "m_Enabled") &&
-                Copyable(analysis.BindingsOn(renderers.First(), p => p == "m_Enabled"), physBone)) return renderers.First();
-            return null;
+            // Several renderers count as one when their enabled flags always hold the same value: same starting state and the exact
+            // same curves in the same clips (the skinned merge's toggle signature).
+            var first = renderers.First();
+            if (!renderers.All(r => analysis.IsAnimated(r, p => p == "m_Enabled"))) return null;
+            if (renderers.Count > 1)
+            {
+                string signature = SkinnedMeshMerger.EnabledSignature(first, analysis);
+                if (signature.StartsWith("object:", StringComparison.Ordinal) || renderers.Any(r => SkinnedMeshMerger.EnabledSignature(r, analysis) != signature)) return null;
+            }
+            return Copyable(analysis.BindingsOn(first, p => p == "m_Enabled"), physBone) ? first : null;
         }
 
         // Every toggle curve must reach the copy unchanged: a unique path for the object (the copy skips ambiguous ones) and

@@ -46,6 +46,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (Exclusions.Excluded(physBone) || !UnusedObjectRemover.PhysBoneRoot(physBone).IsChildOf(analysis.Root.transform)) continue;
                 if (UnusedObjectRemover.PhysBoneRoot(physBone).GetComponentsInChildren<Transform>(true).Any(t => owners[t] > 1)) continue;
                 var root = UnusedObjectRemover.PhysBoneRoot(physBone);
+                // An animation that writes the endpoint or the ignore list before the chain starts would see a different chain.
+                if (analysis.IsAnimated(physBone, p => p.StartsWith("endpointPosition", StringComparison.Ordinal) ||
+                    p.StartsWith("ignoreTransforms", StringComparison.Ordinal) || p.StartsWith("rootTransform", StringComparison.Ordinal))) continue;
                 using (var serialized = new SerializedObject(physBone))
                 {
                     var endpoint = serialized.FindProperty("endpointPosition");

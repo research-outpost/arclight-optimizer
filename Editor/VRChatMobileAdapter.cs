@@ -76,14 +76,22 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Diffuse and Standard Lite are opaque surface shaders whose generated output uses UNITY_OPAQUE_ALPHA.
         // Bumped (Mapped) Specular read _MainTex alpha as gloss. Toon Standard compiles no alpha keyword (its
         // shader_feature line is commented out), so GetAlpha returns 1 and main alpha is never read; its masks read
-        // the channel their selector picks. _DetailAlbedoMap (alpha blends detail), _ColorMask (four channels) and
-        // _AudioLinkMask (whole-texel modes) keep every channel.
+        // the channel their selector picks. _DetailAlbedoMap (alpha blends detail) keeps every channel;
+        // _ColorMask and _AudioLinkMask keep the components their settings use.
         private static TextureChannels Channels(Material material, string property)
         {
             switch (FileOf(material.shader))
             {
                 case "ToonStandard/ToonStandard.shader": case "ToonStandard/ToonStandardOutline.shader":
                     if (property == "_MainTex" || property == "_EmissionMap") return TextureChannels.RGB;
+                    // Helpers.cginc ApplyDetailMap: only AlphaBlended (mode 0) reads the detail alpha.
+                    if (property == "_DetailAlbedoMap")
+                    {
+                        int mode = material.HasProperty("_DetailMode") ? Selector(material, "_DetailMode") : -1;
+                        return mode >= 1 && mode <= 3 ? TextureChannels.RGB : TextureChannels.All;
+                    }
+                    if (property == "_AudioLinkMask") return ToonStandardAudioLinkMask(material);
+                    if (property == "_ColorMask") return ToonStandardColorMask(material);
                     if (!ToonStandardSelectedMasks.Contains(property) || !material.HasProperty(property + "Channel")) return TextureChannels.All;
                     int channel = Selector(material, property + "Channel");
                     return channel >= 0 && channel <= 3 ? PoiyomiAdapter.ChannelOf(channel) : TextureChannels.All;
@@ -146,10 +154,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         var main = material.GetTexture("_MainTex");
                         var channels = new[] { Selector(material, "_ALMaskUVChannel"), Selector(material, "_ALEffectUVChannel") };
                         if (channels.Any(channel => channel < 0)) return Unsupported(InvalidSelector);
-                        var paths = channels.Select(channel => Math.Min(channel, 3)).Distinct()
-                            .Select(uv => new SamplingPath { UvChannel = uv, Scale = MaterialInputs.Scale(material, property),
+                        // The vertex stage zero-initializes v2f and never fills uv23 (VertexFragment.cginc; appdata has UV0/UV1
+                        // only), so UV2/UV3 read 0 * _ST.xy + _ST.zw: one constant point at the mask's offset.
+                        var paths = channels.Select(uv => Math.Min(uv, 2)).Distinct()
+                            .Select(uv => new SamplingPath { UvChannel = uv < 2 ? uv : 0,
+                                Scale = uv < 2 ? MaterialInputs.Scale(material, property) : Vector2.zero,
                                 Offset = MaterialInputs.Offset(material, property), SamplerTexture = main, FixedRepeat = !main,
-                                Label = "Toon Standard AudioLink mask UV" + uv }).ToList();
+                                Label = uv < 2 ? "Toon Standard AudioLink mask UV" + uv : "Toon Standard AudioLink mask UV2/UV3 (constant offset)" }).ToList();
                         return new SamplingDescription { AdapterId = Id, Supported = true, Semantics = TextureSemantics.Data, Paths = paths };
                     }
                     if (property == "_OutlineMask" && kind == Kind.ToonStandardOutline)
@@ -166,6 +177,41 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // ShaderLab "Int" properties are stored as floats, "Integer" ones as ints. -1 when the value is not
         // a non-negative whole number.
+        // AudioLinkEffects.cginc: the mask reads .rgb (_ALMaskChannel 0) or one channel (1-4, clamped), unless the emission map
+        // masks instead (_ALMaskByEmission); Scroll mode (1, or any mode through UV-based mode 3) with Use Mask and no centre-out
+        // also reads [clamp(_ALEffectMaskChannel, 0, 3)].
+        private static TextureChannels ToonStandardAudioLinkMask(Material material)
+        {
+            string[] needed = { "_ALMaskByEmission", "_ALMaskChannel", "_AudioLinkMode", "_ALScrollCenterOut", "_ALEffectUseMask", "_ALEffectMaskChannel" };
+            if (needed.Any(p => !material.HasProperty(p) || Selector(material, p) < 0)) return TextureChannels.All;
+            TextureChannels read = 0;
+            if (Selector(material, "_ALMaskByEmission") == 0)
+            {
+                int channel = Selector(material, "_ALMaskChannel");
+                read |= channel == 0 ? TextureChannels.RGB : PoiyomiAdapter.ChannelOf(Math.Min(channel - 1, 3));
+            }
+            int mode = Selector(material, "_AudioLinkMode");
+            if ((mode == 1 || mode > 2) && Selector(material, "_ALScrollCenterOut") == 0 && Selector(material, "_ALEffectUseMask") != 0)
+                read |= PoiyomiAdapter.ChannelOf(Math.Min(Selector(material, "_ALEffectMaskChannel"), 3));
+            return read;
+        }
+
+        // Helpers.cginc ApplyColorMask: component k of the mask scales _ColorMaskColor{k}.a (albedo opacity) and
+        // _ColorMaskColor{k}.rgb * _ColorMaskEmissionStrength{k} (emission). With both zero the component adds exactly nothing.
+        private static TextureChannels ToonStandardColorMask(Material material)
+        {
+            TextureChannels read = 0;
+            for (int k = 1; k <= 4; k++)
+            {
+                string color = "_ColorMaskColor" + k, strength = "_ColorMaskEmissionStrength" + k;
+                if (!material.HasProperty(color) || !material.HasProperty(strength)) return TextureChannels.All;
+                Vector4 value = MaterialInputs.Vector(material, color);
+                if (value.w != 0 || (MaterialInputs.Float(material, strength) != 0 && (value.x != 0 || value.y != 0 || value.z != 0)))
+                    read |= PoiyomiAdapter.ChannelOf(k - 1);
+            }
+            return read;
+        }
+
         private static int Selector(Material material, string property)
         {
             int index = material.shader.FindPropertyIndex(property);

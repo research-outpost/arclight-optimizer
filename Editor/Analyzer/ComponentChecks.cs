@@ -24,7 +24,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Detail = "A script they use is no longer in the project (its package was removed or isn't installed), so those components do nothing:\n" +
                         Bullets(scripts.Select(o => PathOf(avatar, o))),
                     Fix = "If you still need them, install the package they came from. Otherwise remove each empty component in the Inspector.",
-                    Data = new Fixes.Scripts { Objects = scripts }
+                    Data = new Fixes.Scripts { Objects = scripts },
+                    Identity = string.Join("\n", scripts.Select(o => AnimationUtility.CalculateTransformPath(o.transform, avatar.Root.transform)))
                 });
 
             // A reference field that once pointed at something now deleted shows "Missing" in the Inspector: it still holds an id.
@@ -44,6 +45,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         bool external = outside && !EditorUtility.IsPersistent(value) && !outside.IsChildOf(avatar.Root.transform);
                         if (!value && property.objectReferenceInstanceIDValue != 0 || external)
                         {
+                            if (ModularAvatarResolves(avatar, serialized, property)) continue;
                             broken.Add(PathOf(avatar, component.gameObject) + " (" + component.GetType().Name + ", " + property.displayName + (external ? ": \"" + outside.name + "\" outside the avatar" : "") + ")");
                             if (!first) first = component.gameObject;
                             if (!external) missing.Fields.Add((component, property.propertyPath));
@@ -59,6 +61,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         : "These fields show \"Missing\" in the Inspector, or point at an object outside this avatar, which isn't uploaded with it. Whatever they were for is skipped in game:\n") + Bullets(broken),
                     Fix = "Drag the right object or asset from this avatar into each field. If a field is no longer needed, clear it.",
                     Data = missing.Fields.Count > 0 ? missing : null,
+                    Identity = string.Join("\n", broken),
                 });
 
             var parameters = new HashSet<string>(avatar.Playables.SelectMany(p => p.Controller.parameters.Select(q => q.name)), StringComparer.Ordinal);
@@ -79,6 +82,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Title = N(receivers.Count, "contact receiver", "triggers", "trigger") + " nothing",
                     Detail = (receivers.Count == 1 ? "It detects touches, but no animator has the parameter it sets, so nothing happens:\n"
                         : "They detect touches, but no animator has the parameters they set, so nothing happens:\n") + Bullets(receivers),
+                    Identity = string.Join("\n", receivers),
                     Fix = "Add the parameter to the animator that should react (usually FX), fix the name on the receiver, or remove the receiver."
                 });
 
@@ -102,6 +106,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Severity = Severity.TidyUp, Key = "physbones", Target = bone,
                     Title = N(bones.Count, "PhysBone", "has", "have") + " a parameter name nothing uses",
                     Detail = "No animator has any of the parameters " + (bones.Count == 1 ? "it sends" : "they send") + " (the name with _IsGrabbed, _IsPosed, _Angle, _Stretch or _Squish added), so grabbing or posing does nothing extra:\n" + Bullets(bones),
+                    Identity = string.Join("\n", bones),
                     Fix = "Add the parameters you want to react to (for example \"Name_IsGrabbed\") to your FX controller, or clear the Parameter field on the PhysBone."
                 });
         }
@@ -109,10 +114,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         // Inside a VRCFury or Modular Avatar prefab, whose parameters those tools rename and wire up at upload.
         private static bool BuildTool(Avatar avatar, Transform transform)
         {
-            for (; transform && transform != avatar.Root.transform; transform = transform.parent)
+            // The avatar root included: a tool component placed there covers everything under it.
+            for (; transform; transform = transform == avatar.Root.transform ? null : transform.parent)
                 if (transform.GetComponents<Component>().Any(c => c && (c.GetType().Name.Contains("VRCFury") || c.GetType().Namespace?.StartsWith("nadena.dev.modular_avatar", StringComparison.Ordinal) == true)))
                     return true;
             return false;
+        }
+
+        // Modular Avatar's object references (AvatarObjectReference) keep a path next to a cached object, and resolve by the path
+        // when the cached object is stale, so such a field still works while its path finds an object in the avatar.
+        private static bool ModularAvatarResolves(Avatar avatar, SerializedObject serialized, SerializedProperty property)
+        {
+            if (property.name != "targetObject" || !(serialized.targetObject.GetType().Namespace ?? "").StartsWith("nadena.dev.modular_avatar", StringComparison.Ordinal))
+                return false;
+            string owner = property.propertyPath.Substring(0, property.propertyPath.Length - "targetObject".Length);
+            string path = serialized.FindProperty(owner + "referencePath")?.stringValue;
+            if (path == null) return false;
+            return path == "$$$AVATAR_ROOT$$$" || path.Length > 0 && avatar.Root.transform.Find(path);
         }
 
         private static bool EditorOnly(Transform t, Transform root)

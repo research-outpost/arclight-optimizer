@@ -29,6 +29,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         public object Data;
         // The playable layer it is in (FX, Gesture...), or null.
         public string Playable;
+        // Everything the card lists, untruncated (Detail shows the first few): what Ignore remembers. Null when Detail lists it all.
+        public string Identity;
     }
 
     // Arclight Analyzer: reads a VRChat avatar and reports setup mistakes. It never changes the avatar. The VRChat SDK is not
@@ -201,7 +203,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         }
 
         // Problems judged on the uploaded version: tools that run at upload often fix them (Modular Avatar, VRCFury).
-        internal static bool Breakage(Finding f) => new[] { "missing|", "menu|", "menus|", "menuvalue", "budget", "puppet|", "ft|" }.Any(p => f.Key.StartsWith(p, StringComparison.Ordinal));
+        internal static bool Breakage(Finding f) => new[] { "missing|", "menu|", "menus|", "menuvalue", "budget", "puppet|", "ft|", "control|" }.Any(p => f.Key.StartsWith(p, StringComparison.Ordinal));
 
         // True while CheckBuilt runs the upload steps, so the upload report (UploadReport) stays quiet for that copy.
         internal static bool Building { get; private set; }
@@ -249,9 +251,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             {
                 MissingParameters(avatar, playable, findings);
                 AnimationTargets(avatar, playable, findings);
-                if (!built) { WriteDefaults(playable, findings); DeadLayers(avatar, playable, findings); MaskedMoves(playable, findings); DeadStates(playable, findings); }
+                if (!built) { WriteDefaults(playable, findings); DeadLayers(avatar, playable, findings); DeadStates(playable, findings); }
             }
             DriverTargets(avatar, findings);
+            if (avatar.Playables.Count > 0) LayerControls(avatar, findings);
             MenuStructure(avatar, findings);
             if (!built) { StartStates(avatar, findings); Components(avatar, findings, laterNames); }
             ExpressionsAndMenu(avatar, findings, built, laterNames);
@@ -318,8 +321,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
 
             // One card per controller, a line per way of reading, so a template missing many parameters stays short.
             var expressionNames = new HashSet<string>(avatar.Expressions.Select(e => e.Name), StringComparer.Ordinal);
-            // The type to add: the Expression Parameter's when there is one, else what the read implies.
-            AnimatorControllerParameterType TypeOf(string name, AnimatorControllerParameterType implied) => avatar.Expressions.FirstOrDefault(e => e.Name == name)?.Type ?? implied;
+            // The type to add. Blend tree weights and inputs and state speed/time read a Float only, whatever the Expression Parameter is
+            // (VRChat converts it); a condition takes the Expression Parameter's type when there is one, else what the read implies.
+            AnimatorControllerParameterType TypeOf(string name, AnimatorControllerParameterType implied) =>
+                reads[name].How != "condition" ? implied : avatar.Expressions.FirstOrDefault(e => e.Name == name)?.Type ?? implied;
             if (reads.Count == 0) return;
             var all = reads.OrderBy(p => Rank(p.Value.How)).ThenBy(p => p.Key, StringComparer.Ordinal).ToList();
             var lines = new List<string>();
@@ -349,7 +354,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 Fix = "Open the " + playable.Name + " controller, go to its Parameters tab and add " + string.Join(", ", all.Take(20).Select(p => "\"" + p.Key + "\" (" + TypeOf(p.Key, p.Value.Type) + ")")) +
                     (all.Count > 20 ? " and " + (all.Count - 20) + " more" : "") + ". If these came with a template (face tracking, for example), its setup guide lists them.",
                 Target = controller,
-                Data = new Fixes.Parameters { Names = all.Select(p => (p.Key, TypeOf(p.Key, p.Value.Type))).ToList() }
+                Data = new Fixes.Parameters { Names = all.Select(p => (p.Key, TypeOf(p.Key, p.Value.Type))).ToList() },
+                Identity = string.Join("\n", all.Select(p => p.Key + " " + p.Value.How + " " + string.Join(",", p.Value.Where)))
             });
         }
 
@@ -409,7 +415,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         string.Join("; ", group.Select(c => c.Path).Distinct().Take(5)) + ".",
                     Fix = "Add \"" + group.Key + "\" to the avatar's Expression Parameters with the type the animator uses" +
                         (animatorTypes.TryGetValue(group.Key, out var used) ? " (" + used[0].Type + ")" : "") + ", or point the control at the right parameter.",
-                    Target = group.First().Menu
+                    Target = group.First().Menu,
+                    Identity = string.Join("\n", group.Select(c => c.Path).Distinct())
                 });
 
             var types = avatar.Expressions.GroupBy(e => e.Name).ToDictionary(g => g.Key, g => g.First().Type, StringComparer.Ordinal);
@@ -425,7 +432,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Title = N(badValues.Count, "menu control", "sets", "set") + " a value its parameter can't use",
                     Detail = "Ints hold whole numbers from 0 to 255 and Floats -1 to 1, so these controls can't set what they ask for:\n" +
                         string.Join("\n", badValues.Take(8).Select(c => "• " + c.Path + " (\"" + c.Parameter + "\" = " + c.Value + ")")) + (badValues.Count > 8 ? "\n• and " + (badValues.Count - 8) + " more" : ""),
-                    Fix = "Give each control a value its parameter can hold."
+                    Fix = "Give each control a value its parameter can hold.",
+                    Identity = string.Join("\n", badValues.Select(c => c.Path + " " + c.Parameter + " " + c.Value))
                 });
 
             // Radial and axis puppets only write Floats, so one on a Bool or Int parameter does nothing.
@@ -437,7 +445,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Title = "A puppet control does nothing: \"" + group.Key + "\" is a " + types[group.Key] + ", not a Float",
                     Detail = "Radial and axis puppets can only move Float parameters. Control: " + string.Join("; ", group.Select(c => c.Path).Distinct().Take(5)) + ".",
                     Fix = "Change \"" + group.Key + "\" to Float in Expression Parameters and in the animator, or use a Toggle or Button for it instead.",
-                    Target = group.First().Menu
+                    Target = group.First().Menu,
+                    Identity = string.Join("\n", group.Select(c => c.Path).Distinct())
                 });
 
             // Face tracking (VRCFaceTracking) sets its parameters over OSC, which only reaches Expression Parameters; an animator
@@ -463,7 +472,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         (bits.Count > 0 ? "Add " + Join(bits, 4) + " to Expression Parameters by hand with Synced on: they carry the tracking to other players and cost " +
                             N(bits.Count, "synced bit") + ". " : "") + "Reinstalling the face-tracking template's parameters also works.",
                     // Only the plain values get a button; binary bits must be synced, which spends the user's bit budget.
-                    Data = values.Count > 0 && avatar.ExpressionAsset ? new Fixes.ExpressionAdds { Names = values.Select(n => (n, animatorTypes[n][0].Type)).ToList() } : null
+                    Data = values.Count > 0 && avatar.ExpressionAsset ? new Fixes.ExpressionAdds { Names = values.Select(n => (n, animatorTypes[n][0].Type)).ToList() } : null,
+                    Identity = string.Join("\n", unreachable)
                 });
 
             if (built) return;

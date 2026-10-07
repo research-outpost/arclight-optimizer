@@ -187,7 +187,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             progress?.Stage("Calculating UV coverage");
             checkCancelled?.Invoke();
-            var mask = UvCoverageRasterizer.Build(group, info.Width, info.Height, out var sampled, coverageCache, checkCancelled);
+            bool repair = !normal && group.RepairsPadding;
+            var mask = UvCoverageRasterizer.Build(group, info.Width, info.Height, out var sampled, coverageCache, checkCancelled, pad: !repair);
             checkCancelled?.Invoke();
             if (normal && mask.Count(used => !used) < RetainedException.MinimumUnusedTexels)
                 throw new RetainedException("Fewer than 256 unused texels remain after padding; no useful output.");
@@ -197,7 +198,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             progress?.Stage("Choosing fill colour");
             checkCancelled?.Invoke();
             bool colour = group.ActiveUses.All(use => use.Sampling.Semantics == TextureSemantics.Color);
-            bool repair = !normal && group.RepairsPadding;
             if (repair && !sampled.Any(used => used)) throw new InvalidOperationException("No sampled UV texels to rebuild padding from.");
             if (repair) mask = sampled; // Repair existing padding; preserve only the modeled sampled coverage.
             // Channels any use can read. Only the Standalone (PC) import is ever given a smaller format.

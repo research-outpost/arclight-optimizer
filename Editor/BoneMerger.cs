@@ -79,7 +79,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static bool Mergeable(Transform bone, Transform root, HashSet<Transform> humanoid, AvatarAnalysis analysis) =>
-            bone != root && bone.parent && bone.childCount == 0 && !humanoid.Contains(bone) &&
+            bone != root && bone.IsChildOf(root) && bone.parent && bone.childCount == 0 && !humanoid.Contains(bone) &&
             bone.GetComponents<Component>().Length == 1 && !Exclusions.Excluded(bone) &&
             !analysis.MovesLocally(bone) && !analysis.ScaleChanges(bone) && !analysis.IsAnimated(bone.gameObject) &&
             !analysis.AnimatedObjectValues.Contains(bone) && !analysis.AnimatedObjectValues.Contains(bone.gameObject);

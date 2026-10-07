@@ -38,10 +38,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // edges or triangles.
                 if (group.Any(p => p.Renderer is MeshRenderer m && m.additionalVertexStreams || analysis.ReferencesTo(p.Renderer).Any(c => c is ParticleSystem))) continue;
                 if (group.Any(p => p.Renderer.GetComponent<Cloth>())) continue; // Cloth builds its constraints from the triangles.
-                if (group.Any(p => p.Renderer.sharedMaterials.Concat(analysis.SwappedMaterials(p.Renderer)).Any(m => !TriangleCountInvisible(m)) || SkinnedMeshMerger.ReadsVertexId(p.Renderer, analysis))) continue;
                 var keep = Enumerable.Range(0, mesh.subMeshCount).Select(s => mesh.GetTopology(s) == MeshTopology.Triangles ? Survivors(mesh, s) : null).ToArray();
                 int removed = Enumerable.Range(0, mesh.subMeshCount).Sum(s => keep[s] == null ? 0 : (int)(mesh.GetIndexCount(s) - keep[s].Length) / 3);
                 if (removed == 0) continue;
+                // The shader proofs compile variants, so they run only for meshes that have a triangle to remove.
+                if (group.Any(p => p.Renderer.sharedMaterials.Concat(analysis.SwappedMaterials(p.Renderer)).Any(m => !TriangleCountInvisible(m)) || SkinnedMeshMerger.ReadsVertexId(p.Renderer, analysis))) continue;
 
                 var copy = Object.Instantiate(mesh);
                 copy.name = mesh.name;
@@ -141,13 +142,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (VertexStreamStripper.Android && !MobileShaders.Matches(material)) return false;
             string key = VertexStreamStripper.CacheKey(material);
             if (Safe.TryGetValue(key, out bool cached)) return cached;
-            string fact = ShaderFacts.Key(material, "d3d", "no-hull-domain-geometry|" + string.Join(",", TriangleStages) + "|SV_PrimitiveID");
+            string fact = ShaderFacts.Key(material, "d3d", "no-hull-domain-geometry|" + string.Join(",", TriangleStages) + "|SV_PrimitiveID|global-variants");
             if (ShaderFacts.TryGet("triangles", fact, out string known)) return Safe[key] = known == "1";
             bool clean = true;
             bool safe = true;
             try
             {
                 var sub = ShaderUtil.GetShaderData(material.shader).ActiveSubshader;
+                // Every variant a world's or the lighting's global keywords can pick, not only the material's own.
+                var sets = VertexStreamStripper.VariantSets(material.shader, ref clean);
                 for (int p = 0; p < sub.PassCount && safe; p++)
                 {
                     var pass = sub.GetPass(p);
@@ -155,9 +158,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     foreach (var stage in TriangleStages)
                     {
                         if (!pass.HasShaderStage(stage)) continue;
-                        var info = pass.CompileVariant(stage, material.shaderKeywords, ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64);
-                        if (!info.Success) clean = false; // Cautious, but possibly a one-off compiler failure: not kept on disk.
-                        if (!info.Success || DxbcInputs.Has(info.ShaderData, "SV_PrimitiveID")) { safe = false; break; }
+                        foreach (var extra in sets)
+                        {
+                            var info = pass.CompileVariant(stage, material.shaderKeywords.Concat(extra).ToArray(), ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64);
+                            if (!info.Success) clean = false; // Cautious, but possibly a one-off compiler failure: not kept on disk.
+                            if (!info.Success || DxbcInputs.Has(info.ShaderData, "SV_PrimitiveID")) { safe = false; break; }
+                        }
+                        if (!safe) break;
                     }
                 }
             }

@@ -340,7 +340,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (!component) continue;
                 if (component is IConstraint constraint) { Other(component.transform); continue; }
                 // Physics moves a non-kinematic body, and either end of a joint, every frame.
-                if (component is Rigidbody body) { if (!body.isKinematic) Other(component.transform); continue; }
+                // An animation can turn a kinematic body's physics on.
+                if (component is Rigidbody body) { if (!body.isKinematic || IsAnimated(body, p => p == "m_IsKinematic")) Other(component.transform); continue; }
                 if (component is Joint joint) { Other(component.transform); if (joint.connectedBody) Other(joint.connectedBody.transform); continue; }
                 string type = component.GetType().Name;
                 if (type.StartsWith("VRC", StringComparison.Ordinal) && type.EndsWith("Constraint", StringComparison.Ordinal))

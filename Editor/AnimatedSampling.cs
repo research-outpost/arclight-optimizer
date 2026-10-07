@@ -31,9 +31,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static string TryExpand(TextureUsageRecord use, AnimationRendererState state, IEnumerable<string> affecting,
             bool allowUnsupportedShaders, out SamplingDescription expanded)
         {
+            // An adapter reads only the inputs its branches reach, so a probe can read an animated input the baseline
+            // never touched (Poiyomi reads Force Opaque only once Ignore Alpha is off). Repeat with the union until no
+            // probe finds a new one.
+            var affected = new HashSet<string>(affecting, StringComparer.Ordinal);
+            for (int round = 0; round < 8; round++)
+            {
+                var discovered = new HashSet<string>(StringComparer.Ordinal);
+                string reason = Expand(use, state, affected, discovered, allowUnsupportedShaders, out expanded);
+                discovered.ExceptWith(affected);
+                if (reason != null || discovered.Count == 0) return reason;
+                affected.UnionWith(discovered);
+            }
+            expanded = null;
+            return "its animated inputs depend on each other too deeply";
+        }
+
+        private static string Expand(TextureUsageRecord use, AnimationRendererState state, HashSet<string> affected,
+            HashSet<string> discovered, bool allowUnsupportedShaders, out SamplingDescription expanded)
+        {
             expanded = null;
             var material = use.Material;
-            var affected = new HashSet<string>(affecting, StringComparer.Ordinal);
             var inputs = new List<Input>();
             foreach (var pair in state.FloatRanges.OrderBy(p => p.Key, StringComparer.Ordinal))
             {
@@ -70,11 +88,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     Decompose(n, inputs, index);
                     for (int i = 0; i < inputs.Count; i++) Apply(probe, inputs[i], inputs[i].Values[index[i]]);
                     var described = ShaderAdapterRegistry.Describe(probe, use.Property, allowUnsupportedShaders);
+                    if (described != null && described.MaterialInputs == null) return "the shader adapter does not report its inputs";
+                    if (described != null)
+                        discovered.UnionWith(described.MaterialInputs.Where(state.FloatProperties.Contains));
                     channels |= described?.Channels ?? TextureChannels.All;
                     corners[n] = Transforms(described, baseline, basePaths);
                     if (corners[n] == null) return "it changes the sampling model, not only UV transforms";
                 }
-                string nonlinear = CheckCellCentres(probe, use, inputs, corners, baseline, basePaths, allowUnsupportedShaders);
+                string nonlinear = CheckCellCentres(probe, use, state, inputs, corners, baseline, basePaths, allowUnsupportedShaders, discovered, ref channels);
                 if (nonlinear != null) return nonlinear;
 
                 var paths = new List<SamplingPath>();
@@ -102,8 +123,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             finally { UnityEngine.Object.DestroyImmediate(probe); }
         }
 
-        private static string CheckCellCentres(Material probe, TextureUsageRecord use, List<Input> inputs, Vector4[][] corners,
-            SamplingDescription baseline, SamplingPath[] basePaths, bool allowUnsupportedShaders)
+        // Values between keyframes are reached too, so each centre also adds its channels and inputs.
+        private static string CheckCellCentres(Material probe, TextureUsageRecord use, AnimationRendererState state, List<Input> inputs,
+            Vector4[][] corners, SamplingDescription baseline, SamplingPath[] basePaths, bool allowUnsupportedShaders,
+            HashSet<string> discovered, ref TextureChannels channels)
         {
             var varying = Enumerable.Range(0, inputs.Count).Where(i => inputs[i].Values.Length > 1).ToArray();
             if (varying.Length == 0) return null;
@@ -124,7 +147,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var values = inputs[i].Values;
                     Apply(probe, inputs[i], values.Length > 1 ? (values[cell[i]] + values[cell[i] + 1]) * 0.5f : values[0]);
                 }
-                var centre = Transforms(ShaderAdapterRegistry.Describe(probe, use.Property, allowUnsupportedShaders), baseline, basePaths);
+                var described = ShaderAdapterRegistry.Describe(probe, use.Property, allowUnsupportedShaders);
+                if (described?.MaterialInputs != null) discovered.UnionWith(described.MaterialInputs.Where(state.FloatProperties.Contains));
+                channels |= described?.Channels ?? TextureChannels.All;
+                var centre = Transforms(described, baseline, basePaths);
                 if (centre == null) return "it changes the sampling model between keyframe values";
                 // A multilinear transform equals the average of its cell's corners at the centre.
                 var average = new Vector4[basePaths.Length];

@@ -57,6 +57,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // Without scene reload, Play Mode cannot restore the original avatar: the texture pass declines (and says
             // why), and nothing else may act on it either.
             if (EditorApplication.isPlayingOrWillChangePlaymode && AutomaticTextureOptimizer.SceneReloadDisabled) return;
+            state.Enabled = config.enabled;
             // VRCFury keeps its components until the very end of the build and marks a built avatar with VRCFuryTest.
             // Before it builds (a manual bake, or VRCFury switched off for this kind of build), the animation, parameters
             // and readers it will add are not here yet, so nothing that depends on the avatar's animation may run.
@@ -421,6 +422,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, summary);
                     }
+                    // Vertices that differed only in a channel or delta just dropped are exact repeats now: weld again.
+                    if (stripped.Meshes + deltas.Meshes > 0 && !vrcfuryPending)
+                    {
+                        BuildTimings.Step("UnusedVertexRemover (after stripping)");
+                        var welded = UnusedVertexRemover.Run(analysis, ReplacementRegistry.Register);
+                        if (welded.Meshes > 0)
+                        {
+                            analysis.RescanReferences();
+                            string summary = "Welded " + welded.Vertices + " more vertex(es) that became exact repeats once unread data was removed, in " + welded.Meshes + " mesh(es).";
+                            Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                            state.Report?.Add(null, summary);
+                        }
+                    }
                     BuildTimings.Step("ParticleUpperBound");
                     var particles = ParticleUpperBound.Run(analysis);
                     if (particles.Systems + particles.Removed + particles.Trails + particles.Collisions > 0)
@@ -480,7 +494,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 CropTextures(ctx);
                 BuildTimings.Step("MeshReadWrite");
-                int unreadable = MeshReadWrite.Run(ctx.AvatarRootObject, ctx.GetState<SubstitutionState>().SourceMeshes);
+                // Like every other pass: not when Arclight is off, removed, or declined (Avatar Optimizer, Play Mode without scene reload).
+                int unreadable = ctx.GetState<SubstitutionState>().Enabled
+                    ? MeshReadWrite.Run(ctx.AvatarRootObject, ctx.GetState<SubstitutionState>().SourceMeshes) : 0;
                 if (unreadable > 0) ctx.GetState<SubstitutionState>().Report?.Add(null, "Turned off Read/Write on " + unreadable + " mesh(es) this build made, so the avatar does not keep a second copy of them in memory.");
             }
             finally
@@ -569,6 +585,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public bool MergeMeshesAndAudio, OptimizeMeshes, OptimizeAudio;
         // Set before Avatar Optimizer runs when the avatar carries it; then no Arclight pass acts.
         internal bool AvatarOptimizerConflict;
+        // The component was present and enabled, and Prepare let the build go ahead.
+        internal bool Enabled;
 
         // VRCFury has not built the avatar yet, so its animation is incomplete (see Prepare).
         internal bool VrcfuryPending;
@@ -725,6 +743,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     foreach (var renderer in buildRoot.GetComponentsInChildren<Renderer>(true))
                     {
                         if (!(renderer is MeshRenderer) && !(renderer is SkinnedMeshRenderer)) continue;
+                        // An excluded renderer keeps its materials, even where it holds an optimized texture in an unused slot.
+                        if (Exclusions.Excluded(renderer)) continue;
                         string path = AnimationUtility.CalculateTransformPath(renderer.transform, buildRoot.transform);
                         var originalSlots = renderer.sharedMaterials;
                         var replacementSlots = (Material[])originalSlots.Clone();

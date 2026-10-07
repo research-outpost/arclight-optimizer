@@ -33,6 +33,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             string sourceMeta = path + ".meta";
             if (!File.Exists(LongPath.For(sourceMeta))) throw new InvalidOperationException("Source importer metadata is missing; original retained.");
+            // Alpha from grayscale is derived again when the output imports with the same settings, and transparency dilation has
+            // by then changed the RGB of see-through pixels, so their alpha could change.
+            if (AssetImporter.GetAtPath(path) is TextureImporter source && source.alphaSource == TextureImporterAlphaSource.FromGrayScale && source.alphaIsTransparency)
+                throw new InvalidOperationException("Alpha from grayscale would be derived twice; original retained.");
             // Same importer metadata as the source, so format options such as PSD matte removal and the alpha source match.
             string meta = GenerationCoordinator.CopiedImporterMeta(sourceMeta, "AvatarTextureOptimizer:flatten");
             if (meta == null) throw new InvalidOperationException("Source importer metadata could not be reused to flatten the image; original retained.");

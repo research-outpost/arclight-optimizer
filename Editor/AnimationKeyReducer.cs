@@ -33,7 +33,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 foreach (var binding in AnimationUtility.GetCurveBindings(clip))
                 {
-                    if (IsRotation(binding.propertyName)) continue;
+                    if (IsRotation(binding.propertyName) || binding.type == typeof(Animator) && IsAnimatorQuaternion(binding.propertyName)) continue;
                     var original = AnimationUtility.GetEditorCurve(clip, binding);
                     if (original == null || original.length < 3) continue;
                     var reduced = ReduceFloat(original.keys);
@@ -62,6 +62,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static bool IsRotation(string property) => property != null &&
             (property.StartsWith("m_LocalRotation", StringComparison.Ordinal) || property.StartsWith("localEulerAngles", StringComparison.Ordinal) ||
              property.StartsWith("m_LocalEulerAngles", StringComparison.Ordinal));
+
+        // Root, motion and IK goal rotations (RootQ.x, MotionQ.w, LeftHandQ.y, ...) are quaternions Unity rebuilds from all four
+        // components at shared times, like Transform rotations.
+        private static bool IsAnimatorQuaternion(string property) => property != null && property.Length > 3 &&
+            property[property.Length - 3] == 'Q' && property[property.Length - 2] == '.' && "xyzw".IndexOf(property[property.Length - 1]) >= 0;
 
         internal static Keyframe[] ReduceFloat(Keyframe[] keys)
         {

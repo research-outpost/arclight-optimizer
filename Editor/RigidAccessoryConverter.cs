@@ -56,6 +56,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             int index = weights[0].boneIndex;
             if (weights.Any(w => w.boneIndex != index) || index >= renderer.bones.Length || !renderer.bones[index]) return false;
             bone = renderer.bones[index];
+            // The new object goes under the bone (and a probe anchor under the root bone): both must be in the build copy.
+            var root = analysis.Root.transform;
+            if (!bone.IsChildOf(root) || renderer.rootBone && !renderer.rootBone.IsChildOf(root)) return false;
             if (mesh.bindposes[index].determinant <= 0) return false;
             if (analysis.ActivenessAnimated(renderer.gameObject) || analysis.ActivenessAnimated(bone.gameObject)) return false;
             // A skinned mesh draws whatever its bones' activeness; a plain mesh under an inactive bone would not.

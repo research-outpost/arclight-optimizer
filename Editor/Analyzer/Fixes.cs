@@ -63,7 +63,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         EditorUtility.SetDirty(controller);
                         return "Removed " + removed + " layer(s) from " + controller.name + ".";
                     });
-                case Scripts s:
+                // Scene fixes only: on a prefab asset picked from the Project window they would change the file with no backup.
+                case Scripts s when s.Objects.All(o => !o || !EditorUtility.IsPersistent(o)):
                     return ("Remove them", () =>
                     {
                         int removed = 0, kept = 0;
@@ -77,7 +78,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         }
                         return "Removed " + removed + " missing script(s)." + (kept > 0 ? " " + kept + " sit inside a prefab; open the prefab to remove them there." : "");
                     });
-                case References r:
+                case References r when r.Fields.All(f => !f.Component || !EditorUtility.IsPersistent(f.Component)):
                     return ("Clear them", () =>
                     {
                         int cleared = 0;
@@ -121,20 +122,36 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 case Curves c when c.Bindings.Any(b => Editable(b.Clip)):
                     return ("Remove them", () =>
                     {
-                        int removed = 0;
+                        int removed = 0, kept = 0;
                         foreach (var group in c.Bindings.Where(b => Editable(b.Clip)).GroupBy(b => b.Clip))
                         {
-                            Undo.RecordObject(group.Key, "Remove animations of missing things");
+                            var clip = group.Key;
+                            Undo.RecordObject(clip, "Remove animations of missing things");
+                            float length = clip.length;
+                            // Each curve's keys, so one can go back if the clip would get shorter: exit times and transitions follow its length.
+                            var saved = new List<(EditorCurveBinding Binding, bool ObjectReference, AnimationCurve Curve, ObjectReferenceKeyframe[] Keys, float End)>();
                             foreach (var (_, binding, objectReference) in group)
                             {
-                                if (objectReference) AnimationUtility.SetObjectReferenceCurve(group.Key, binding, null);
-                                else AnimationUtility.SetEditorCurve(group.Key, binding, null);
+                                var curve = objectReference ? null : AnimationUtility.GetEditorCurve(clip, binding);
+                                var keys = objectReference ? AnimationUtility.GetObjectReferenceCurve(clip, binding) : null;
+                                float end = curve != null && curve.length > 0 ? curve.keys[curve.length - 1].time : keys != null && keys.Length > 0 ? keys[keys.Length - 1].time : 0;
+                                saved.Add((binding, objectReference, curve, keys, end));
+                                if (objectReference) AnimationUtility.SetObjectReferenceCurve(clip, binding, null);
+                                else AnimationUtility.SetEditorCurve(clip, binding, null);
                                 removed++;
                             }
-                            EditorUtility.SetDirty(group.Key);
+                            foreach (var s in saved.OrderByDescending(s => s.End))
+                            {
+                                if (clip.length == length) break;
+                                if (s.ObjectReference) AnimationUtility.SetObjectReferenceCurve(clip, s.Binding, s.Keys);
+                                else AnimationUtility.SetEditorCurve(clip, s.Binding, s.Curve);
+                                removed--; kept++;
+                            }
+                            EditorUtility.SetDirty(clip);
                         }
                         int skipped = c.Bindings.Count(b => !Editable(b.Clip));
                         return "Removed " + removed + " curve(s) from " + c.Bindings.Select(b => b.Clip).Where(Editable).Distinct().Count() + " clip(s)." +
+                            (kept > 0 ? " Kept " + kept + " so the animation's length (and so its timing) stays the same." : "") +
                             (skipped > 0 ? " " + skipped + " sit in clips inside a model, controller or package, which were left alone." : "");
                     });
                 default:
@@ -159,7 +176,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         private static void Save(List<Entry> entries)
         {
             Directory.CreateDirectory(Folder);
-            File.WriteAllText(HistoryFile, JsonUtility.ToJson(new Log { entries = entries }, true));
+            // Written whole to a side file, then swapped in, so a failed write never leaves half a history.
+            string temporary = HistoryFile + ".tmp~";
+            File.WriteAllText(temporary, JsonUtility.ToJson(new Log { entries = entries }, true));
+            if (File.Exists(HistoryFile)) File.Replace(temporary, HistoryFile, null); else File.Move(temporary, HistoryFile);
             AssetDatabase.ImportAsset(HistoryFile);
         }
 
@@ -190,12 +210,41 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 foreach (var descriptor in scene.GetRootGameObjects().SelectMany(g => g.GetComponentsInChildren<Component>(true)).Where(c => c && c.GetType().Name == "VRCAvatarDescriptor"))
                 {
                     if (descriptor.gameObject == self) continue;
-                    var used = AvatarAnalyzer.Read(descriptor.gameObject).Playables.SelectMany(p => new[] { AssetDatabase.GetAssetPath(p.Controller) }
-                        .Concat(AvatarAnalyzer.ClipsOf(p.Controller).Select(AssetDatabase.GetAssetPath)));
+                    var other = AvatarAnalyzer.Read(descriptor.gameObject);
+                    var used = other.Playables.SelectMany(p => new[] { AssetDatabase.GetAssetPath(p.Controller) }
+                        .Concat(AvatarAnalyzer.ClipsOf(p.Controller).Select(AssetDatabase.GetAssetPath)))
+                        .Concat(other.ExpressionAsset ? new[] { AssetDatabase.GetAssetPath(other.ExpressionAsset) } : new string[0]);
                     if (used.Any(files.Contains)) others.Add(descriptor.gameObject.name);
                 }
             }
             return others.Distinct().ToList();
+        }
+
+        // A Remove or Clear acts only on what is still wrong now and was listed when you checked: the avatar can have changed since
+        // (a layer turned up, an object renamed back). Null when nothing is left to do. Adding fixes are safe to repeat as they are.
+        internal static Finding Recheck(Finding shown, GameObject avatar)
+        {
+            if (!(shown.Data is Layers || shown.Data is Curves || shown.Data is Scripts || shown.Data is References)) return shown;
+            if (!avatar) return null;
+            var fresh = AvatarAnalyzer.Group(AvatarAnalyzer.Check(avatar)).FirstOrDefault(f => f.Key == shown.Key);
+            if (fresh == null || fresh.Data == null || fresh.Data.GetType() != shown.Data.GetType()) return null;
+            int left;
+            switch (fresh.Data)
+            {
+                case Layers l:
+                    if (fresh.Target != shown.Target) return null;
+                    l.Names.RemoveAll(n => !((Layers)shown.Data).Names.Contains(n)); left = l.Names.Count; break;
+                case Curves c:
+                    var listed = new HashSet<(AnimationClip, EditorCurveBinding, bool)>(((Curves)shown.Data).Bindings);
+                    c.Bindings.RemoveAll(b => !listed.Contains(b)); left = c.Bindings.Count; break;
+                case Scripts s:
+                    s.Objects.RemoveAll(o => !((Scripts)shown.Data).Objects.Contains(o)); left = s.Objects.Count; break;
+                case References r:
+                    var fields = new HashSet<(Object, string)>(((References)shown.Data).Fields);
+                    r.Fields.RemoveAll(f => !fields.Contains(f)); left = r.Fields.Count; break;
+                default: return null;
+            }
+            return left > 0 ? fresh : null;
         }
 
         // Applies the finding's fix: backs up the files it changes, runs it, and logs it. Returns what was done.
@@ -225,22 +274,25 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 entry.asset = string.Join("\n", assets);
                 entry.backup = string.Join("\n", backups);
             }
-            try { entry.action = fix.Value.Apply(); }
+            try
+            {
+                entry.action = fix.Value.Apply();
+                if (changes.Count > 0)
+                {
+                    foreach (string path in assets) SaveFile(path);
+                    entry.hashAfter = string.Join("\n", assets.Select(Hash));
+                }
+                var entries = History();
+                entries.Add(entry);
+                Save(entries);
+            }
             catch (Exception e)
             {
-                // Nothing was logged; put the files back as they were and leave no orphan backup.
+                // Saving or logging failed too: put the files back as they were and leave no orphan backup, so nothing changes unlogged.
                 for (int i = 0; i < assets.Count; i++) { File.Copy(backups[i], assets[i], true); AssetDatabase.ImportAsset(assets[i], ImportAssetOptions.ForceUpdate); }
                 if (backups.Count > 0) Directory.Delete(Path.GetDirectoryName(backups[0]), true);
-                return "The fix failed and nothing was changed: " + e.Message;
+                return "The fix failed and nothing was changed" + (assets.Count == 0 && entry.action != null ? " in the files (use Edit > Undo for the scene)" : "") + ": " + e.Message;
             }
-            if (changes.Count > 0)
-            {
-                foreach (string path in assets) SaveFile(path);
-                entry.hashAfter = string.Join("\n", assets.Select(Hash));
-            }
-            var entries = History();
-            entries.Add(entry);
-            Save(entries);
             return entry.action;
         }
 
@@ -257,14 +309,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 !EditorUtility.DisplayDialog("Restore " + Label(entry) + "?",
                     "It was changed after this fix (saved or not). Restoring puts back the version from before the fix, so those later changes are lost too.", "Restore", "Cancel"))
                 return false;
-            for (int i = 0; i < assets.Length; i++)
+            // The current files are kept in memory until every file is back and the history is written: a failure puts them all back.
+            foreach (string asset in assets) SaveFile(asset);
+            var current = assets.Select(a => File.ReadAllBytes(a)).ToArray();
+            try
             {
-                File.Copy(backups[i], assets[i], true);
-                AssetDatabase.ImportAsset(assets[i], ImportAssetOptions.ForceUpdate);
+                for (int i = 0; i < assets.Length; i++)
+                {
+                    File.Copy(backups[i], assets[i], true);
+                    AssetDatabase.ImportAsset(assets[i], ImportAssetOptions.ForceUpdate);
+                }
+                var entries = History();
+                entries.Add(new Entry { time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), avatar = entry.avatar, action = "Restored " + Label(entry) + " to before: " + entry.action });
+                Save(entries);
             }
-            var entries = History();
-            entries.Add(new Entry { time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), avatar = entry.avatar, action = "Restored " + Label(entry) + " to before: " + entry.action });
-            Save(entries);
+            catch (Exception e)
+            {
+                for (int i = 0; i < assets.Length; i++) { File.WriteAllBytes(assets[i], current[i]); AssetDatabase.ImportAsset(assets[i], ImportAssetOptions.ForceUpdate); }
+                Debug.LogWarning("Arclight Analyzer: Restore failed and nothing was changed: " + e.Message);
+                return false;
+            }
             return true;
         }
 

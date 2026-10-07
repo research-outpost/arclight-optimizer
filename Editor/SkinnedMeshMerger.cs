@@ -190,6 +190,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // active together. Anything else (a legacy Animation clip) keeps the object's own identity.
         private static string ToggleSignature(GameObject toggled, AvatarAnalysis analysis) => Signature(toggled, toggled.activeSelf, "m_IsActive", analysis);
 
+        // A renderer's enabled flag, in the same terms: renderers with equal signatures are always on and off together.
+        internal static string EnabledSignature(Renderer renderer, AvatarAnalysis analysis) => Signature(renderer, renderer.enabled, "m_Enabled", analysis);
+
         // The same for any animated on/off value: a GameObject's activation or a renderer's enabled flag.
         private static string Signature(Object toggled, bool start, string property, AvatarAnalysis analysis)
         {
@@ -329,6 +332,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // animated material properties.
         internal static bool ReadsVertexId(Renderer renderer, AvatarAnalysis analysis)
         {
+            // A property block can turn on what the material stores as off (lilToon's ID mask, for one).
+            if (TextureUsageScanner.HasPropertyBlock(renderer)) return true;
             var animated = new HashSet<string>(analysis.AnimatedMaterialProperties(renderer), StringComparer.Ordinal);
             return renderer.sharedMaterials.Concat(analysis.SwappedMaterials(renderer)).Any(m => ReadsVertexId(m, animated.Contains));
         }
@@ -352,7 +357,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (VertexStreamStripper.Android && !MobileShaders.Matches(material)) return true;
             string key = VertexStreamStripper.CacheKey(material);
             if (VertexIdReaders.TryGetValue(key, out bool cached)) return cached;
-            string fact = ShaderFacts.Key(material, "d3d", string.Join(",", VertexIdStages) + "|SV_VertexID,SV_PrimitiveID|no-meta-never");
+            string fact = ShaderFacts.Key(material, "d3d", string.Join(",", VertexIdStages) + "|SV_VertexID,SV_PrimitiveID|no-meta-never|global-variants");
             if (ShaderFacts.TryGet("vertex-id", fact, out string known)) return VertexIdReaders[key] = known == "1";
             bool clean = true;
             bool reads = false;
@@ -360,6 +365,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var data = ShaderUtil.GetShaderData(material.shader);
                 var sub = data.ActiveSubshader;
+                // Every variant a world's or the lighting's global keywords can pick, not only the material's own.
+                var sets = VertexStreamStripper.VariantSets(material.shader, ref clean);
                 for (int p = 0; p < sub.PassCount && !reads; p++)
                 {
                     var pass = sub.GetPass(p);
@@ -368,9 +375,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     foreach (var stage in VertexIdStages)
                     {
                         if (!pass.HasShaderStage(stage)) continue;
-                        var info = pass.CompileVariant(stage, material.shaderKeywords, ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64);
-                        if (!info.Success) clean = false; // Cautious, but possibly a one-off compiler failure: not kept on disk.
-                        if (!info.Success || DxbcInputs.Has(info.ShaderData, "SV_VertexID") || DxbcInputs.Has(info.ShaderData, "SV_PrimitiveID")) { reads = true; break; }
+                        foreach (var extra in sets)
+                        {
+                            var info = pass.CompileVariant(stage, material.shaderKeywords.Concat(extra).ToArray(), ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64);
+                            if (!info.Success) clean = false; // Cautious, but possibly a one-off compiler failure: not kept on disk.
+                            if (!info.Success || DxbcInputs.Has(info.ShaderData, "SV_VertexID") || DxbcInputs.Has(info.ShaderData, "SV_PrimitiveID")) { reads = true; break; }
+                        }
+                        if (reads) break;
                     }
                 }
             }

@@ -65,6 +65,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     }
                 }
             }
+            // An animated texture swap reads the swapped-in texture through the same, rewritten tiling/offset.
+            foreach (var use in scan.Groups.SelectMany(g => g.Uses))
+                if (use.FromAnimation && use.Material && use.Material.HasProperty(use.Property) && use.Material.GetTexture(use.Property) != use.Texture)
+                    foreach (var node in bases.Where(b => b.Item1 == use.Material)) bad.Add(node);
             // A material is cropped only if every texture it holds takes part (unless never sampled).
             foreach (var material in bases.Select(b => b.Item1).Distinct())
                 foreach (string property in material.GetTexturePropertyNames())
@@ -81,6 +85,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var x in bad.ToList()) bad.Add(Find(x));
 
             var croppedSources = new HashSet<Texture>();
+            // Textures of one material often share every sampling path (a main map and its normal map), so their coverage is built once.
+            var coverage = new UvCoverageCache();
             var components = parent.Keys.ToList().GroupBy(Find).Where(c => !bad.Contains(c.Key)).ToList();
             foreach (var component in components)
             {
@@ -93,7 +99,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (rewritten.Any(b => renderers.Any(r => r.sharedMaterials.Contains(b.Item1) &&
                     analysis.AnimatedMaterialProperties(r).Any(p => p == b.Item2 + "_ST")))) continue;
                 Crop crop;
-                try { crop = Plan(textures, groups, componentPaths); }
+                try { crop = Plan(textures, groups, componentPaths, coverage); }
                 catch (Exception) { continue; }
                 if (crop == null) continue;
 
@@ -353,7 +359,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // The deepest aligned crop holding every texture's protected texels and every lookup's UVs, or null.
-        private static Crop Plan(List<Texture2D> textures, Dictionary<Texture, TextureGroup> groups, List<(TextureUsageRecord Use, SamplingPath Path)> paths)
+        private static Crop Plan(List<Texture2D> textures, Dictionary<Texture, TextureGroup> groups, List<(TextureUsageRecord Use, SamplingPath Path)> paths,
+            UvCoverageCache coverage)
         {
             double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
             void Include(double ax, double ay, double bx, double by) { x0 = Math.Min(x0, ax); y0 = Math.Min(y0, ay); x1 = Math.Max(x1, bx); y1 = Math.Max(y1, by); }
@@ -386,7 +393,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (blockW != 1 && blockW != 4 || blockH != 1 && blockH != 4) return null;
                 // PVRTC also uses 4-texel blocks but blends neighbouring blocks, so a crop is never exact there.
                 if (UnityEngine.Experimental.Rendering.GraphicsFormatUtility.IsPVRTCFormat(texture.graphicsFormat)) return null;
-                var mask = UvCoverageRasterizer.Build(groups[texture], info.Width, info.Height);
+                var mask = UvCoverageRasterizer.Build(groups[texture], info.Width, info.Height, out _, coverage);
                 int mx0 = int.MaxValue, my0 = int.MaxValue, mx1 = -1, my1 = -1;
                 for (int y = 0; y < info.Height; y++)
                     for (int x = 0; x < info.Width; x++)

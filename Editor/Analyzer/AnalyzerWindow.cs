@@ -49,7 +49,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         internal static HashSet<string> Ignored(GameObject avatar) =>
             new HashSet<string>(EditorPrefs.GetString(IgnoreKey(avatar), "").Split('\n').Where(k => k.Length > 0));
         // A card is ignored together with what it lists, so a later, different problem of the same kind shows again.
-        private static string IgnoreId(Finding f) => f.Key + "#" + Fnv(f.Detail ?? "");
+        private static string IgnoreId(Finding f) => f.Key + "#" + Fnv(f.Identity ?? f.Detail ?? "");
         private static string Fnv(string s) { uint h = 2166136261; foreach (char c in s) h = (h ^ c) * 16777619; return h.ToString("x8"); }
         private static bool IsIgnored(HashSet<string> set, Finding f) => set.Contains(IgnoreId(f)) || set.Contains(f.Key); // Bare keys: ignored before 1.2.2.
         private static bool ChangedSinceIgnored(HashSet<string> set, Finding f) => !IsIgnored(set, f) && set.Any(k => k.StartsWith(f.Key + "#", System.StringComparison.Ordinal));
@@ -123,14 +123,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         private void DrawHistory()
         {
             if (History.Count == 0) return;
-            var history = History;
+            var entries = History;
             EditorGUILayout.Space();
-            historyOpen = EditorGUILayout.Foldout(historyOpen, "Fix history (" + history.Count + ")", true, EditorStyles.foldoutHeader);
+            historyOpen = EditorGUILayout.Foldout(historyOpen, "Fix history (" + (entries.Count > 50 ? "latest 50 of " : "") + entries.Count + ")", true, EditorStyles.foldoutHeader);
             if (!historyOpen) return;
-            foreach (var entry in Enumerable.Reverse(history).Take(50))
+            foreach (var entry in Enumerable.Reverse(entries).Take(50))
                 using (new EditorGUILayout.HorizontalScope(EditorStyles.helpBox))
                 {
-                    EditorGUILayout.LabelField(entry.time + " · " + entry.avatar + "\n" + entry.action, EditorStyles.wordWrappedMiniLabel);
+                    EditorGUILayout.LabelField(entry.time + " · " + entry.avatar + (string.IsNullOrEmpty(entry.asset) ? "" : " · " + Fixes.Label(entry)) + "\n" + entry.action, EditorStyles.wordWrappedMiniLabel);
                     bool restorable = Fixes.CanRestore(entry);
                     using (new EditorGUI.DisabledScope(!restorable))
                         if (GUILayout.Button(new GUIContent("Restore", restorable ? "Puts " + Fixes.Label(entry) + " back as before this fix."
@@ -176,7 +176,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         private void DrawFindings()
         {
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField(checkedName + ": synced parameters use " + syncedBits + " of " + AvatarAnalyzer.SyncLimit + " bits" + (syncedBits > AvatarAnalyzer.SyncLimit ? " (over the limit)" : "") + ".");
+            EditorGUILayout.LabelField(checkedName + " (" + (!checkedBuild ? "checked as it is" : buildError == null ? "checked as it is and as uploaded" : "checked as it is only") +
+                "): synced parameters use " + syncedBits + " of " + AvatarAnalyzer.SyncLimit + " bits" + (syncedBits > AvatarAnalyzer.SyncLimit ? " (over the limit)" : "") + ".");
             if (buildError != null) EditorGUILayout.HelpBox("The uploaded version couldn't be built, so only the avatar as it is was checked: " + buildError, MessageType.Warning);
             if (fixedNote != null) EditorGUILayout.HelpBox(fixedNote + " Press Check again to see the result.", MessageType.Info);
             var ignored = checkedAvatar ? Ignored(checkedAvatar) : new HashSet<string>();
@@ -225,6 +226,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         private static GUIStyle DetailStyle => detailStyle ?? (detailStyle = new GUIStyle(EditorStyles.wordWrappedLabel) { fontSize = 12, padding = new RectOffset(2, 2, 2, 2) });
         private static GUIStyle FixStyle => fixStyle ?? (fixStyle = new GUIStyle(EditorStyles.wordWrappedLabel) { fontSize = 11, padding = new RectOffset(14, 2, 2, 2) });
 
+        // Cards whose fix was pressed since the last check.
+        private readonly HashSet<Finding> pressed = new HashSet<Finding>();
+
         // The fix button's label for each card, worked out once per check (it looks at asset paths).
         private readonly Dictionary<Finding, (string Label, System.Func<string> Apply)?> fixes = new Dictionary<Finding, (string, System.Func<string>)?>();
 
@@ -236,10 +240,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Label(EditorGUIUtility.IconContent(Icons[finding.Severity]), GUILayout.Width(18), GUILayout.Height(18));
-                    GUILayout.Label((isIgnored ? "(ignored) " : changed ? "(changed since you ignored it) " : "") + finding.Title, TitleStyle, GUILayout.ExpandWidth(true));
+                    GUILayout.Label((pressed.Contains(finding) ? "(fix applied, check again) " : isIgnored ? "(ignored) " : changed ? "(changed since you ignored it) " : "") + finding.Title, TitleStyle, GUILayout.ExpandWidth(true));
                     GUILayout.Space(6);
                     if (finding.Target && GUILayout.Button(new GUIContent(finding.Target is UnityEditor.Animations.AnimatorController ? "Open" : "Show", "Go to it."), EditorStyles.miniButtonLeft, GUILayout.Width(50))) Reveal(finding.Target);
-                    if (fix.HasValue && GUILayout.Button(new GUIContent(fix.Value.Label.Split(' ')[0], fix.Value.Label + " now. Changes the avatar's files; Edit > Undo or Fix history reverts it."), EditorStyles.miniButtonMid, GUILayout.Width(60)))
+                    bool fileFix = Fixes.Files(finding).Count > 0;
+                    if (fix.HasValue && GUILayout.Button(new GUIContent(fix.Value.Label.Split(' ')[0], fix.Value.Label + " now. " + (fileFix
+                        ? "Changes files (backed up first); Edit > Undo, or Restore in Fix history, reverts it." : "Changes the scene; Edit > Undo reverts it in this session.")),
+                        EditorStyles.miniButtonMid, GUILayout.Width(60)))
                     {
                         // A file another avatar also uses changes for that avatar too, so ask first.
                         var shared = Fixes.SharedWith(finding, checkedAvatar);
@@ -247,8 +254,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             "This fix edits " + string.Join(", ", Fixes.Files(finding).Select(System.IO.Path.GetFileName).Take(5)) + ", which " + string.Join(", ", shared.Take(5)) +
                             (shared.Count == 1 ? " also uses" : " also use") + ". The change applies there too (it's backed up, and Fix history can restore it).", "Fix anyway", "Cancel"))
                         {
-                            fixedNote = Fixes.Apply(finding, checkedAvatar ? checkedAvatar.name : checkedName);
-                            findings.Remove(finding);
+                            var current = Fixes.Recheck(finding, checkedAvatar);
+                            fixedNote = current == null ? "That changed since you checked, so nothing was done."
+                                : Fixes.Apply(current, checkedAvatar ? checkedAvatar.name : checkedName);
+                            // The card stays, marked, until a check confirms it is gone: a fix can fail or leave part for you to do.
+                            pressed.Add(finding);
                             history = null;
                         }
                         GUIUtility.ExitGUI();
@@ -263,7 +273,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 bool wasOpen = fixOpen.Contains(finding.Key);
                 bool isOpen = EditorGUILayout.Foldout(wasOpen, "How to fix", true);
                 if (isOpen != wasOpen) { if (isOpen) fixOpen.Add(finding.Key); else fixOpen.Remove(finding.Key); }
-                if (isOpen) GUILayout.Label((fix.HasValue ? "Press " + fix.Value.Label.Split(' ')[0] + " to do this for you (files are backed up first), or do it by hand: " : "") + finding.Fix, FixStyle);
+                if (isOpen) GUILayout.Label((fix.HasValue ? "Press " + fix.Value.Label.Split(' ')[0] + " to do this for you (" +
+                    (Fixes.Files(finding).Count > 0 ? "files are backed up first" : "Edit > Undo reverts it") + "), or do it by hand: " : "") + finding.Fix, FixStyle);
             }
         }
 
@@ -299,7 +310,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 EditorUtility.DisplayProgressBar("Arclight Analyzer", checkedBuild
                     ? "Building a hidden copy the way an upload does, then checking it (the first run can take minutes)..." : "Checking the avatar...", .5f);
                 findings = Check(target, out buildError, out syncedBits);
-                fixes.Clear();
+                fixes.Clear(); pressed.Clear();
                 checkedAvatar = target;
                 checkedName = target.name;
                 fixedNote = null;
@@ -313,7 +324,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             var avatars = SceneAvatars();
             all = new List<(GameObject, List<Finding>, int, string)>();
             findings = null;
-            fixes.Clear();
+            fixes.Clear(); pressed.Clear();
             checkedBuild = IncludeBuild;
             try
             {

@@ -257,7 +257,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public static bool[] Build(TextureGroup group, int width, int height, out bool[] sampled, Action cancel = null) =>
             Build(group, width, height, out sampled, null, cancel);
 
-        internal static bool[] Build(TextureGroup group, int width, int height, out bool[] sampled, UvCoverageCache cache, Action cancel = null)
+        // pad: false when the caller keeps only the sampled mask (colour repair rebuilds padding itself); the padded result is then
+        // not computed, and the sampled mask is returned as both.
+        internal static bool[] Build(TextureGroup group, int width, int height, out bool[] sampled, UvCoverageCache cache, Action cancel = null, bool pad = true)
         {
             ValidateSize(width, height);
             // Padding is measured in the imported texture. Convert it back to PNG texels
@@ -314,6 +316,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             budget.Check();
             if (wraps.Count == 0) throw new InvalidOperationException("No sampled texture uses.");
             sampled = mask;
+            if (!pad) return mask;
             var result = new bool[mask.Length];
             // Padding the full union under every applicable sampler is deliberately conservative.
             foreach (var wrap in wraps)

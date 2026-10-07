@@ -184,9 +184,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     return Unsupported("lilToon Multi has an invalid rendering mode; original retained.");
                 // Multi compiles these features from keywords and overrides the corresponding _Use toggles.
                 // Guard stale/animated keywords too, even if the stored material toggle reads zero.
-                if (material.IsKeywordEnabled("_PARALLAXMAP") || material.IsKeywordEnabled("PIXELSNAP_ON") ||
-                    material.IsKeywordEnabled("_MAPPING_6_FRAMES_LAYOUT") || material.IsKeywordEnabled("_SUNDISK_HIGH_QUALITY"))
-                    return Unsupported("lilToon Multi parallax/POM or AudioLink keywords enable sampling outside the static UV model; original retained.");
+                if (material.IsKeywordEnabled("_PARALLAXMAP") || material.IsKeywordEnabled("PIXELSNAP_ON"))
+                    return Unsupported("lilToon Multi parallax/POM keywords enable sampling outside the static UV model; original retained.");
             }
             if (GraphicsSettings.currentRenderPipeline) return Unsupported("This lilToon adapter supports the Built-in Render Pipeline only.");
             string failure = LilToonSourceGuard.Validate();
@@ -199,12 +198,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return new SamplingDescription { AdapterId = compatibilityId, Supported = true, NotSampled = true,
                     Reason = inference + "Compatibility alias; treated as unused by the standard lilToon 2.x Built-in sampling model." };
             if (field.Coordinates == Coordinates.Unsupported) return Unsupported(field.Reason);
+            // lil_common_frag.hlsl 1073-1085: LUT mode samples the shadow colour textures by surface colour.
+            if (property.StartsWith("_Shadow", StringComparison.Ordinal) && property.EndsWith("ColorTex", StringComparison.Ordinal) &&
+                Enabled(material, "_ShadowColorType"))
+                return Unsupported("Shadow colour LUT mode looks textures up by colour, not mesh UVs; original retained.");
             bool outline = file.EndsWith("_o.shader", StringComparison.Ordinal) || file.EndsWith("_oo.shader", StringComparison.Ordinal);
             // Gem reads _SmoothnessTex at the main UV only; refraction blur reads it with a fixed Repeat sampler.
             bool gem = file == "lts_gem.shader" || file == "ltsmulti_gem.shader";
             bool refractionBlur = file == "lts_ref_blur.shader";
 
-            if (property != "_AudioLinkMask" && Enabled(material, "_UseAudioLink")) return Unsupported("AudioLink-dependent material settings are not yet certified.");
+            // AudioLink's value only scales second/third layer and emission alpha, moves gradient lookups and displaces vertex
+            // positions (lil_common_frag.hlsl 794, 890, 1849-1857, 1933-1941; lil_vert_audiolink.hlsl 57): no ordinary map's UV moves.
+            // Its own lookup maps (local map, gradients) stay unsupported by their field classification.
             if (Enabled(material, "_UseParallax") || Enabled(material, "_UsePOM"))
                 return Unsupported("Parallax/POM can move texture sampling outside static mesh UVs.");
             // Backface shifting and main/outline scrolling change only fd.uvMain (lil_common_frag.hlsl 256-282). Fields read at a raw mesh
@@ -288,6 +293,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     else
                         Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property),
                             sampler, "Selected raw UV / property ST", channel: channel, basis: own, dependencies: new[] { property });
+                // lil_vert_audiolink.hlsl 22-29: vertex AudioLink mask mode reads the same coordinates with
+                // lil_sampler_linear_repeat at LOD 0.
+                if (property == "_AudioLinkMask" && Enabled(material, "_AudioLink2Vertex") &&
+                    MaterialInputs.Float(material, "_AudioLinkVertexUVMode") == 3)
+                {
+                    if (channel == 0)
+                        AddComposed(result, material, "_MainTex", own, property, null, "AudioLink vertex mask / fixed Repeat", true);
+                    else
+                        Add(result, MaterialInputs.Scale(material, property), MaterialInputs.Offset(material, property),
+                            null, "AudioLink vertex mask / fixed Repeat", true, channel, own, new[] { property });
+                }
             }
             else if (field.Coordinates == Coordinates.RawOwn)
             {
@@ -355,7 +371,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Every read of these fields in every pass takes .r alone.
         internal static readonly HashSet<string> RedOnlyFields = new HashSet<string>(
             ("_MainColorAdjustMask _Main2ndBlendMask _Main3rdBlendMask _RimShadeMask _FurMask _FurLengthMask _AlphaMask " +
-             "_Bump2ndScaleMask _AnisotropyScaleMask _AnisotropyShiftNoiseMask _SmoothnessTex _MetallicGlossMap _SSAOMask").Split(' '), StringComparer.Ordinal);
+             "_Bump2ndScaleMask _AnisotropyScaleMask _AnisotropyShiftNoiseMask _SmoothnessTex _MetallicGlossMap _SSAOMask " +
+             // lil_common_functions.hlsl 277 (lilGetOutlineWidth), 645/692/694 (lilCalcDissolve*, every dissolve mask and noise),
+             // lil_common_frag.hlsl 432 (fur noise).
+             "_OutlineWidthMask _FurNoiseMask _DissolveMask _DissolveNoiseMask _Main2ndDissolveMask _Main2ndDissolveNoiseMask " +
+             "_Main3rdDissolveMask _Main3rdDissolveNoiseMask").Split(' '), StringComparer.Ordinal);
+        // Every read takes .rgb or single r, g, b: matcap blend masks (lil_common_frag.hlsl 1557, 1625), shadow blur and border masks
+        // (991-1025), the Lite triple mask (1572, 1740, 1881) and the AudioLink mask (662-705; lil_vert_audiolink.hlsl 30, 57).
+        internal static readonly HashSet<string> RgbOnlyFields = new HashSet<string>(
+            "_MatCapBlendMask _MatCap2ndBlendMask _ShadowBlurMask _ShadowBorderMask _TriMask _AudioLinkMask".Split(' '), StringComparer.Ordinal);
         // Entries built only from the ltspass_opaque, ltspass_tess_opaque and ltspass_lite_opaque passes (LIL_RENDER 0).
         // Those passes set fd.col.a = 1 before any use of the main alpha that can affect colour, and their
         // shadow-caster and depth passes compile the alpha path only for LIL_RENDER > 0.
@@ -365,10 +389,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static TextureChannels Channels(Material material, string property, string file)
         {
             if (RedOnlyFields.Contains(property)) return TextureChannels.R;
-            // VRChat's fallback shader reads main alpha when the fallback tag asks for cutout or transparency.
-            string fallback = material.GetTag("VRCFallback", false, "");
-            if (property == "_MainTex" && OpaqueEntries.Contains(file) &&
-                new[] { "Cutout", "Transparent", "Fade" }.All(mode => fallback.IndexOf(mode, StringComparison.OrdinalIgnoreCase) < 0))
+            if (RgbOnlyFields.Contains(property)) return TextureChannels.RGB;
+            // The SDF mask type (2) reads all four channels (lil_common_frag.hlsl 957-970); every other type reads .r alone (1060, 1064).
+            if (property == "_ShadowStrengthMask")
+                return MaterialInputs.Float(material, "_ShadowMaskType") == 2 ? TextureChannels.All : TextureChannels.R;
+            // Lite emission takes emissionColor.rgb only (lilEmission under LIL_LITE); the full entries read its alpha as blend.
+            if (property == "_EmissionMap" && file.StartsWith("ltsl", StringComparison.Ordinal)) return TextureChannels.RGB;
+            // Outline passes of LIL_RENDER 0 entries set fd.col.a = 1 before any use (lil_pass_forward_normal.hlsl 226-228).
+            if (property == "_OutlineTex" && OpaqueEntries.Contains(file)) return TextureChannels.RGB;
+            if (property == "_MainTex" && OpaqueEntries.Contains(file) && !ShaderAdapterRegistry.FallbackReadsAlpha(material))
                 return TextureChannels.RGB;
             return TextureChannels.All;
         }

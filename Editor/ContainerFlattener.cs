@@ -87,6 +87,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 else if (!After(owner, curvePath).OrderBy(t => t.GetInstanceID()).SequenceEqual(before.OrderBy(t => t.GetInstanceID()))) return result;
             }
 
+            // Avatar Masks name transforms by path too: the same rules, except that an entry for a container itself is dropped
+            // (nothing animates a container).
+            var maskRewrite = new Dictionary<(Transform, string), string>();
+            foreach (var (owner, maskPath) in rewriter.MaskPaths())
+            {
+                if (string.IsNullOrEmpty(maskPath)) continue;
+                var before = AvatarAnalysis.Resolve(owner, maskPath).ToList();
+                if (flattened.Contains(owner)) return result;
+                if (before.Count == 1 && flattened.Contains(before[0])) maskRewrite[(owner, maskPath)] = null;
+                else if (before.Any(flattened.Contains)) return result;
+                else if (before.Count == 1 && flattened.Any(f => before[0].IsChildOf(f) && f.IsChildOf(owner) && f != owner))
+                {
+                    string path = NewPath(owner, before[0]);
+                    if (!After(owner, path).SequenceEqual(before)) return result;
+                    maskRewrite[(owner, maskPath)] = path;
+                }
+                else if (!After(owner, maskPath).OrderBy(t => t.GetInstanceID()).SequenceEqual(before.OrderBy(t => t.GetInstanceID()))) return result;
+            }
+            if (maskRewrite.Count > 0)
+                rewriter.RewriteMasks((owner, path) => maskRewrite.TryGetValue((owner, path), out string next) ? next : path);
+
             if (rewrite.Count > 0)
                 rewriter.Rewrite((owner, binding) => rewrite.TryGetValue((owner, binding.path), out string path)
                     ? new EditorCurveBinding { path = path, type = binding.type, propertyName = binding.propertyName } : (EditorCurveBinding?)null);
