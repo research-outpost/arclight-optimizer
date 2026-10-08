@@ -370,7 +370,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             output.AppendLine("  Encoded PNG file size only; not VRAM use or platform download size. Savings are available from selected replacements and do not imply every assignment was applied.");
         }
 
-        private static string ReportFileName(string name, bool playMode, string folder)
+        internal static string ReportFileName(string name, bool playMode, string folder)
         {
             string sanitized = Regex.Replace(name ?? "", @"[^A-Za-z0-9_-]+", "_").Trim('_', '-');
             if (sanitized.Length == 0) sanitized = "Avatar";

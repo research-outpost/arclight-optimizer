@@ -205,7 +205,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 foreach (var candidate in bucket)
                 {
                     progress?.Scanning(candidate.Group.Source, "Comparing duplicate texture files");
-                    string hash = FingerprintService.FileHash(candidate.Path);
+                    string hash;
+                    // A file that cannot be read right now (locked by an import, say) stays separate; the next build tries again.
+                    try { hash = FingerprintService.FileHash(candidate.Path); }
+                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { continue; }
                     progress?.CheckCancelled();
                     if (!byFileHash.TryGetValue(hash, out var copies))
                     {

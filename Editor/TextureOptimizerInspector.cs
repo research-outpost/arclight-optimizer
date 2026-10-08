@@ -40,15 +40,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
         }
 
-        // The newest report whose file name carries this avatar's name (reports are named after the build copy).
+        // The newest of this avatar's own reports. The file names are rebuilt exactly as the report writer makes them (they end with
+        // a hash of the full name), for the avatar itself and its build copy, in and out of Play Mode, so a similarly named avatar
+        // ("Chocofuyu" and "Chocofuyu Medium") never matches.
         private static string LastReport(string avatarName)
         {
             string folder = AvatarTextureOptimizer.OutputFolder;
             if (!Directory.Exists(folder)) return null;
-            string name = System.Text.RegularExpressions.Regex.Replace(avatarName ?? "", @"[^A-Za-z0-9_-]+", "_").Trim('_', '-');
-            return Directory.GetFiles(folder, "ArclightTextureOptimizer_*.txt")
-                .Where(f => name.Length == 0 || Path.GetFileName(f).StartsWith("ArclightTextureOptimizer_" + name, System.StringComparison.Ordinal))
-                .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+            try
+            {
+                return new[] { avatarName, avatarName + "(Clone)" }
+                    .SelectMany(name => new[] { false, true }.Select(play => folder.TrimEnd('/') + "/" + OptimizationLog.ReportFileName(name, play, folder)))
+                    .Where(File.Exists).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+            }
+            catch (IOException) { return null; } // The folder path is too long for any report name.
         }
 
         private static void ClearCache()

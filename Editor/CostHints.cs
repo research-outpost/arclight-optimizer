@@ -13,8 +13,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static readonly MethodInfo StorageSize = typeof(UnityEditor.Editor).Assembly.GetType("UnityEditor.TextureUtil")?
             .GetMethod("GetStorageMemorySizeLong", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
 
-        internal static long Bytes(Texture texture) =>
-            StorageSize != null ? (long)StorageSize.Invoke(null, new object[] { texture }) : UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(texture);
+        // Unity's internal method can change between versions; the public profiler size is the fallback.
+        internal static long Bytes(Texture texture)
+        {
+            try { if (StorageSize != null) return System.Convert.ToInt64(StorageSize.Invoke(null, new object[] { texture })); }
+            catch (System.Exception) { }
+            return UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(texture);
+        }
 
         internal static List<string> Collect(GameObject root)
         {
