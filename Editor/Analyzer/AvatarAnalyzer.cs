@@ -196,6 +196,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 finding.Where = authoredKeys.Contains(finding.Key) ? null : "Only in the uploaded version: a tool that runs at upload causes this";
                 // The built copy is deleted; point at the authored asset it came from.
                 finding.Target = finding.Playable != null ? source.Playables.FirstOrDefault(p => p.Name == finding.Playable)?.Controller
+                    : new[] { "face|", "readonly|", "contacts|", "limit|", "planeglobal|" }.Any(p => finding.Key.StartsWith(p, StringComparison.Ordinal)) ? source.Descriptor
                     : finding.Key.StartsWith("menu", StringComparison.Ordinal) || finding.Key.StartsWith("puppet|", StringComparison.Ordinal) ? source.MenuAsset : source.ExpressionAsset;
                 result.Add(finding);
             }
@@ -203,7 +204,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         }
 
         // Problems judged on the uploaded version: tools that run at upload often fix them (Modular Avatar, VRCFury).
-        internal static bool Breakage(Finding f) => new[] { "missing|", "menu|", "menus|", "menuvalue", "budget", "puppet|", "ft|", "control|" }.Any(p => f.Key.StartsWith(p, StringComparison.Ordinal));
+        internal static bool Breakage(Finding f) => new[] { "missing|", "menu|", "menus|", "menuvalue", "budget", "puppet|", "ft|", "control|",
+            "condtype|", "face|", "readonly|", "contacts|", "playaudio|", "driveradd|", "layer0|", "limit|", "planeglobal|" }.Any(p => f.Key.StartsWith(p, StringComparison.Ordinal));
 
         // True while CheckBuilt runs the upload steps, so the upload report (UploadReport) stays quiet for that copy.
         internal static bool Building { get; private set; }
@@ -255,6 +257,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             }
             DriverTargets(avatar, findings);
             if (avatar.Playables.Count > 0) LayerControls(avatar, findings);
+            SetupChecks(avatar, findings);
             MenuStructure(avatar, findings);
             if (!built) { StartStates(avatar, findings); Components(avatar, findings, laterNames); }
             ExpressionsAndMenu(avatar, findings, built, laterNames);
