@@ -140,6 +140,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 // PhysBone network IDs are fixed before any pass can remove a PhysBone (see NetworkIdPins).
                 NetworkIdPins.Pin(ctx.AvatarRootObject);
+                if (state.OptimizeMeshes)
+                {
+                    BuildTimings.Step("ProbeAnchorUnifier");
+                    var anchored = ProbeAnchorUnifier.Run(ctx.AvatarRootObject);
+                    if (anchored.Changed > 0)
+                    {
+                        string summary = "Gave " + anchored.Changed + " renderer(s) the same light and reflection probe anchor (" + anchored.Anchor + "), so every mesh is lit from one point and meshes can merge.";
+                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                        state.Report?.Add(null, summary);
+                    }
+                }
                 BuildTimings.Step("First avatar analysis");
                 // An incomplete analysis makes every animation-dependent pass stand down (see Prepare).
                 var analysis = state.VrcfuryPending ? AvatarAnalysis.Incomplete(ctx.AvatarRootObject) : AvatarAnalysis.Build(ctx);

@@ -66,7 +66,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 else Why("several settings differ from its nearest partner", r);
             }
             if (anchorOrBounds)
-                result.Hints.Add("Some meshes differ from a partner only by their probe anchor or bounds setting. VRCFury's Anchor Override Fix and Bounding Box Fix, or Modular Avatar's Mesh Settings, give meshes one anchor and one bounds so Arclight can merge them; that changes lighting or culling slightly, so it is your choice.");
+                result.Hints.Add("Some meshes differ from a partner only by their bounds setting (or, for meshes in the Exclude list, their probe anchor). VRCFury's Bounding Box Fix or Modular Avatar's Mesh Settings give meshes one bounds so Arclight can merge them; that changes culling slightly, so it is your choice.");
 
             // Merged members are destroyed as each group completes; their animation is retargeted even if a later group fails.
             try

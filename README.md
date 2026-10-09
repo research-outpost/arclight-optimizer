@@ -57,6 +57,7 @@ Options: **Allow Unsupported Shaders** (see Limitations), **MMD Support** (on by
 - **Paused PhysBones**: restart from rest when shown again.
 - **Mono audio**: level within 0.05%.
 - **Folded animator layers**: a rotation can differ by one float step.
+- **One anchor override**: every mesh is lit from the Chest bone (Exclude keeps a mesh's own), so lighting shifts slightly on meshes that had another anchor or none.
 
 ## Other optimizers
 
