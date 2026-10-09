@@ -35,6 +35,8 @@ namespace Okarin.AvatarTextureOptimizer
         public bool allowUnsupportedShaders;
         [Tooltip("Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them.")]
         public bool keepMmdShapes = true;
+        [Tooltip("Give every skinned mesh the Hips as root bone and one bounding box sized to everything the avatar can reach, so meshes never vanish in close-ups and meshes that differed only by bounds can merge.")]
+        public bool unifiedBounds;
         [Tooltip("Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object.")]
         public System.Collections.Generic.List<Transform> exclude = new System.Collections.Generic.List<Transform>();
     }

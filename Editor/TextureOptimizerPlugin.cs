@@ -83,6 +83,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             state.OptimizeMeshes = config.enabled && config.optimizeMeshes;
             state.OptimizeAudio = config.enabled && config.optimizeAudio;
             state.KeepMmdShapes = config.keepMmdShapes;
+            state.UnifiedBounds = config.unifiedBounds;
         }
 
         private static void Textures(BuildContext ctx)
@@ -161,6 +162,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     state.Report?.Add(null, unread);
                 }
                 bool vrcfuryPending = state.VrcfuryPending;
+                if (state.OptimizeMeshes && state.UnifiedBounds && !vrcfuryPending)
+                {
+                    BuildTimings.Step("BoundsUnifier");
+                    var unified = BoundsUnifier.Run(analysis);
+                    if (unified.Changed > 0)
+                    {
+                        string summary = "Gave " + unified.Changed + " skinned mesh(es) the Hips as root bone and one " + unified.Size.ToString("0.00") +
+                            " m bounding box that covers every pose, so nothing visible is culled and meshes can merge." +
+                            (unified.Kept.Count > 0 ? " Kept their own bounds: " + string.Join(", ", unified.Kept.Take(20)) + (unified.Kept.Count > 20 ? ", ..." : "") + "." : "");
+                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                        state.Report?.Add(null, summary);
+                    }
+                }
                 if (state.OptimizeMeshes && !vrcfuryPending)
                 {
                     BuildTimings.Step("ConstraintConverter");
@@ -603,6 +617,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal bool VrcfuryPending;
         // The component's MMD Support setting: keep the shapes MMD dance worlds animate.
         internal bool KeepMmdShapes = true;
+        internal bool UnifiedBounds;
         // Non-asset meshes the avatar had before any pass ran; they belong to the user's scene (see MeshReadWrite.Record).
         internal HashSet<Mesh> SourceMeshes;
         public int AppliedTextures;
