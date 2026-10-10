@@ -396,7 +396,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return;
             }
             float selected = Number(m, uvProperty, true);
-            if (selected == 9) throw new InvalidOperationException("Matcap UV sampling is excluded even with Allow Unsupported Shaders enabled.");
+            if (selected == 9) throw new InvalidOperationException("Matcap UV sampling is excluded even with Unsupported Shaders enabled.");
             if (selected < 0 || selected > 3 || selected != Mathf.Floor(selected))
                 throw new InvalidOperationException(property + " requires mesh UV0-UV3; view, world, polar, distorted and screen-space UVs are not modeled.");
             int uv = (int)selected;

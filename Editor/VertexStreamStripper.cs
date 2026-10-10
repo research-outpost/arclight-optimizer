@@ -317,6 +317,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string fact = ShaderFacts.Key(material, "d3d", "uniforms|" + CompileTables);
             if (ShaderFacts.TryGet("uniforms", fact, out string known))
                 return CompiledUniforms[key] = new HashSet<string>(known.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+            // An early stop is kept on disk too, under the names it was asked about: the next build asks the same and skips the
+            // compile. It answers only those names, exactly as the in-memory partial set does.
+            string partialFact = groups == null || fact == null ? null :
+                fact + "|asked:" + string.Join(";", groups.Select(g => string.Join(",", g)).OrderBy(s => s, StringComparer.Ordinal));
+            if (partialFact != null && ShaderFacts.TryGet("uniforms-partial", partialFact, out string knownPartial))
+            {
+                var found = new HashSet<string>(knownPartial.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+                if (Covered(found)) return PartialUniforms[key] = found;
+            }
             var names = new HashSet<string>(StringComparer.Ordinal);
             // A variant that fails to compile records an error on the shader, which other tools (VRCFury's upload check)
             // then read as a broken material; errors this check caused are cleared again (with any earlier warnings, which
@@ -354,7 +363,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             }
                             // A failed variant may be one VRChat draws (the failure can be a one-off), so the check stops: every value stays.
                             else return CompiledUniforms[key] = null;
-                            if (Covered(names)) return PartialUniforms[key] = names;
+                            if (Covered(names))
+                            {
+                                if (partialFact != null) ShaderFacts.Put("uniforms-partial", partialFact, string.Join(" ", names));
+                                return PartialUniforms[key] = names;
+                            }
                         }
                     }
                 }

@@ -45,7 +45,7 @@ Manual install: extract `research-outpost.arclight-optimizer-<version>.zip` from
 2. **Add Component → Arclight → Arclight Optimizer**.
 3. Build or upload as usual, or enter Play Mode to preview (needs Scene Reload on).
 
-Options: **Allow Unsupported Shaders** (see Limitations), **MMD Support** (on by default; keeps MMD dance blend shapes) and **Exclude** (objects and their children left alone). Disable the component to skip it.
+Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by default; keeps MMD dance blend shapes) and **Exclude** (objects and their children left alone). Disable the component to skip it.
 
 **Open reports folder** on the component shows what each build saved and changed, and why anything was kept.
 
@@ -93,7 +93,7 @@ Options: **Allow Unsupported Shaders** (see Limitations), **MMD Support** (on by
 - Matcaps, ramps, unknown sampling and untrackable texture animation are kept.
 - Distant mips can show slight colour bleeding; check at a distance.
 - Quest textures keep their formats; Quest builds are untested on a device.
-- **Allow Unsupported Shaders** guesses texture mapping for unrecognized shaders and may cause artifacts. Test before uploading.
+- **Unsupported Shaders** guesses texture mapping for unrecognized shaders and may cause artifacts. Test before uploading.
 
 ## License
 

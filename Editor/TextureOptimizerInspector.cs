@@ -17,7 +17,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 EditorGUILayout.HelpBox("This avatar has Avatar Optimizer's " + avatarOptimizer.GetType().Name + " component on " + avatarOptimizer.gameObject.name +
                     ". Arclight Optimizer does not work alongside Avatar Optimizer, so the build will stop with an error. Remove Avatar Optimizer's components or this one.", MessageType.Error);
             var allowUnsupported = serializedObject.FindProperty("allowUnsupportedShaders");
-            EditorGUILayout.PropertyField(allowUnsupported, new GUIContent("Allow Unsupported Shaders",
+            EditorGUILayout.PropertyField(allowUnsupported, new GUIContent("Unsupported Shaders",
                 "Attempt texture fields of shaders Arclight does not recognize, assuming UV0 and the property's tiling/offset. Never overrides what a recognized shader (lilToon, Poiyomi and the others) keeps. Can cause visible seams; test before uploading."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.keepMmdShapes)), new GUIContent("MMD Support",
                 "Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them."));
