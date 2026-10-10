@@ -111,12 +111,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var textures = serialized.FindProperty("m_SavedProperties.m_TexEnvs");
                     for (int i = textures.arraySize - 1; i >= 0; i--)
                         if (stale.Contains(textures.GetArrayElementAtIndex(i).FindPropertyRelative("first").stringValue)) textures.DeleteArrayElementAtIndex(i);
-                    foreach (string list in ValueLists)
-                    {
-                        var array = serialized.FindProperty(list);
-                        for (int i = array == null ? -1 : array.arraySize - 1; i >= 0; i--)
-                            if (values.Contains(array.GetArrayElementAtIndex(i).FindPropertyRelative("first").stringValue)) array.DeleteArrayElementAtIndex(i);
-                    }
+                    foreach (string list in ValueLists) RemoveEntries(serialized.FindProperty(list), values);
                     if (keywords > 0) serialized.FindProperty("m_InvalidKeywords")?.ClearArray();
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
@@ -142,6 +137,45 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static readonly string[] ValueLists = { "m_SavedProperties.m_Floats", "m_SavedProperties.m_Colors", "m_SavedProperties.m_Ints" };
+
+        // Removes the named entries from a saved value list, keeping the others in order: the same list one delete per entry gives,
+        // built in one pass. A locked Poiyomi material can hold thousands of stale values, and each DeleteArrayElementAtIndex shifts
+        // the whole serialized array (about a millisecond apiece), so deleting one by one took minutes on large avatars.
+        private static void RemoveEntries(SerializedProperty array, HashSet<string> names)
+        {
+            if (array == null || names.Count == 0) return;
+            int count = array.arraySize;
+            var kept = new List<(string Name, SerializedPropertyType Type, float Float, Color Color, int Int)>(count);
+            for (int i = 0; i < count; i++)
+            {
+                var entry = array.GetArrayElementAtIndex(i);
+                string name = entry.FindPropertyRelative("first").stringValue;
+                if (names.Contains(name)) continue;
+                var value = entry.FindPropertyRelative("second");
+                switch (value.propertyType)
+                {
+                    case SerializedPropertyType.Float: kept.Add((name, value.propertyType, value.floatValue, default, 0)); break;
+                    case SerializedPropertyType.Color: kept.Add((name, value.propertyType, 0, value.colorValue, 0)); break;
+                    case SerializedPropertyType.Integer: kept.Add((name, value.propertyType, 0, default, value.intValue)); break;
+                    default:
+                        // A value kind this does not copy: fall back to deleting entries one by one.
+                        for (int j = count - 1; j >= 0; j--)
+                            if (names.Contains(array.GetArrayElementAtIndex(j).FindPropertyRelative("first").stringValue)) array.DeleteArrayElementAtIndex(j);
+                        return;
+                }
+            }
+            if (kept.Count == count) return;
+            for (int i = 0; i < kept.Count; i++)
+            {
+                var entry = array.GetArrayElementAtIndex(i);
+                entry.FindPropertyRelative("first").stringValue = kept[i].Name;
+                var value = entry.FindPropertyRelative("second");
+                if (kept[i].Type == SerializedPropertyType.Float) value.floatValue = kept[i].Float;
+                else if (kept[i].Type == SerializedPropertyType.Color) value.colorValue = kept[i].Color;
+                else value.intValue = kept[i].Int;
+            }
+            array.arraySize = kept.Count;
+        }
         // Values VRChat's shader fallback (Standard) may read by name; the list matches Avatar Optimizer's.
         private static readonly HashSet<string> FallbackValues = new HashSet<string>(StringComparer.Ordinal)
         {
