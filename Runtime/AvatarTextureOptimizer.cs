@@ -30,7 +30,7 @@ namespace Okarin.AvatarTextureOptimizer
             if (resolution <= 2048) return 24;
             return 32;
         }
-        public const string OutputFolder = "Assets/Arclight/Optimizer/Textures/Cache";
+        public const string OutputFolder = "Assets/Arclight/Optimizer/Cache";
         [Tooltip("Attempt unsupported texture fields using UV0 and property tiling/offset. Incorrect sampling assumptions can cause rendering artifacts.")]
         public bool allowUnsupportedShaders;
         [Tooltip("Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them.")]

@@ -28,6 +28,25 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             internal bool IsEmpty => Assets.Count == 0 && StagingFiles.Count == 0 && StaleEntries == 0;
         }
 
+        // Before 1.3.7 the cache lived in Assets/Arclight/Optimizer/Textures/Cache. Moving the folder with the AssetDatabase
+        // keeps every GUID, so the cache's mappings (object references) and the reports stay valid. Only when the new folder
+        // does not exist yet; an emptied Textures folder is removed.
+        private const string OldFolder = "Assets/Arclight/Optimizer/Textures/Cache";
+
+        [InitializeOnLoadMethod]
+        private static void ScheduleMove() => EditorApplication.delayCall += MoveOldFolder;
+
+        internal static void MoveOldFolder()
+        {
+            if (!AssetDatabase.IsValidFolder(OldFolder) || AssetDatabase.IsValidFolder(AvatarTextureOptimizer.OutputFolder)) return;
+            string error = AssetDatabase.MoveAsset(OldFolder, AvatarTextureOptimizer.OutputFolder);
+            if (!string.IsNullOrEmpty(error)) { UnityEngine.Debug.LogWarning("Arclight Optimizer: could not move the cache to " + AvatarTextureOptimizer.OutputFolder + ": " + error); return; }
+            string parent = Path.GetDirectoryName(OldFolder).Replace('\\', '/');
+            if (AssetDatabase.IsValidFolder(parent) && AssetDatabase.GetSubFolders(parent).Length == 0 && AssetDatabase.FindAssets("", new[] { parent }).Length == 0)
+                AssetDatabase.DeleteAsset(parent);
+            UnityEngine.Debug.Log("Arclight Optimizer: moved the cache to " + AvatarTextureOptimizer.OutputFolder + ".");
+        }
+
         internal static Plan Prepare(string folder = AvatarTextureOptimizer.OutputFolder, int today = -1, int unusedDays = UnusedDays)
         {
             var plan = new Plan { Today = today < 0 ? Today : today, UnusedDays = unusedDays };
