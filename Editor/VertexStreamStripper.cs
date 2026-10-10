@@ -326,13 +326,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static readonly Dictionary<string, HashSet<string>> CompiledUniforms = new Dictionary<string, HashSet<string>>();
+        private const string FailedCompile = "<failed>";
         private static readonly Dictionary<string, HashSet<string>> PartialUniforms = new Dictionary<string, HashSet<string>>();
 
         // The code tables the compiled facts depend on; part of their disk key, so changing a table recompiles.
         private static string compileTables;
         private static string CompileTables => compileTables ?? (compileTables = FingerprintService.Hash(System.Text.Encoding.UTF8.GetBytes(
             string.Join(" ", BuiltInGlobals) + "|" + string.Join(";", LightingSets.Select(s => string.Join(" ", s))) + "|" + string.Join(" ", Optional) +
-            "|vertex-inputs: no meta or never, shader and built-in globals each alone, all at once and each lighting set|uniforms and texture bindings: vertex fragment geometry hull domain, each global alone and each lighting set")));
+            "|vertex-inputs: no meta or never, shader and built-in globals each alone, all at once and each lighting set|uniforms and texture bindings: no meta or never, vertex fragment geometry hull domain, each global alone and each lighting set, synthetic failures skipped")));
 
         // Keyed by the shader file's dependency hash (its includes too), so a shader edited since the last build is compiled
         // again while unchanged shaders are not.
@@ -357,7 +358,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (PartialUniforms.TryGetValue(key, out var partial) && Covered(partial)) return partial;
             string fact = ShaderFacts.Key(material, "d3d", "uniforms|" + CompileTables);
             if (ShaderFacts.TryGet("uniforms", fact, out string known))
-                return CompiledUniforms[key] = new HashSet<string>(known.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+                return CompiledUniforms[key] = known == FailedCompile ? null : new HashSet<string>(known.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
             // An early stop is kept on disk too, under the names it was asked about: the next build asks the same and skips the
             // compile. It answers only those names, exactly as the in-memory partial set does.
             string partialFact = groups == null || fact == null ? null :
@@ -388,6 +389,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 for (int p = 0; p < subshader.PassCount; p++)
                 {
                     var pass = subshader.GetPass(p);
+                    // Meta is drawn only by lightmap baking, and lilToon's LightMode Never pass (a property list) is never drawn and
+                    // does not compile on its own.
+                    string mode = pass.FindTagValue(new ShaderTagId("LightMode")).name ?? "";
+                    if (mode.Equals("Meta", StringComparison.OrdinalIgnoreCase) || mode == "Never") continue;
                     foreach (var stage in stages.Where(pass.HasShaderStage))
                     {
                         // Each global keyword the Built-in pipeline sets, one at a time (asking each stage for its own list logs
@@ -402,8 +407,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 // Textures the variant binds, by name: a saved texture no variant binds is never read.
                                 foreach (var texture in info.TextureBindings ?? Array.Empty<ShaderData.TextureBindingInfo>()) names.Add(texture.Name);
                             }
-                            // A failed variant may be one VRChat draws (the failure can be a one-off), so the check stops: every value stays.
-                            else return CompiledUniforms[key] = null;
+                            // A pipeline keyword added here can make a variant Unity never builds (SHADOWS_SHADOWMASK alone in a pass that
+                            // only lists light types, say), and that one fails on its own; it is skipped. With the material's keywords
+                            // alone the variant is one Unity built, so a failure there is real: every value stays, and the failure is
+                            // kept on disk so later builds do not compile the same shader again (the key changes with the shader).
+                            else if (extra.Length > 0) continue;
+                            else { ShaderFacts.Put("uniforms", fact, FailedCompile); return CompiledUniforms[key] = null; }
                             if (Covered(names))
                             {
                                 if (partialFact != null) ShaderFacts.Put("uniforms-partial", partialFact, string.Join(" ", names));
