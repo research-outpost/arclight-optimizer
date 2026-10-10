@@ -24,6 +24,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         internal sealed class ExpressionAdds { public List<(string Name, AnimatorControllerParameterType Type)> Names = new List<(string, AnimatorControllerParameterType)>(); }
         // Curves animating things the avatar doesn't have.
         internal sealed class Curves { public List<(AnimationClip Clip, EditorCurveBinding Binding, bool ObjectReference)> Bindings = new List<(AnimationClip, EditorCurveBinding, bool)>(); }
+        // Texture assets (paths in Assets) whose import settings get Streaming Mipmaps turned on.
+        internal sealed class Streaming { public List<string> Paths = new List<string>(); }
 
         // A clip the fix may edit: its own .anim file in Assets (not inside a model, a controller or a read-only package).
         private static bool Editable(AnimationClip clip) => clip && AssetDatabase.IsMainAsset(clip) &&
@@ -118,6 +120,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             serialized.ApplyModifiedProperties(); // Recorded for Undo.
                         }
                         return "Added " + added + " parameter(s) to " + finding.Target.name + ", not synced (they use no synced bits).";
+                    });
+                // An import setting, not a file edit: nothing is backed up, and the action says how to turn it back off. Only how the
+                // texture loads changes (mip levels stream in), never its pixels.
+                case Streaming st when st.Paths.Any(p => AssetImporter.GetAtPath(p) is TextureImporter i && !i.streamingMipmaps):
+                    return ("Enable streaming", () =>
+                    {
+                        var changed = new List<string>();
+                        AssetDatabase.StartAssetEditing();
+                        try
+                        {
+                            foreach (string path in st.Paths)
+                            {
+                                if (!(AssetImporter.GetAtPath(path) is TextureImporter importer) || importer.streamingMipmaps) continue;
+                                importer.streamingMipmaps = true;
+                                importer.SaveAndReimport();
+                                changed.Add(Path.GetFileName(path));
+                            }
+                        }
+                        finally { AssetDatabase.StopAssetEditing(); }
+                        return "Turned on Streaming Mipmaps on " + changed.Count + " texture(s): " + string.Join(", ", changed) + ". To undo, untick it in their import settings.";
                     });
                 case Curves c when c.Bindings.Any(b => Editable(b.Clip)):
                     return ("Remove them", () =>

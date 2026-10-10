@@ -244,7 +244,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     GUILayout.Space(6);
                     if (finding.Target && GUILayout.Button(new GUIContent(finding.Target is UnityEditor.Animations.AnimatorController ? "Open" : "Show", "Go to it."), EditorStyles.miniButtonLeft, GUILayout.Width(50))) Reveal(finding.Target);
                     bool fileFix = Fixes.Files(finding).Count > 0;
-                    if (fix.HasValue && GUILayout.Button(new GUIContent(fix.Value.Label.Split(' ')[0], fix.Value.Label + " now. " + (fileFix
+                    if (fix.HasValue && GUILayout.Button(new GUIContent(fix.Value.Label.Split(' ')[0], fix.Value.Label + " now. " + (finding.Data is Fixes.Streaming ? "Changes texture import settings; untick Streaming Mipmaps to revert." : fileFix
                         ? "Changes files (backed up first); Edit > Undo, or Restore in Fix history, reverts it." : "Changes the scene; Edit > Undo reverts it in this session.")),
                         EditorStyles.miniButtonMid, GUILayout.Width(60)))
                     {

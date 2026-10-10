@@ -56,6 +56,30 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     firstMax = firstMax ?? overlay;
                 }
             }
+            // Textures with mipmaps but Streaming Mipmaps off, on any material the avatar shows or an animation swaps in. The SDK
+            // requires streaming for mipmapped textures; VRCFury then uploads a copy of the compressed texture with it on, which
+            // Arclight cannot optimize, and without VRCFury the SDK's Auto Fix changes the setting at upload.
+            var shown = renderers.SelectMany(r => r.sharedMaterials)
+                .Concat(avatar.Playables.SelectMany(p => Clips(p.Controller))
+                    .SelectMany(c => UnityEditor.AnimationUtility.GetObjectReferenceCurveBindings(c).SelectMany(b => UnityEditor.AnimationUtility.GetObjectReferenceCurve(c, b)))
+                    .Select(k => k.value as Material))
+                .Where(m => m).Distinct();
+            var noStreaming = shown.SelectMany(m => m.GetTexturePropertyNames().Select(m.GetTexture)).OfType<Texture2D>().Distinct()
+                .Select(UnityEditor.AssetDatabase.GetAssetPath)
+                .Where(p => p.StartsWith("Assets/", System.StringComparison.Ordinal) &&
+                    UnityEditor.AssetImporter.GetAtPath(p) is UnityEditor.TextureImporter importer && importer.mipmapEnabled && !importer.streamingMipmaps)
+                .Distinct().OrderBy(p => p, System.StringComparer.Ordinal).ToList();
+            if (noStreaming.Count > 0)
+                findings.Add(new Finding
+                {
+                    Severity = Severity.WorthChecking, Key = "mipstream|", Target = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>(noStreaming[0]),
+                    Title = N(noStreaming.Count, "texture") + " " + (noStreaming.Count == 1 ? "has" : "have") + " Streaming Mipmaps off",
+                    Detail = "VRChat requires Streaming Mipmaps on textures with mipmaps. With VRCFury, each of these is uploaded as a copy of the already compressed texture, which Arclight can't optimize; without VRCFury, the SDK asks to change the setting at upload:\n" + Bullets(noStreaming.Select(System.IO.Path.GetFileName)),
+                    Fix = "Select the textures, tick Streaming Mipmaps in their import settings and click Apply. Nothing about how they look changes.",
+                    Identity = string.Join("\n", noStreaming),
+                    Data = new Fixes.Streaming { Paths = noStreaming }
+                });
+
             if (maxBlend.Count > 0)
                 findings.Add(new Finding
                 {

@@ -324,6 +324,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         string.Join(", ", unlocked.Take(10)) + (unlocked.Count > 10 ? ", ..." : "") + "). Unlocked, Arclight reads the full Poiyomi shader, " +
                         "so it keeps textures and values the locked shader would never use. If d4rk merges these materials, it prefers them unlocked " +
                         "(it bakes its own constants), except materials with Rename Animated properties, which should stay locked.");
+                // VRCFury copies a texture whose mipmaps are on but Streaming Mipmaps is off (the SDK requires it) into its build
+                // folder (FixMipmapStreamingService). The copy holds the already compressed texture, so Arclight keeps it; with
+                // Streaming Mipmaps on in the source's import settings there is no copy and the source image is processed.
+                var vrcfuryCopies = ctx.AvatarRootObject.GetComponentsInChildren<Renderer>(true)
+                    .SelectMany(r => r.sharedMaterials.Concat(analysis.SwappedMaterials(r))).Where(m => m).Distinct()
+                    .SelectMany(m => m.GetTexturePropertyNames().Select(m.GetTexture)).OfType<Texture2D>().Distinct()
+                    .Where(t => AssetDatabase.GetAssetPath(t).StartsWith("Packages/com.vrcfury.temp/", StringComparison.Ordinal) && t.streamingMipmaps)
+                    .Select(t => AssetDatabase.FindAssets(t.name + " t:Texture2D").Select(AssetDatabase.GUIDToAssetPath)
+                        .FirstOrDefault(p => p.StartsWith("Assets/", StringComparison.Ordinal) && System.IO.Path.GetFileNameWithoutExtension(p) == t.name &&
+                            AssetImporter.GetAtPath(p) is TextureImporter importer && importer.mipmapEnabled && !importer.streamingMipmaps))
+                    .Where(p => p != null).Distinct().OrderBy(p => p, StringComparer.Ordinal).ToList();
+                if (vrcfuryCopies.Count > 0)
+                    state.Report?.Add(null, "You could: turn on Streaming Mipmaps in the import settings of " + vrcfuryCopies.Count + " texture(s) (" +
+                        string.Join(", ", vrcfuryCopies.Take(10).Select(System.IO.Path.GetFileNameWithoutExtension)) + (vrcfuryCopies.Count > 10 ? ", ..." : "") +
+                        "). VRChat requires it, so VRCFury uploads an already compressed copy of each instead, which Arclight cannot optimize; with it on, Arclight optimizes the original images.");
                 if (state.OptimizeMeshes)
                 {
                     BuildTimings.Step("BlendShapeMerger");
