@@ -290,6 +290,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             ("_UseMatCap", new[] { "_MatCapTex", "_MatCapBlendMask", "_MatCapBumpMap" }),
             ("_UseMatCap2nd", new[] { "_MatCap2ndTex", "_MatCap2ndBlendMask", "_MatCap2ndBumpMap" }),
             ("_UseRim", new[] { "_RimColorTex" }),
+            ("_SSAO", new[] { "_SSAOMask" }), // lilSSAO only (see VertexStreamStripper.AuditedLilSsao); lilToon has no _SSAO.
             ("_UseBacklight", new[] { "_BacklightColorTex" }),
             ("_UseGlitter", new[] { "_GlitterColorTex", "_GlitterShapeTex" }),
             ("_UseEmission", new[] { "_EmissionMap", "_EmissionBlendMask", "_EmissionGradTex" }),

@@ -314,6 +314,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (mergedSkinned.Merged > 0) analysis = AvatarAnalysis.Build(ctx); // Renderers and their animation moved.
                 WhyNotLine(state, "skinned mesh(es) not merged", mergedSkinned.WhyNot);
                 foreach (string hint in mergedSkinned.Hints) state.Report?.Add(null, "You could: " + hint);
+                // Unlocked Poiyomi: Arclight reads the full, unspecialized shader, which keeps data the locked one would not need.
+                var poiyomi = new PoiyomiAdapter();
+                var unlocked = ctx.AvatarRootObject.GetComponentsInChildren<Renderer>(true).SelectMany(r => r.sharedMaterials)
+                    .Where(m => m && poiyomi.Matches(m) && !m.shader.name.StartsWith("Hidden/Locked/", StringComparison.Ordinal))
+                    .Select(m => m.name.Replace("(Clone)", "")).Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
+                if (unlocked.Count > 0)
+                    state.Report?.Add(null, "You could: lock " + unlocked.Count + " Poiyomi material(s) in Poiyomi's inspector before building (" +
+                        string.Join(", ", unlocked.Take(10)) + (unlocked.Count > 10 ? ", ..." : "") + "). Unlocked, Arclight reads the full Poiyomi shader, " +
+                        "so it keeps textures and values the locked shader would never use. If d4rk merges these materials, it prefers them unlocked " +
+                        "(it bakes its own constants), except materials with Rename Animated properties, which should stay locked.");
                 if (state.OptimizeMeshes)
                 {
                     BuildTimings.Step("BlendShapeMerger");

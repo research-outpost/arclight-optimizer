@@ -67,6 +67,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             PartialUniforms.Clear();
             SkinnedMeshMerger.VertexIdReaders.Clear();
             DegenerateTriangleRemover.Safe.Clear();
+            LilSsaoFolders.Clear();
         }
 
         internal sealed class Result { public int Meshes; public long Bytes; }
@@ -181,12 +182,52 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         internal static bool IsAuditedLilToonShader(Shader shader, out bool outline) => IsAuditedLilToon(shader, out outline);
 
+        // lilSSAO (GekikaraStore) builds its shaders from lilToon's own pass templates (lilSubShaderBRP "Default", "DefaultUsePass"
+        // and friends, with the same entry names) plus one block: custom.hlsl declares the SSAO uniforms and _SSAOMask, and
+        // custom_insert.hlsl's BEFORE_FOG darkens fd.col from the camera depth texture. That block reads only fd.N, fd.uvMain,
+        // positionCS/SS and depth, which lilToon already reads, so no vertex input, object-space read, ID mask or texture other than
+        // _SSAOMask is added, and _SSAOMask is sampled only while _SSAO is on (lilSSAO_ApplySSAO returns before the sample). Its
+        // "_o" entries list their passes in their own block; the outline flag still comes from the file name, which keeps outline
+        // textures. Audited on the folder whose every non-meta file hashes to this value; any other version is compiled instead.
+        private const string LilSsaoFingerprint = "cf52f8810ecc6f980c3566cc4586ddb166184af32da3d78c3484e68e5c62219d";
+        private static readonly Dictionary<string, bool> LilSsaoFolders = new Dictionary<string, bool>(StringComparer.Ordinal);
+
+        private static bool AuditedLilSsao(string folder)
+        {
+            folder = folder.Replace('\\', '/');
+            if (LilSsaoFolders.TryGetValue(folder, out bool known)) return known;
+            bool audited = false;
+            try
+            {
+                var files = System.IO.Directory.GetFiles(folder).Select(System.IO.Path.GetFileName)
+                    .Where(f => !f.EndsWith(".meta", StringComparison.Ordinal)).OrderBy(f => f, StringComparer.Ordinal);
+                using (var sha = System.Security.Cryptography.SHA256.Create())
+                using (var stream = new System.IO.MemoryStream())
+                {
+                    foreach (string f in files)
+                    {
+                        string text = System.IO.File.ReadAllText(System.IO.Path.Combine(folder, f)).Replace("\r\n", "\n");
+                        var bytes = System.Text.Encoding.UTF8.GetBytes(f + "\n" + text + "\n");
+                        stream.Write(bytes, 0, bytes.Length);
+                    }
+                    audited = string.Concat(sha.ComputeHash(stream.ToArray()).Select(b => b.ToString("x2"))) == LilSsaoFingerprint;
+                }
+            }
+            catch (Exception) { audited = false; }
+            return LilSsaoFolders[folder] = audited;
+        }
+
         private static bool IsAuditedLilToon(Shader shader, out bool outline)
         {
             outline = false;
             string path = AssetDatabase.GetAssetPath(shader);
             string file = System.IO.Path.GetFileName(path);
-            if (path != LilToonSourceGuard.Root + "/Shader/" + file || !LilToonEntries.Contains(file)) return false;
+            if (path.EndsWith(".lilcontainer", StringComparison.Ordinal))
+            {
+                file = System.IO.Path.ChangeExtension(file, ".shader");
+                if (!LilToonEntries.Contains(file) || !AuditedLilSsao(System.IO.Path.GetDirectoryName(path))) return false;
+            }
+            else if (path != LilToonSourceGuard.Root + "/Shader/" + file || !LilToonEntries.Contains(file)) return false;
             if (!(UnityEditor.PackageManager.PackageInfo.FindForAssetPath(LilToonSourceGuard.Root + "/package.json")?.version is string version) || !AuditedLilToonVersions.Contains(version))
                 return false;
             outline = file.EndsWith("_o.shader", StringComparison.Ordinal) || file.EndsWith("_oo.shader", StringComparison.Ordinal);
