@@ -188,8 +188,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // positionCS/SS and depth, which lilToon already reads, so no vertex input, object-space read, ID mask or texture other than
         // _SSAOMask is added, and _SSAOMask is sampled only while _SSAO is on (lilSSAO_ApplySSAO returns before the sample). Its
         // "_o" entries list their passes in their own block; the outline flag still comes from the file name, which keeps outline
-        // textures. Audited on the folder whose every non-meta file hashes to this value; any other version is compiled instead.
-        private const string LilSsaoFingerprint = "cf52f8810ecc6f980c3566cc4586ddb166184af32da3d78c3484e68e5c62219d";
+        // textures. Audited on folders whose every non-meta file hashes to one of these values; any other version is compiled instead.
+        // The second (2026-10-13 update) adds a vertex-to-fragment member computed from positionWS and positionCS, reads the camera
+        // depth texture through its own point sampler and no longer injects SSAO into the fur entries: still no vertex input, object-
+        // space read or texture beyond _SSAOMask, which is still read only while _SSAO is on.
+        private static readonly HashSet<string> LilSsaoFingerprints = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "cf52f8810ecc6f980c3566cc4586ddb166184af32da3d78c3484e68e5c62219d",
+            "e35681be90382a8d1ecf1445a6063f8150729ec56bb0a926effbf51457c6a0ff",
+        };
         private static readonly Dictionary<string, bool> LilSsaoFolders = new Dictionary<string, bool>(StringComparer.Ordinal);
 
         private static bool AuditedLilSsao(string folder)
@@ -210,7 +217,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         var bytes = System.Text.Encoding.UTF8.GetBytes(f + "\n" + text + "\n");
                         stream.Write(bytes, 0, bytes.Length);
                     }
-                    audited = string.Concat(sha.ComputeHash(stream.ToArray()).Select(b => b.ToString("x2"))) == LilSsaoFingerprint;
+                    string hash = string.Concat(sha.ComputeHash(stream.ToArray()).Select(b => b.ToString("x2")));
+                    audited = LilSsaoFingerprints.Contains(hash);
                 }
             }
             catch (Exception) { audited = false; }
