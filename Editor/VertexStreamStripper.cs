@@ -37,8 +37,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal const string AuditedLilToon = "2.3.4";
         // Versions whose Built-in pipeline shader sources match 2.3.4 at every audited point. 2.3.2 differs only in a
         // URP-only additional-light mode, URP probe-volume skip_variants pragmas and two decal property declarations
-        // (diffed 2026-10-03): no vertex input, object-space read, ID mask, render state or sampling guard changes.
-        internal static readonly HashSet<string> AuditedLilToonVersions = new HashSet<string>(StringComparer.Ordinal) { "2.3.4", "2.3.2" };
+        // (diffed 2026-10-03): no vertex input, object-space read, ID mask, render state or sampling guard changes. 2.4.0 (diffed
+        // 2026-10-19) changes only URP probe-volume sampling (under PROBE_VOLUMES_L1/L2), which passes include VRC Light Volumes
+        // (global uniforms and textures, no material data) and the multi outline entry's queue tag; every other shader file is identical.
+        internal static readonly HashSet<string> AuditedLilToonVersions = new HashSet<string>(StringComparer.Ordinal) { "2.4.0", "2.3.4", "2.3.2" };
         internal static readonly VertexAttribute[] Optional =
         {
             VertexAttribute.Tangent, VertexAttribute.Color, VertexAttribute.TexCoord1, VertexAttribute.TexCoord2, VertexAttribute.TexCoord3,
