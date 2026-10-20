@@ -296,11 +296,43 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 int index = eyelidShapes.GetArrayElementAtIndex(i).intValue;
                                 if (index >= 0 && index < eyelids.sharedMesh.blendShapeCount) AddImplicit(eyelids, eyelids.sharedMesh.GetBlendShapeName(index));
                             }
+                        NativeFaceTracking(component);
                         foreach (string bone in new[] { "customEyeLookSettings.leftEye", "customEyeLookSettings.rightEye", "lipSyncJawBone" })
                             if (serialized.FindProperty(bone)?.objectReferenceValue is Transform driven && driven) { movingLocally.Add(driven); otherMotion.Add(driven); }
                     }
                 }
                 catch (Exception e) { Debug.LogException(e); Complete = false; }
+            }
+        }
+
+        // VRChat's native face tracking (SDK 3.10.6 beta on): the descriptor maps tracking keys to blend shape names on the face
+        // tracking meshes, and VRChat drives them at runtime, so no clip animates them. Every name a blend shape set or a
+        // parameter behaviour targets counts as driven on every configured mesh (the SDK applies a name to each mesh that has it).
+        // Read by reflection so older SDKs, which have none of these fields, still work; the SDK uses the first 16 meshes.
+        private void NativeFaceTracking(Component descriptor)
+        {
+            object Field(object instance, string name) => instance?.GetType().GetField(name)?.GetValue(instance);
+            if (!(Field(descriptor, "enableFaceTracking") is bool enabled) || !enabled) return;
+            var meshes = (Field(descriptor, "faceTrackingMeshes") as IEnumerable<SkinnedMeshRenderer> ?? Enumerable.Empty<SkinnedMeshRenderer>())
+                .Take(16).Where(r => r).ToList();
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            void Add(object value) { if (value is IEnumerable<string> list) names.UnionWith(list.Where(n => !string.IsNullOrEmpty(n))); }
+            if (Field(descriptor, "faceTrackingBlendshapesSetList") is System.Collections.IEnumerable sets)
+                foreach (var set in sets) { Add(Field(set, "faceTrackingBlendshapeNames")); Add(Field(set, "visemeBlendshapeNames")); }
+            if (Field(descriptor, "faceTrackingParameterBehaviors") is System.Collections.IEnumerable behaviours)
+                foreach (var behaviour in behaviours)
+                {
+                    string mode = Field(behaviour, "targetMode")?.ToString();
+                    if (mode == "ApplyToBlendshape" || mode == "LimitBlendshapeMin" || mode == "LimitBlendshapeMax") Add(new[] { Field(behaviour, "targetBlendshapeName") as string });
+                }
+            foreach (var mesh in meshes)
+            {
+                if (!mesh.sharedMesh) continue;
+                for (int i = 0; i < mesh.sharedMesh.blendShapeCount; i++)
+                {
+                    string shape = mesh.sharedMesh.GetBlendShapeName(i);
+                    if (names.Contains(shape)) AddImplicit(mesh, shape);
+                }
             }
         }
 
