@@ -9,7 +9,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     internal sealed class NoTextureChangesException : InvalidOperationException
     {
         public const string Explanation = "Clearing unused pixels and adding the edge-extension band would not change any RGBA pixels. Original retained; no duplicate needed.";
-        public NoTextureChangesException() : base(Explanation) { }
+        // Whether this run actually had compressed-size estimates (BundleSizeEstimator.CanEstimate is the
+        // capability to try, not a successful measure); the finding is checked again where one exists.
+        public readonly bool Estimated;
+        public NoTextureChangesException(bool estimated) : base(Explanation) { Estimated = estimated; }
     }
 
     internal sealed class NoFileSizeReductionException : InvalidOperationException
@@ -94,10 +97,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     internal static class GenerationCoordinator
     {
         // Extend by one quarter of the imported padding, then round up in source texels.
-        internal static Exception SelectNoOutputException(NoFileSizeReductionException rejectedCandidate, bool unchangedFallback)
+        internal static Exception SelectNoOutputException(NoFileSizeReductionException rejectedCandidate, bool unchangedFallback, bool estimated)
         {
             if (rejectedCandidate != null) return rejectedCandidate;
-            if (unchangedFallback) return new NoTextureChangesException();
+            if (unchangedFallback) return new NoTextureChangesException(estimated);
             return new InvalidOperationException("No texture candidate was produced.");
         }
         internal static int ExtensionRadius(int padding, int encodedSize, int importedSize) =>
@@ -393,7 +396,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 // A changed candidate rejected by the size gate is the useful result, even if a later
                 // fallback candidate happened to match the source pixels exactly.
-                throw SelectNoOutputException(notSmaller, unchanged);
+                throw SelectNoOutputException(notSmaller, unchanged, estimate);
             }
             return new GeneratedTextureMapping
             {

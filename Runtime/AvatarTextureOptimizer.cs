@@ -16,8 +16,6 @@ namespace Okarin.AvatarTextureOptimizer
         [System.NonSerialized] public bool optimizeMeshes = true;
         [System.NonSerialized] public bool optimizeAudio = true;
         [System.NonSerialized] public bool optimizeAnimations = true;
-        [HideInInspector] // Parked: no toggle, and the build ignores it. Kept so saved components stay readable.
-        public bool splitPhysBones;
         // Imported Unity dimensions after active-platform sizing. Rectangles use their longer side.
         public static int GetPaddingPixels(int width, int height)
         {

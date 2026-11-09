@@ -244,7 +244,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 catch (NoTextureChangesException e)
                                 {
                                     cache.unchangedTextures.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
-                                    cache.unchangedTextures.Add(new UnchangedTextureAnalysis { source = (Texture2D)group.Source, sourceId = id, recipeHash = recipe, lastUsedDay = CacheCleanup.Today, estimated = BundleSizeEstimator.CanEstimate });
+                                    cache.unchangedTextures.Add(new UnchangedTextureAnalysis { source = (Texture2D)group.Source, sourceId = id, recipeHash = recipe, lastUsedDay = CacheCleanup.Today, estimated = e.Estimated });
                                     EditorUtility.SetDirty(cache);
                                     summary.Unchanged++;
                                     result.Outcome = TextureResultKind.Unchanged;

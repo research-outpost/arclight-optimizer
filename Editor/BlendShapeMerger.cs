@@ -39,6 +39,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (analysis.IsAnimated(renderer, p => p == "m_Mesh")) continue;
                 if (analysis.ReferencesTo(mesh).Any(c => c != renderer) || renderer.GetComponent<Cloth>()) continue;
                 if (analysis.ReferencesTo(renderer).Any(c => c.GetType().Name != "VRCAvatarDescriptor")) continue;
+                if (analysis.IsNativeFaceTrackingMesh(renderer)) continue; // native face tracking binds these shapes by name; merging changes names it still looks up
                 var bindings = analysis.BindingsOn(renderer, p => p.StartsWith("blendShape.", StringComparison.Ordinal)).ToList();
                 if (bindings.Any(b => b.Legacy || b.FloatCurve == null ||
                     AvatarAnalysis.Resolve(b.Owner, b.Curve.path).Count() != 1)) continue;

@@ -1,5 +1,7 @@
 # Builds the VPM/UPM package zip when a version tag (v1.0.0, ...) is pushed and attaches it to a GitHub
-# release. The zip contains the package with its .meta files (Unity needs them for stable script references).
+# release. The zip contains the package with its .meta files (Unity needs them for stable script references),
+# minus the development-only folders (.tools, Tests, Documentation~) — the same set
+# .tools/Export-Public.ps1 keeps out of the public repository.
 # Download, docs and licence URLs are filled in from this repository.
 name: Release
 
@@ -38,7 +40,8 @@ jobs:
           zip_name="$NAME-$VERSION.zip"
           blob="https://github.com/$REPO/blob/$GITHUB_REF_NAME"
           mkdir -p build/package
-          rsync -a --exclude='.git*' --exclude='.github' --exclude='build' ./ build/package/
+          rsync -a --exclude='.git*' --exclude='.github' --exclude='build' --exclude='.tools' \
+             --exclude='Tests' --exclude='Tests.meta' --exclude='Documentation~' ./ build/package/
           jq --arg url "https://github.com/$REPO/releases/download/$GITHUB_REF_NAME/$zip_name" \
              --arg docs "$blob/README.md" --arg license "$blob/LICENSE.md" \
              '.url = $url | .documentationUrl = $docs | .licensesUrl = $license' \

@@ -48,6 +48,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private readonly Dictionary<Object, HashSet<Component>> referencedBy = new Dictionary<Object, HashSet<Component>>();
         private readonly Dictionary<Component, List<Object>> referencesFrom = new Dictionary<Component, List<Object>>();
         private readonly Dictionary<SkinnedMeshRenderer, HashSet<string>> implicitBlendShapes = new Dictionary<SkinnedMeshRenderer, HashSet<string>>();
+        // Renderers listed in faceTrackingMeshes while enableFaceTracking is on. Face-tracking stacks (FermataFT)
+        // validate after the build that every blend shape name an animation binds on these meshes still exists,
+        // so baking a bound shape there fails their build even though the curve would be inert.
+        private readonly HashSet<SkinnedMeshRenderer> faceTrackingRenderers = new HashSet<SkinnedMeshRenderer>();
         private readonly HashSet<Transform> movingLocally = new HashSet<Transform>();
         private readonly HashSet<Transform> scaling = new HashSet<Transform>();
         private readonly HashSet<Transform> otherMotion = new HashSet<Transform>();
@@ -315,6 +319,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (!(Field(descriptor, "enableFaceTracking") is bool enabled) || !enabled) return;
             var meshes = (Field(descriptor, "faceTrackingMeshes") as IEnumerable<SkinnedMeshRenderer> ?? Enumerable.Empty<SkinnedMeshRenderer>())
                 .Take(16).Where(r => r).ToList();
+            foreach (var mesh in meshes) faceTrackingRenderers.Add(mesh);
             var names = new HashSet<string>(StringComparer.Ordinal);
             void Add(object value) { if (value is IEnumerable<string> list) names.UnionWith(list.Where(n => !string.IsNullOrEmpty(n))); }
             if (Field(descriptor, "faceTrackingBlendshapesSetList") is System.Collections.IEnumerable sets)
@@ -351,6 +356,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal bool BlendShapeAnimated(SkinnedMeshRenderer renderer, string shape) =>
             IsAnimated(renderer, p => p == "blendShape." + shape) ||
             implicitBlendShapes.TryGetValue(renderer, out var set) && set.Contains(shape);
+
+        // Renderers the descriptor declares as native face-tracking meshes (see faceTrackingRenderers).
+        internal bool IsNativeFaceTrackingMesh(SkinnedMeshRenderer renderer) => renderer && faceTrackingRenderers.Contains(renderer);
 
         private void ScanMotion()
         {

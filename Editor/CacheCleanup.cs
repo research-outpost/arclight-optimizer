@@ -38,7 +38,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         internal static void MoveOldFolder()
         {
-            if (!AssetDatabase.IsValidFolder(OldFolder) || AssetDatabase.IsValidFolder(AvatarTextureOptimizer.OutputFolder)) return;
+            if (!AssetDatabase.IsValidFolder(OldFolder)) return;
+            if (AssetDatabase.IsValidFolder(AvatarTextureOptimizer.OutputFolder))
+            {
+                // A batchmode build can create the new folder (EnsureFolder) before this delayCall runs, or the
+                // delayCall never runs at all; say so instead of silently orphaning the old cache's GUIDs, mappings and reports.
+                UnityEngine.Debug.LogWarning("Arclight Optimizer: the pre-1.3.7 cache at " + OldFolder + " was not moved because " + AvatarTextureOptimizer.OutputFolder + " already exists; merge or delete " + OldFolder + " manually.");
+                return;
+            }
             string error = AssetDatabase.MoveAsset(OldFolder, AvatarTextureOptimizer.OutputFolder);
             if (!string.IsNullOrEmpty(error)) { UnityEngine.Debug.LogWarning("Arclight Optimizer: could not move the cache to " + AvatarTextureOptimizer.OutputFolder + ": " + error); return; }
             string parent = Path.GetDirectoryName(OldFolder).Replace('\\', '/');

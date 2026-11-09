@@ -90,7 +90,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // installed with its global "Always Optimize on Upload" setting, under which d4rk adds its own component at callback -15.
         internal static bool MayRun(GameObject root) =>
             root.GetComponentsInChildren<Component>(true).Any(c => c && c.GetType().Name == "d4rkAvatarOptimizer") ||
-            D4rkType() != null && EditorPrefs.GetBool("d4rkpl4y3r_AvatarOptimizer_DoOptimizeWithDefaultSettingsWhenNoComponent", false);
+            D4rkType() != null && GlobalOptimizeSetting();
+
+        // Read d4rk's own public setting property by reflection instead of its EditorPrefs key by name: if d4rk
+        // renames the key, GetBool would read false and Arclight's mesh cleanup would run beside d4rk's.
+        // The literal stays as fallback for builds where the property moved.
+        private static bool GlobalOptimizeSetting()
+        {
+            try
+            {
+                var settings = D4rkType()?.Assembly?.GetType("d4rkpl4y3r.AvatarOptimizer.AvatarOptimizerSettings");
+                if (settings?.GetProperty("DoOptimizeWithDefaultSettingsWhenNoComponent")?.GetValue(null) is bool value) return value;
+            }
+            catch (Exception) { }
+            return EditorPrefs.GetBool("d4rkpl4y3r_AvatarOptimizer_DoOptimizeWithDefaultSettingsWhenNoComponent", false);
+        }
 
         private static readonly Lazy<Type> d4rkType = new Lazy<Type>(() => AppDomain.CurrentDomain.GetAssemblies()
             .Select(assembly => assembly.GetType("d4rkAvatarOptimizer")).FirstOrDefault(type => type != null));

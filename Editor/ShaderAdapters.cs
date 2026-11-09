@@ -138,11 +138,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .IndexOf("matcap", System.StringComparison.OrdinalIgnoreCase) >= 0;
 
         // VRChat's shader fallback (what others see with shaders blocked) reads main alpha when the fallback tag, or the
-        // shader name when there is no tag, asks for cutout or transparency.
+        // shader name when there is no tag, asks for cutout or transparency. Particle and Sprite fall back to
+        // alpha-blended shaders (creators.vrchat.com/avatars/shader-fallback-system/ supported-tag list).
         internal static bool FallbackReadsAlpha(Material material)
         {
             string fallback = material.GetTag("VRCFallback", false, "") + " " + material.shader.name;
-            return System.Array.Exists(new[] { "Cutout", "Transparent", "Fade" },
+            return System.Array.Exists(new[] { "Cutout", "Transparent", "Fade", "Particle", "Sprite" },
                 mode => fallback.IndexOf(mode, System.StringComparison.OrdinalIgnoreCase) >= 0);
         }
 

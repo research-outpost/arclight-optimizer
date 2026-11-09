@@ -83,7 +83,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             switch (FileOf(material.shader))
             {
                 case "ToonStandard/ToonStandard.shader": case "ToonStandard/ToonStandardOutline.shader":
-                    if (property == "_MainTex" || property == "_EmissionMap") return TextureChannels.RGB;
+                    // The fallback tag is author-set on any material; an alpha-reading fallback samples _MainTex alpha.
+                    if (property == "_MainTex") return ShaderAdapterRegistry.FallbackReadsAlpha(material) ? TextureChannels.All : TextureChannels.RGB;
+                    if (property == "_EmissionMap") return TextureChannels.RGB;
                     // Helpers.cginc ApplyDetailMap: only AlphaBlended (mode 0) reads the detail alpha.
                     if (property == "_DetailAlbedoMap")
                     {
@@ -97,11 +99,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     return channel >= 0 && channel <= 3 ? PoiyomiAdapter.ChannelOf(channel) : TextureChannels.All;
                 case "VRChat-Mobile-ToonLit.shader": case "VRChat-Mobile-MatCapLit.shader":
                 case "VRChat-Mobile-Diffuse.shader": case "VRChat-Mobile-BumpedDiffuse.shader":
-                    return property == "_MainTex" ? TextureChannels.RGB : TextureChannels.All;
+                    return property == "_MainTex" && !ShaderAdapterRegistry.FallbackReadsAlpha(material) ? TextureChannels.RGB : TextureChannels.All;
                 case "VRChat-Mobile-StandardLite.shader":
                     switch (property)
                     {
-                        case "_MainTex": case "_EmissionMap": case "_DetailAlbedoMap": return TextureChannels.RGB;
+                        case "_MainTex": return ShaderAdapterRegistry.FallbackReadsAlpha(material) ? TextureChannels.All : TextureChannels.RGB;
+                        case "_EmissionMap": case "_DetailAlbedoMap": return TextureChannels.RGB;
                         case "_MetallicGlossMap": return TextureChannels.R | TextureChannels.A;
                         case "_OcclusionMap": return TextureChannels.G;
                         default: return TextureChannels.All; // _DetailMask reads alpha; normal maps keep their format.

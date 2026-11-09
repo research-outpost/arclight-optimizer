@@ -12,9 +12,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Removes animator parameters whose name nothing else on the avatar mentions: no transition
     // condition, blend tree, state speed/time/offset/mirror parameter, state machine behaviour (parameter drivers,
     // layer controls and any other behaviour, read field by field), animation curve, expressions menu control, or
-    // component field (contacts, PhysBones by prefix, and anything else). Such a parameter can only hold a value that
-    // nothing reads. Expression parameters all stay: OSC apps outside the avatar can read and write them, and VRChat syncs
-    // the PC and Android uploads by their list position. Nothing changes when any controller or menu cannot be read.
+    // component field (contacts, PhysBones by prefix, and anything else); the outputs of the descriptor's native face
+    // tracking ForwardToAnimator behaviours also stay, since VRChat writes those into the Animator at runtime. Such a
+    // parameter can only hold a value that nothing reads. Expression parameters all stay: OSC apps outside the avatar
+    // can read and write them, and VRChat syncs the PC and Android uploads by their list position. Nothing changes when
+    // any controller or menu cannot be read.
     internal static class ParameterCleaner
     {
         internal sealed class Result { public int Animator; public List<string> Names = new List<string>(); }
@@ -29,6 +31,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             var used = AnimatorReads(root, list, analysis);
             if (used == null) return result;
+            used.UnionWith(NativeForwardedParameters(descriptor));
             foreach (var component in root.GetComponentsInChildren<Component>(true))
             {
                 if (!component || component == descriptor || component is Transform) continue;
@@ -54,6 +57,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             result.Names = result.Names.Distinct().ToList();
             return result;
+        }
+
+        // Parameters VRChat's native face tracking writes into the Animator at runtime: the ForwardToAnimator behaviours on
+        // the descriptor. Nothing in the animators, menus or components can mention them — the write is the runtime's, and
+        // the behaviours sit on the descriptor whose own fields this cleaner skips — yet they hold live values and FT
+        // add-ons validate their presence, so they are never dead. Read by reflection so SDKs without face tracking work.
+        private static HashSet<string> NativeForwardedParameters(Component descriptor)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            object Field(object instance, string name) => instance?.GetType().GetField(name)?.GetValue(instance);
+            if (!(Field(descriptor, "enableFaceTracking") is bool enabled) || !enabled) return names;
+            if (Field(descriptor, "faceTrackingParameterBehaviors") is System.Collections.IEnumerable behaviours)
+                foreach (var behaviour in behaviours)
+                    if (Field(behaviour, "targetMode")?.ToString() == "ForwardToAnimator" &&
+                        Field(behaviour, "outputParameterName") is string output && !string.IsNullOrEmpty(output))
+                        names.Add(output);
+            return names;
         }
 
         // Parameter names the animators and the menu read: transition conditions, blend trees, state parameters, behaviour fields

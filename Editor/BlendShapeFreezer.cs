@@ -79,6 +79,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     analysis.ReferencesTo(r).Any(c => c.GetType().Name != "VRCAvatarDescriptor"))) continue;
 
                 bool mmdBody = keepMmdShapes && renderers.Any(r => r.name == "Body" && r.transform.parent == root.transform);
+                bool faceTracking = renderers.Any(analysis.IsNativeFaceTrackingMesh);
                 var freeze = new Dictionary<int, float>();
                 var remove = new HashSet<int>();
                 for (int shape = 0; shape < mesh.blendShapeCount; shape++)
@@ -86,6 +87,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     string name = mesh.GetBlendShapeName(shape);
                     bool driven = renderers.Any(r => analysis.BlendShapeDrivenByPlatform(r, name)) || mmdBody && MmdShapes.Contains(name);
                     if (driven) continue;
+                    // Native face tracking writes these shapes itself: a stack like FermataFT fails the build when any
+                    // shape its outputs bind no longer exists, whether or not an animator curve ever touches it (the
+                    // shapes are written by the SDK at runtime, not by curves). Leave every shape on such a mesh alone.
+                    if (faceTracking) continue;
                     if (IsZero(mesh, shape)) { remove.Add(shape); continue; }
                     float weight = renderers[0].GetBlendShapeWeight(shape);
                     if (renderers.Any(r => r.GetBlendShapeWeight(shape) != weight)) continue;

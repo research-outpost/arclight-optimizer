@@ -77,7 +77,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // With d4rk the stream pass waits until after its merge (see VertexStreamStripper).
             if (config.enabled && config.optimizeMeshes && D4rkOrdering.MayRun(ctx.AvatarRootObject))
                 StreamRequests.Add(ctx.AvatarRootObject);
-            // PhysBone splitting is parked: it has no inspector toggle, and a value saved by an earlier version is ignored.
             // Read by the later passes; the component itself is removed by the texture pass.
             state.MergeMeshesAndAudio = config.enabled && config.mergeDuplicates;
             state.OptimizeMeshes = config.enabled && config.optimizeMeshes;
@@ -549,6 +548,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     ? MeshReadWrite.Run(ctx.AvatarRootObject, ctx.GetState<SubstitutionState>().SourceMeshes) : 0;
                 if (unreadable > 0) ctx.GetState<SubstitutionState>().Report?.Add(null, "Turned off Read/Write on " + unreadable + " mesh(es) this build made, so the avatar does not keep a second copy of them in memory.");
             }
+            catch (Exception e)
+            {
+                // MeshReadWrite.Run touches every renderer and SerializedObject in the build and can
+                // throw; like every other pass, a failure keeps the avatar built, just less optimized.
+                Debug.LogException(e);
+                string failed = "Mesh Read/Write cleanup stopped (" + e.GetType().Name + ": " + e.Message + "). The Console has the details.";
+                BuildWarnings.Report(ctx.AvatarRootObject, "Mesh Read/Write cleanup stopped", failed, "Please report this with the Console's exception. The avatar still builds; it is just optimized less.");
+                var state = ctx.GetState<SubstitutionState>();
+                state.Report?.Add(null, failed);
+                state.Report?.Refresh(ctx.AvatarRootObject, state);
+            }
             finally
             {
                 // The last Optimizing pass: report where this build spent its time.
@@ -823,9 +833,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
                     PrepareCurveEdits(scan.Animation, replacements, state, curveEdits);
                     foreach (var pair in state.Clones) register?.Invoke(pair.Key, pair.Value);
-                    // NDMF's registry takes one registration per new object, so a copy is recorded as replaced by
-                    // the texture it duplicates, which is in turn replaced by its optimized PNG (copies first).
-                    foreach (var pair in replacements.Where(p => scan.Duplicates.ContainsKey(p.Key)))
+                    // NDMF's registry keys each replacement object once (TryRegisterReplacedObject refuses a second
+                    // reference to it), so only the first copy of a source can be recorded as replaced by that source.
+                    // Register one copy per source instead of relying on the refusals.
+                    foreach (var pair in replacements.Where(p => scan.Duplicates.ContainsKey(p.Key))
+                        .GroupBy(p => scan.Duplicates[p.Key]).Select(g => g.First()))
                         register?.Invoke(pair.Key, scan.Duplicates[pair.Key]);
                     foreach (var pair in replacements.Where(p => !scan.Duplicates.ContainsKey(p.Key)))
                         register?.Invoke(pair.Key, pair.Value);
