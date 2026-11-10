@@ -10,15 +10,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 {
     // Mono's file APIs in the editor are not long-path aware even when Windows is, so a project or package file whose
     // full path reaches MAX_PATH (Unity itself imports such files) cannot be opened by name. The \\?\ form lifts that
-    // limit; it needs the absolute, backslash-separated path that Path.GetFullPath returns. Shorter paths are unchanged.
+    // limit; it needs the absolute, backslash-separated path that Path.GetFullPath returns, and UNC roots take the
+    // \\?\UNC\ form. Shorter paths are unchanged.
     internal static class LongPath
     {
         internal static string For(string path)
         {
             if (UnityEngine.Application.platform != UnityEngine.RuntimePlatform.WindowsEditor ||
-                path.StartsWith(@"\\", StringComparison.Ordinal)) return path;
+                path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
             string full = Path.GetFullPath(path);
-            return full.Length < 260 ? path : @"\\?\" + full;
+            if (full.Length < 260) return path;
+            return full.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + full.Substring(2) : @"\\?\" + full;
         }
     }
 

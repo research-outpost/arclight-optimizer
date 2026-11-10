@@ -23,6 +23,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             InPhase(BuildPhase.Resolving).BeforePlugin("com.anatawa12.avatar-optimizer")
                 .Run("Record exclusions and check for Avatar Optimizer", ctx =>
                 {
+                    // Late-hook requests travel in static sets keyed by InstanceID: an aborted build leaves its entry
+                    // behind, and IDs recycle within a session, so clear them before anything this build may request.
+                    MergeRequests.BeginBuild(); KeyReductionRequests.BeginBuild(); StreamRequests.BeginBuild();
+                    // The SDK can (re)build its callback list after editor load; re-assert NDMF-before-d4rk order
+                    // per build (idempotent and cheap) instead of relying on the load-time pass alone.
+                    D4rkOrdering.EnsureNdmfFirst();
                     Exclusions.Record(ctx.AvatarRootObject);
                     ctx.GetState<SubstitutionState>().SourceMeshes = MeshReadWrite.Record(ctx.AvatarRootObject);
                     var config = ctx.AvatarRootObject.GetComponent<AvatarTextureOptimizer>();
@@ -44,6 +50,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static void Prepare(BuildContext ctx)
         {
             BuildTimings.Current = null; // Never carry another avatar's timings.
+            GenerationCoordinator.ImporterFallbacks = 0; // Diagnostics are per build, not per editor session.
             var config = ctx.AvatarRootObject.GetComponent<AvatarTextureOptimizer>();
             if (!config) return;
             var state = ctx.GetState<SubstitutionState>();
@@ -61,9 +68,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // VRCFury keeps its components until the very end of the build and marks a built avatar with VRCFuryTest.
             // Before it builds (a manual bake, or VRCFury switched off for this kind of build), the animation, parameters
             // and readers it will add are not here yet, so nothing that depends on the avatar's animation may run.
-            state.VrcfuryPending = config.enabled && !ctx.AvatarRootObject.GetComponents<Component>().Any(c => c && c.GetType().Name == "VRCFuryTest") &&
-                ctx.AvatarRootObject.GetComponentsInChildren<Component>(true)
-                    .Any(c => c && (c.GetType().Namespace ?? "").StartsWith("VF.", StringComparison.Ordinal) && c.GetType().Name != "VRCFuryDebugInfo");
+            // Presence falls back to the installed package: today VRCFury is found by the VF. component namespace, but a
+            // rename would make an un-built avatar look VRCFury-free and let the animation-dependent passes run on its
+            // incomplete animation. The marker check fails closed; presence must not fail open.
+            bool vrcfuryBuilt = ctx.AvatarRootObject.GetComponents<Component>().Any(c => c && c.GetType().Name == "VRCFuryTest");
+            state.VrcfuryPending = config.enabled && !vrcfuryBuilt &&
+                (UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(p => p.name == "com.vrcfury.vrcfury") ||
+                    ctx.AvatarRootObject.GetComponentsInChildren<Component>(true)
+                        .Any(c => c && (c.GetType().Namespace ?? "").StartsWith("VF.", StringComparison.Ordinal) && c.GetType().Name != "VRCFuryDebugInfo"));
             if (state.VrcfuryPending)
             {
                 const string pending = "VRCFury did not build this avatar before Arclight ran, so its animation was incomplete: only exact mesh and audio de-duplication ran.";

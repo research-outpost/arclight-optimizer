@@ -14,16 +14,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 if (bytes[start] != (byte)'D' || bytes[start + 1] != (byte)'X' || bytes[start + 2] != (byte)'B' || bytes[start + 3] != (byte)'C') continue;
                 int chunks = BitConverter.ToInt32(bytes, start + 28);
+                if (chunks < 0 || start + 32 + 4 * chunks > bytes.Length) return true; // Malformed: assume it does.
                 for (int c = 0; c < chunks; c++)
                 {
                     int offset = start + BitConverter.ToInt32(bytes, start + 32 + 4 * c);
+                    if (offset < start || offset + 12 > bytes.Length) return true; // Malformed: assume it does.
                     string code = Encoding.ASCII.GetString(bytes, offset, 4);
                     if (code != "ISGN" && code != "ISG1") continue;
                     int data = offset + 8, count = BitConverter.ToInt32(bytes, data);
                     int size = code == "ISGN" ? 24 : 32, skip = code == "ISGN" ? 0 : 4;
+                    if (count < 0 || data + 8 + (long)count * size > bytes.Length) return true; // Malformed: assume it does.
                     for (int e = 0; e < count; e++)
                     {
                         int name = data + BitConverter.ToInt32(bytes, data + 8 + e * size + skip);
+                        if (name < 0 || name >= bytes.Length) return true; // Malformed: assume it does.
                         var text = new StringBuilder();
                         while (name < bytes.Length && bytes[name] != 0) text.Append((char)bytes[name++]);
                         if (string.Equals(text.ToString(), semantic, StringComparison.OrdinalIgnoreCase)) return true;

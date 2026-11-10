@@ -417,6 +417,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (type == "IEND") break;
             }
             var raw = new byte[checked((stride + 1) * info.Height)];
+            // DeflateStream skips the zlib adler32 trailer: only Unity-imported sources reach here, and Unity
+            // already validated the stream's checksum when it imported the texture.
             using (var zlib = new System.IO.Compression.DeflateStream(new MemoryStream(compressed.GetBuffer(), 2, (int)compressed.Length - 2),
                 System.IO.Compression.CompressionMode.Decompress))
             {

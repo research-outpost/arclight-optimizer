@@ -17,6 +17,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     internal static class KeyReductionRequests
     {
         private static readonly HashSet<int> Requested = new HashSet<int>();
+        internal static void BeginBuild() => Requested.Clear();
         internal static void Add(GameObject avatar) => Requested.Add(avatar.GetInstanceID());
         internal static bool Take(GameObject avatar) => Requested.Remove(avatar.GetInstanceID());
     }
