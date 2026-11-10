@@ -519,7 +519,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         OptimizationLog.Count(result.Compacted, "index buffer(s) halved") +
                         OptimizationLog.Count(result.Stripped, "with unused vertex channels removed") +
                         OptimizationLog.Count(result.FrozenShapes, "blend shape(s) baked or removed") +
-                        (result.MergedSkinned > 0 ? result.MergedSkinned + " skinned meshes merged into " + result.MergedInto + ", " : ""));
+                        (result.MergedSkinned > 0 ? result.MergedSkinned + " skinned meshes merged into " + result.MergedInto +
+                            (mergedSkinned.Contacts > 0 ? " (" + mergedSkinned.Contacts + " material contact(s) followed the merge)" : "") + ", " : ""));
                     state.Report.Refresh(ctx.AvatarRootObject, state);
                 }
                 if (monoAudio) CacheCleanup.Schedule(AutomaticTextureOptimizer.CacheFolder);

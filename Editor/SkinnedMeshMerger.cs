@@ -28,13 +28,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    filled-in value. Blend shape names must not collide.
     //  - Vertex IDs: merging renumbers vertices of every source after the first, so at most one source may use a
     //    material that reads SV_VertexID, and it goes first. lilToon reads it only for an active ID Mask.
+    //  - Same material contacts: the VRChat receivers that drive material properties through contact events name the
+    //    renderers they drive; two renderers may merge only when the same set of those contacts aims at both, and
+    //    every aimed receiver's target list is repointed at the host (see MaterialContacts).
     // Bones and bind poses are concatenated per source (a bone may repeat with a different bind pose), so every
     // vertex is skinned by exactly the same matrices as before; identical (bone, bind pose) pairs are shared.
     internal static class SkinnedMeshMerger
     {
         internal sealed class Result
         {
-            public int Merged, Into;
+            public int Merged, Into, Contacts;
             // Why a renderer stayed apart: the reason and the renderers it applies to.
             public readonly Dictionary<string, List<string>> WhyNot = new Dictionary<string, List<string>>();
             public readonly List<string> Hints = new List<string>();
@@ -45,17 +48,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var result = new Result();
             if (!analysis.Complete) return result;
             var root = analysis.Root;
+            var contacts = MaterialContacts.Build(root); // Aimed at by which material contacts, keyed per renderer.
             var meshSwaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
             var all = root.GetComponentsInChildren<SkinnedMeshRenderer>(true).ToList();
-            var candidates = all.Where(r => Eligible(r, analysis, meshSwaps, rewriter != null)).ToList();
+            var candidates = all.Where(r => Eligible(r, analysis, meshSwaps, rewriter != null, contacts)).ToList();
             var moves = new Dictionary<GameObject, Move>();
             var mergedAway = new HashSet<SkinnedMeshRenderer>();
             void Why(string reason, SkinnedMeshRenderer r) { if (!result.WhyNot.TryGetValue(reason, out var names)) result.WhyNot[reason] = names = new List<string>(); names.Add(r.name); }
-            foreach (var r in all.Except(candidates)) Why(WhyNot(r, analysis, meshSwaps, rewriter != null), r);
-            var singles = candidates.GroupBy(r => Key(r, analysis)).Where(g => g.Count() == 1).SelectMany(g => g).ToList();
+            foreach (var r in all.Except(candidates)) Why(WhyNot(r, analysis, meshSwaps, rewriter != null, contacts), r);
+            var singles = candidates.GroupBy(r => Key(r, analysis, contacts)).Where(g => g.Count() == 1).SelectMany(g => g).ToList();
             // For a renderer no other shares a key with: the nearest candidate (fewest differing parts), and whether a single part
             // is all that keeps them apart.
-            var parts = candidates.ToDictionary(r => r, r => KeyParts(r, analysis));
+            var parts = candidates.ToDictionary(r => r, r => KeyParts(r, analysis, contacts));
             bool anchorOrBounds = false;
             foreach (var r in singles)
             {
@@ -71,7 +75,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // Merged members are destroyed as each group completes; their animation is retargeted even if a later group fails.
             try
             {
-            foreach (var group in candidates.GroupBy(r => Key(r, analysis)).Where(g => g.Count() > 1))
+            foreach (var group in candidates.GroupBy(r => Key(r, analysis, contacts)).Where(g => g.Count() > 1))
             {
                 // Within a key, also split by vertex layout, probe sampling and animated material properties;
                 // greedy and deterministic.
@@ -93,7 +97,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var first = body ? body : readers.FirstOrDefault(members.Contains);
                     if (first) { members.Remove(first); members.Insert(0, first); }
                     if (members.Count < 2) continue;
-                    if (Merge(members, register, root, moves, body, analysis)) { result.Merged += members.Count; result.Into++; mergedAway.UnionWith(members); }
+                    if (Merge(members, register, root, moves, body, analysis, contacts, result)) { result.Merged += members.Count; result.Into++; mergedAway.UnionWith(members); }
                 }
             }
             }
@@ -156,11 +160,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return true;
         }
 
-        private static bool Eligible(SkinnedMeshRenderer renderer, AvatarAnalysis analysis, HashSet<Mesh> meshSwaps, bool canMoveAnimation) =>
-            WhyNot(renderer, analysis, meshSwaps, canMoveAnimation) == null;
+        private static bool Eligible(SkinnedMeshRenderer renderer, AvatarAnalysis analysis, HashSet<Mesh> meshSwaps, bool canMoveAnimation, MaterialContacts contacts) =>
+            WhyNot(renderer, analysis, meshSwaps, canMoveAnimation, contacts) == null;
 
         // Why this renderer cannot merge with any other, for the report; null when it can.
-        private static string WhyNot(SkinnedMeshRenderer renderer, AvatarAnalysis analysis, HashSet<Mesh> meshSwaps, bool canMoveAnimation)
+        private static string WhyNot(SkinnedMeshRenderer renderer, AvatarAnalysis analysis, HashSet<Mesh> meshSwaps, bool canMoveAnimation, MaterialContacts contacts)
         {
             var mesh = renderer.sharedMesh;
             if (!mesh || Exclusions.Excluded(renderer)) return "no mesh, or excluded from Arclight";
@@ -171,7 +175,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var bindings = analysis.BindingsOn(renderer).ToList();
             if (bindings.Count > 0 && (!canMoveAnimation || !UniquePath(renderer.transform, analysis.Root.transform) ||
                 bindings.Any(b => !Movable(b, analysis.Root)))) return "an animation on the renderer cannot be moved to the merged one";
-            if (analysis.ReferencesTo(renderer).Any(c => c.GetType().Name != "VRCAvatarDescriptor")) return "another component references the renderer";
+            // Material contacts aim at renderers, but matching aim sets merge together (see MaterialContacts); a
+            // receiver that cannot be checked, or sits in the Exclude list, keeps its renderers apart.
+            foreach (var c in analysis.ReferencesTo(renderer))
+            {
+                if (c.GetType().Name == "VRCAvatarDescriptor") continue;
+                string contactWhy = contacts.Blocking(c);
+                if (contactWhy != null) return contactWhy;
+            }
             if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer))) return "another component uses its mesh";
             if (renderer.sharedMaterials.Length != mesh.subMeshCount) return "its material slots do not match its submeshes";
             if (renderer.sharedMaterials.Concat(analysis.SwappedMaterials(renderer)).Any(m => !OrderIndependent(m))) return "a transparent material (render queue above 2500), whose draw order would change";
@@ -205,11 +216,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return start + ":" + string.Join(";", bindings.Select(b => b.ClipKey + "=" + Curve(b.FloatCurve)).OrderBy(s => s, StringComparer.Ordinal));
         }
 
-        // Toggles, root bone and every renderer setting that changes how the merged mesh would render.
-        private static string Key(SkinnedMeshRenderer r, AvatarAnalysis analysis) => string.Join("#", KeyParts(r, analysis).Select(p => p.Value));
+        // Toggles, root bone, material contacts and every renderer setting that changes how the merged mesh would render.
+        private static string Key(SkinnedMeshRenderer r, AvatarAnalysis analysis, MaterialContacts contacts) => string.Join("#", KeyParts(r, analysis, contacts).Select(p => p.Value));
 
         // The parts of the merge key, each with the name the report uses for it.
-        private static (string Name, string Value)[] KeyParts(SkinnedMeshRenderer r, AvatarAnalysis analysis)
+        private static (string Name, string Value)[] KeyParts(SkinnedMeshRenderer r, AvatarAnalysis analysis, MaterialContacts contacts)
         {
             var toggles = new List<string>();
             for (var t = r.transform; t != analysis.Root.transform; t = t.parent)
@@ -228,6 +239,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 ("dynamic occlusion setting", r.allowOcclusionWhenDynamic.ToString()), ("rendering layer mask", r.renderingLayerMask.ToString()),
                 ("sorting", r.sortingLayerID + "/" + r.sortingOrder + "/" + r.rendererPriority), ("Update When Offscreen setting", r.updateWhenOffscreen.ToString()),
                 ("tag", r.gameObject.tag),
+                ("material contact", contacts.KeyFor(r)),
             };
         }
 
@@ -394,7 +406,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static bool Merge(List<SkinnedMeshRenderer> members, Action<Object, Object> register, GameObject root,
-            Dictionary<GameObject, Move> moves, SkinnedMeshRenderer mmdBody, AvatarAnalysis analysis)
+            Dictionary<GameObject, Move> moves, SkinnedMeshRenderer mmdBody, AvatarAnalysis analysis, MaterialContacts contacts, Result result)
         {
             // Shape names: the host keeps its own; a later member's colliding name (or, when the root Body hosts, an MMD
             // world name) gets the member's object name appended.
@@ -530,6 +542,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     slotOffset += materialCounts[i];
                     shapeOffset += shapeCounts[i];
                 }
+                // Material contacts aimed at any member follow the merge before the member is destroyed.
+                result.Contacts += contacts.Retarget(members, host);
             }
             catch
             {
