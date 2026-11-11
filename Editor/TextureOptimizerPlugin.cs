@@ -68,14 +68,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // VRCFury keeps its components until the very end of the build and marks a built avatar with VRCFuryTest.
             // Before it builds (a manual bake, or VRCFury switched off for this kind of build), the animation, parameters
             // and readers it will add are not here yet, so nothing that depends on the avatar's animation may run.
-            // Presence falls back to the installed package: today VRCFury is found by the VF. component namespace, but a
-            // rename would make an un-built avatar look VRCFury-free and let the animation-dependent passes run on its
-            // incomplete animation. The marker check fails closed; presence must not fail open.
+            // VRCFury's own gate says which avatars it would build at all: its builder skips any avatar carrying no
+            // VRCFury component. So an un-built avatar with no VRCFury components anywhere is one VRCFury legitimately
+            // passed over, and its animation is already complete — the full passes may run. An avatar VRCFury should
+            // have built still carries its components whenever it was not built, so the stand-down there is unchanged.
             bool vrcfuryBuilt = ctx.AvatarRootObject.GetComponents<Component>().Any(c => c && c.GetType().Name == "VRCFuryTest");
-            state.VrcfuryPending = config.enabled && !vrcfuryBuilt &&
-                (UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages().Any(p => p.name == "com.vrcfury.vrcfury") ||
-                    ctx.AvatarRootObject.GetComponentsInChildren<Component>(true)
-                        .Any(c => c && (c.GetType().Namespace ?? "").StartsWith("VF.", StringComparison.Ordinal) && c.GetType().Name != "VRCFuryDebugInfo"));
+            state.VrcfuryPending = config.enabled && !vrcfuryBuilt && CarriesVrcfuryComponents(ctx.AvatarRootObject);
             if (state.VrcfuryPending)
             {
                 const string pending = "VRCFury did not build this avatar before Arclight ran, so its animation was incomplete: only exact mesh and audio de-duplication ran.";
@@ -95,6 +93,33 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             state.OptimizeAudio = config.enabled && config.optimizeAudio;
             state.KeepMmdShapes = config.keepMmdShapes;
             state.UnifiedBounds = config.unifiedBounds;
+        }
+
+        // Does this avatar carry VRCFury's own components? VRCFury's builder runs on an avatar exactly when the avatar
+        // has one (its ShouldRun gate), so no components means VRCFury passed the avatar over by design, at any setting.
+        // The components are found by the base class VRCFuryBuilder tests with (renames of the VF. namespace alone then
+        // cannot fool this check); the old namespace sniff stays as a second catcher. When VRCFury's package is
+        // installed but its base type cannot be found at all — a rename this deep would also move its built marker —
+        // the check fails closed and the stand-down stays.
+        private static bool CarriesVrcfuryComponents(GameObject avatar)
+        {
+            Type furyBase = null;
+            bool vrcfuryInstalled = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages()
+                .Any(p => p.name == "com.vrcfury.vrcfury");
+            if (vrcfuryInstalled)
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    Type[] types;
+                    try { types = assembly.GetTypes(); }
+                    catch (System.Reflection.ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).ToArray(); }
+                    furyBase = types.FirstOrDefault(t => t.Name == "VRCFuryComponent" && typeof(Component).IsAssignableFrom(t));
+                    if (furyBase != null) break;
+                }
+            if (vrcfuryInstalled && furyBase == null) return true; // cannot see VRCFury's own gate: fail closed
+            return avatar.GetComponentsInChildren<Component>(true).Any(c => c &&
+                ((furyBase != null && furyBase.IsInstanceOfType(c)) ||
+                 (c.GetType().Namespace ?? "").StartsWith("VF.", StringComparison.Ordinal)) &&
+                c.GetType().Name != "VRCFuryDebugInfo");
         }
 
         private static void Textures(BuildContext ctx)
