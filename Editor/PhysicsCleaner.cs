@@ -16,8 +16,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    afterwards. The values it would write reach nothing (OSC is limited to expression parameters, as the parameter cleaner
     //    also assumes). With no parameter, the unobserved-PhysBone rules can then apply.
     //  - A contact receiver goes when its parameter is empty or read by no animator, named by no expression parameter and no
-    //    other component, and nothing references the receiver. A receiver does nothing but write that parameter.
-    //    Senders stay: other avatars read them.
+    //    other component, nothing references the receiver, and it writes no materials. A plain receiver does nothing but write
+    //    that parameter; a material contact (writeToMaterials) also drives its target renderers' materials, unread parameter
+    //    or not. Senders stay: other avatars read them.
     //  - Empty entries, entries repeating the one directly before, and colliders on objects that are never active leave
     //    PhysBone collider lists. Back to back, the second push out of the same shape finds nothing to correct; a collider
     //    whose object never activates never registers.
@@ -91,9 +92,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             foreach (var receiver in components.Where(c => c.GetType().Name == "VRCContactReceiver" && !Exclusions.Excluded(c)))
             {
-                string name;
-                using (var serialized = new SerializedObject(receiver)) name = serialized.FindProperty("parameter")?.stringValue;
-                if (name == null || analysis.ReferencesTo(receiver).Any(c => c != receiver) || analysis.IsAnimated(receiver)) continue;
+                string name; bool drivesMaterials;
+                using (var serialized = new SerializedObject(receiver))
+                {
+                    name = serialized.FindProperty("parameter")?.stringValue;
+                    // A material contact drives its targets' materials directly: an unread parameter proves nothing about it.
+                    var writes = serialized.FindProperty("writeToMaterials");
+                    drivesMaterials = writes != null && writes.propertyType == SerializedPropertyType.Boolean && writes.boolValue;
+                }
+                if (drivesMaterials || name == null || analysis.ReferencesTo(receiver).Any(c => c != receiver) || analysis.IsAnimated(receiver)) continue;
                 if (name.Length > 0 && NamedElsewhere(receiver, n => n == name)) continue;
                 Object.DestroyImmediate(receiver);
                 result.Receivers++;
