@@ -31,9 +31,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private sealed class Crop { public int Kx, Ky, Jx, Jy; } // Size 2^-k of the texture per axis, cell index j.
 
-        internal static Result Run(GameObject root, ScanResult scan, AvatarAnalysis analysis, Action<Object, Object> register, string folder)
+        // The read-only MeshData API reads imported meshes in the Editor regardless of Read/Write (Unity docs:
+        // "In the Editor, all meshes are readable, even when Mesh.isReadable is set to false"), so coverage needs
+        // no readability gate — and VRChat-conformant avatars keep the flag off.
+        // A cancel (OperationCanceledException from progress) is checked while a component is planned and between
+        // components, never while one is being applied: every component applied before it is complete and stays on the
+        // avatar, and the one under way is untouched. A caller that passes its own result still
+        // holds the counts of those crops after the exception, so it can report what the cancelled run left behind.
+        internal static Result Run(GameObject root, ScanResult scan, AvatarAnalysis analysis, Action<Object, Object> register, string folder, UvCoverageCache coverageCache = null, OptimizationProgress progress = null, Result result = null)
         {
-            var result = new Result();
+            result = result ?? new Result();
             if (!analysis.Complete) return result;
             var renderers = root.GetComponentsInChildren<Renderer>(true);
             // Union-find over textures and (material, basis) pairs.
@@ -65,10 +72,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     }
                 }
             }
-            // An animated texture swap reads the swapped-in texture through the same, rewritten tiling/offset.
-            foreach (var use in scan.Groups.SelectMany(g => g.Uses))
-                if (use.FromAnimation && use.Material && use.Material.HasProperty(use.Property) && use.Material.GetTexture(use.Property) != use.Texture)
-                    foreach (var node in bases.Where(b => b.Item1 == use.Material)) bad.Add(node);
+            // An animated texture slot is never cropped: whatever the slot currently holds, the animation curve
+            // restores a source texture object through the slot's rewritten tiling/offset, which changes what is
+            // drawn or leaves the crop saving nothing. A swapped-in material whose own slots are not in the scan
+            // would keep the original next to the crop (this pass never rewrites object curves), so its whole
+            // texture group is kept too.
+            foreach (var group in scan.Groups)
+                foreach (var use in group.Uses)
+                    if (use.FromAnimation && use.Material)
+                    {
+                        var own = bases.Where(b => b.Item1 == use.Material).ToList();
+                        if (own.Any()) foreach (var node in own) bad.Add(node);
+                        else bad.Add(group.Source);
+                    }
             // A material is cropped only if every texture it holds takes part (unless never sampled).
             foreach (var material in bases.Select(b => b.Item1).Distinct())
                 foreach (string property in material.GetTexturePropertyNames())
@@ -78,7 +94,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (!groups.TryGetValue(texture, out var group)) { bad.Add(bases.First(b => b.Item1 == material)); continue; }
                     if (group.ActiveUses.Any()) Union(texture, bases.First(b => b.Item1 == material)); // Never-sampled textures stay as they are.
                 }
-            // Coverage only knows mesh and skinned mesh renderers.
+            // Coverage only knows mesh and skinned mesh renderers: a particle or line renderer's UVs are invisible
+            // to the rasterizer, so its materials are never cropped. Meshes need no Read/Write check here — the
+            // read-only MeshData API snapshots imported meshes in the Editor regardless of the flag.
             foreach (var renderer in renderers.Where(r => !(r is MeshRenderer) && !(r is SkinnedMeshRenderer)))
                 foreach (var material in renderer.sharedMaterials)
                     foreach (var node in bases.Where(b => b.Item1 == material)) bad.Add(node);
@@ -86,10 +104,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             var croppedSources = new HashSet<Texture>();
             // Textures of one material often share every sampling path (a main map and its normal map), so their coverage is built once.
-            var coverage = new UvCoverageCache();
+            // The crop pass reuses the generation pass's cache when given one: the keys pin content, not the pass.
+            var coverage = coverageCache ?? new UvCoverageCache();
             var components = parent.Keys.ToList().GroupBy(Find).Where(c => !bad.Contains(c.Key)).ToList();
             foreach (var component in components)
             {
+                progress?.CheckCancelled(); // A cancel must not wait for the next rasterize/PNG decode.
                 var textures = component.OfType<Texture2D>().ToList();
                 var rewritten = new HashSet<(Material, string)>(component.OfType<ValueTuple<Material, string>>());
                 if (textures.Count == 0 || rewritten.Count == 0) continue;
@@ -99,7 +119,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (rewritten.Any(b => renderers.Any(r => r.sharedMaterials.Contains(b.Item1) &&
                     analysis.AnimatedMaterialProperties(r).Any(p => p == b.Item2 + "_ST")))) continue;
                 Crop crop;
-                try { crop = Plan(textures, groups, componentPaths, coverage); }
+                try { crop = Plan(textures, groups, componentPaths, coverage, progress == null ? null : (Action)progress.CheckCancelled); }
+                catch (OperationCanceledException) { throw; } // Cancel must reach the pass, not hide as an unsupported texture.
                 catch (Exception) { continue; }
                 if (crop == null) continue;
 
@@ -108,6 +129,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     foreach (var texture in textures) cropped[texture] = Generate(texture, crop, folder);
                 }
+                catch (OperationCanceledException) { throw; } // Once cancel is wired, an abort must not downgrade to a skipped component.
                 catch (Exception e)
                 {
                     Debug.Log("Arclight Optimizer: texture crop skipped for " + string.Join(", ", textures.Select(t => t.name)) + ": " + e.Message);
@@ -146,7 +168,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     result.PixelsAfter += (long)pair.Value.width * pair.Value.height;
                 }
             }
-            CollapseUniform(renderers, scan, croppedSources, register, folder, result);
+            CollapseUniform(renderers, scan, croppedSources, register, folder, result, progress);
+            progress?.CheckCancelled(); // A cancel during the collapse sub-pass must reach the caller.
             return result;
         }
 
@@ -159,7 +182,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // blocks of the sizes the ASTC probe passed (4 x 4, 6 x 6, 8 x 8; UniformTextureTests). ETC2 and 4-bit PVRTC also use 4 x 4 blocks;
         // every copy is checked on the GPU against its original before use.
         private static readonly int[] ProbedAstcBlocks = { 1, 4, 6, 8 };
-        private static void CollapseUniform(Renderer[] renderers, ScanResult scan, HashSet<Texture> cropped, Action<Object, Object> register, string folder, Result result)
+        private static void CollapseUniform(Renderer[] renderers, ScanResult scan, HashSet<Texture> cropped, Action<Object, Object> register, string folder, Result result, OptimizationProgress progress)
         {
             bool android = EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android;
             if (!GeneratedTargetValidator.IsStandalone && !android) return;
@@ -169,6 +192,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .SelectMany(r => r.sharedMaterials).Where(m => m).SelectMany(m => m.GetTexturePropertyNames().Select(m.GetTexture)).Where(t => t));
             foreach (var group in scan.Groups)
             {
+                progress?.CheckCancelled(); // PNG decodes and GPU checks here can run long; cancel must not wait for them.
                 if (!(group.Source is Texture2D texture) || cropped.Contains(texture) || unaudited.Contains(texture) || group.Warning != null || scan.Duplicates.ContainsValue(texture)) continue;
                 if (group.Uses.Count == 0 || group.Uses.Any(u => !u.Material || !u.Sampling.Supported || (android
                         ? u.Sampling.AdapterId != VRChatMobileAdapter.Id
@@ -189,6 +213,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var pixels = PngPixels.Decode(bytes, out var info);
                 if (pixels.Any(p => !p.Equals(pixels[0]))) { NotUniform.Add(hash); continue; }
                 try { collapsed[texture] = GenerateUniform(texture, bytes, pixels[0], info, folder); }
+                catch (OperationCanceledException) { throw; } // Cancel is not a reason to keep one more texture.
                 catch (Exception e) { Debug.Log("Arclight Optimizer: one-colour texture kept for " + texture.name + ": " + e.Message); }
             }
             if (collapsed.Count == 0) return;
@@ -360,7 +385,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // The deepest aligned crop holding every texture's protected texels and every lookup's UVs, or null.
         private static Crop Plan(List<Texture2D> textures, Dictionary<Texture, TextureGroup> groups, List<(TextureUsageRecord Use, SamplingPath Path)> paths,
-            UvCoverageCache coverage)
+            UvCoverageCache coverage, Action cancel = null)
         {
             double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
             void Include(double ax, double ay, double bx, double by) { x0 = Math.Min(x0, ax); y0 = Math.Min(y0, ay); x1 = Math.Max(x1, bx); y1 = Math.Max(y1, by); }
@@ -393,7 +418,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (blockW != 1 && blockW != 4 || blockH != 1 && blockH != 4) return null;
                 // PVRTC also uses 4-texel blocks but blends neighbouring blocks, so a crop is never exact there.
                 if (UnityEngine.Experimental.Rendering.GraphicsFormatUtility.IsPVRTCFormat(texture.graphicsFormat)) return null;
-                var mask = UvCoverageRasterizer.Build(groups[texture], info.Width, info.Height, out _, coverage);
+                var mask = UvCoverageRasterizer.Build(groups[texture], info.Width, info.Height, out _, coverage, cancel);
                 int mx0 = int.MaxValue, my0 = int.MaxValue, mx1 = -1, my1 = -1;
                 for (int y = 0; y < info.Height; y++)
                     for (int x = 0; x < info.Width; x++)

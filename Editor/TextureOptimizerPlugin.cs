@@ -23,8 +23,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             InPhase(BuildPhase.Resolving).BeforePlugin("com.anatawa12.avatar-optimizer")
                 .Run("Record exclusions and check for Avatar Optimizer", ctx =>
                 {
-                    // Late-hook requests travel in static sets keyed by InstanceID: an aborted build leaves its entry
-                    // behind, and IDs recycle within a session, so clear them before anything this build may request.
+                    // Late-hook requests travel in per-build sets mirrored into SessionState by scene-rooted path:
+                    // an aborted build leaves its entries behind, so clear the sets and the mirrors before anything
+                    // this build may request.
                     MergeRequests.BeginBuild(); KeyReductionRequests.BeginBuild(); StreamRequests.BeginBuild();
                     // The SDK can (re)build its callback list after editor load; re-assert NDMF-before-d4rk order
                     // per build (idempotent and cheap) instead of relying on the load-time pass alone.
@@ -210,6 +211,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, summary);
                     }
+                    else if (unified.Kept.Count > 0)
+                    {
+                        // The setting is on and nothing moved: say why, or it looks as if the setting did not run.
+                        string summary = "Unified Bounds changed nothing: " + unified.Kept.Count + " skinned mesh(es) keep their own bounds: " +
+                            string.Join(", ", unified.Kept.Take(20)) + (unified.Kept.Count > 20 ? ", ..." : "") + ".";
+                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                        state.Report?.Add(null, summary);
+                    }
                 }
                 if (state.OptimizeMeshes && !vrcfuryPending)
                 {
@@ -254,7 +263,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         if (!vrcfuryPending) deadDrivers = ParameterCleaner.RemoveDeadDrivers(ctx.AvatarRootObject, controllers.Controllers.Values, analysis);
                         BuildTimings.Step("AnimatorLayerMerger");
                         // Folding reads every animation, so it stands down with the rest when the analysis is incomplete.
-                        layerMerge = !analysis.Complete ? new AnimatorLayerMerger.Result() : AnimatorLayerMerger.Run(controllers.Controllers.Select(e => (e.Key is Animator a && a ? a.transform : ctx.AvatarRootObject.transform, e.Value)),
+                        layerMerge = !analysis.Complete ? new AnimatorLayerMerger.Result() : AnimatorLayerMerger.Run(controllers.Controllers
+                            .Where(e => !(e.Key is UnityEngine.Object gone && !gone)) // Destroyed Animator: no readable owner to bind to.
+                            .Select(e => (e.Key is Animator a && a ? a.transform : ctx.AvatarRootObject.transform, e.Value)),
                             vrcfuryPending ? null : AnimatorLayerMerger.WholeValues(ctx.AvatarRootObject), removeInert: !vrcfuryPending,
                             playables: controllers.Controllers.Where(e => e.Value != null && e.Key is Enum).GroupBy(e => e.Value).ToDictionary(g => g.Key, g => g.First().Key.ToString()));
                         BuildTimings.Step("PhysicsCleaner");
@@ -367,8 +378,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     .SelectMany(r => r.sharedMaterials.Concat(analysis.SwappedMaterials(r))).Where(m => m).Distinct()
                     .SelectMany(m => m.GetTexturePropertyNames().Select(m.GetTexture)).OfType<Texture2D>().Distinct()
                     .Where(t => AssetDatabase.GetAssetPath(t).StartsWith("Packages/com.vrcfury.temp/", StringComparison.Ordinal) && t.streamingMipmaps)
-                    .Select(t => AssetDatabase.FindAssets(t.name + " t:Texture2D").Select(AssetDatabase.GUIDToAssetPath)
-                        .FirstOrDefault(p => p.StartsWith("Assets/", StringComparison.Ordinal) && System.IO.Path.GetFileNameWithoutExtension(p) == t.name &&
+                    // Same-named textures in different folders are common: list every matching candidate
+                    // rather than guessing the first one.
+                    .SelectMany(t => AssetDatabase.FindAssets(t.name + " t:Texture2D").Select(AssetDatabase.GUIDToAssetPath)
+                        .Where(p => p.StartsWith("Assets/", StringComparison.Ordinal) && System.IO.Path.GetFileNameWithoutExtension(p) == t.name &&
                             AssetImporter.GetAtPath(p) is TextureImporter importer && importer.mipmapEnabled && !importer.streamingMipmaps))
                     .Where(p => p != null).Distinct().OrderBy(p => p, StringComparer.Ordinal).ToList();
                 if (vrcfuryCopies.Count > 0)
@@ -619,6 +632,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var state = ctx.GetState<SubstitutionState>();
             if (!state.OptimizeMeshes || state.VrcfuryPending) return;
+            // The cropper counts each crop here as it applies it, so a cancelled run still says what it left on the avatar.
+            var crops = new TextureCropper.Result();
+            bool cancelled = false;
             try
             {
                 var analysis = AvatarAnalysis.Build(ctx);
@@ -626,14 +642,25 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // activating the virtual context, or the scan treats marker clips as opaque and keeps everything.
                 var inventory = AnimationSnapshot.Analyze(ctx.AvatarRootObject, null, null);
                 var controllers = ctx.ActivateExtensionContext<VirtualControllerContext>();
-                TextureCropper.Result crops;
                 try
                 {
                     var scan = TextureUsageScanner.Scan(ctx.AvatarRootObject, controllers, inventory);
-                    crops = TextureCropper.Run(ctx.AvatarRootObject, scan, analysis, ReplacementRegistry.Register, AutomaticTextureOptimizer.CacheFolder);
+                    // The pass rasterizes and PNG-decodes every component: give it the same progress window
+                    // (and cancel button) the texture pass uses, so a cancel reaches the crop loop (fix 11).
+                    using (var progress = new OptimizationProgress())
+                    {
+                        progress.Overall("Cropping textures", .9f);
+                        TextureCropper.Run(ctx.AvatarRootObject, scan, analysis, ReplacementRegistry.Register, AutomaticTextureOptimizer.CacheFolder,
+                            state.Coverage ??= new UvCoverageCache(), progress, crops);
+                    }
                 }
+                // A user cancel is not a failure, and it does not undo anything: crops applied before it are complete
+                // and stay on the avatar, so the pass goes on to report them. state.Cancelled is left alone: it says
+                // the texture pass was cancelled before it applied its replacements, which is not what happened here.
+                catch (OperationCanceledException) { cancelled = true; }
                 finally { ControllerCommit.Preserving(ctx.AvatarRootObject, () => ctx.DeactivateExtensionContext<VirtualControllerContext>()); }
-                if (crops.Textures > 0 || crops.Uniform > 0)
+                bool cropped = crops.Textures > 0 || crops.Uniform > 0;
+                if (cropped)
                 {
                     analysis.RescanReferences();
                     string summary = (crops.Textures > 0 ? "Cropped " + crops.Textures + " texture(s) to the aligned part their meshes sample" : "") +
@@ -642,8 +669,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         " (" + (100 - 100 * crops.PixelsAfter / Math.Max(1, crops.PixelsBefore)) + "% fewer imported texels), on " + crops.Materials + " material(s).";
                     Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                     state.Report?.Add(null, summary);
-                    state.Report?.Refresh(ctx.AvatarRootObject, state);
                 }
+                if (cancelled)
+                {
+                    string stopped = cropped
+                        ? "Texture cropping was cancelled part-way: the " + (crops.Textures + crops.Uniform) +
+                          " texture(s) already cropped or replaced stay as they are, and no further textures were cropped."
+                        : "Texture cropping was cancelled before any texture was cropped.";
+                    Debug.Log("Arclight Optimizer: " + stopped + " (" + ctx.AvatarRootObject.name + ")");
+                    state.Report?.Add(null, stopped);
+                }
+                if (cropped || cancelled) state.Report?.Refresh(ctx.AvatarRootObject, state);
             }
             catch (Exception e)
             {
@@ -696,6 +732,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public int AppliedTextures;
         public readonly HashSet<Texture> MergedDuplicates = new HashSet<Texture>();
         internal AnimationSnapshot SerializedAnimation;
+        // The UV raster cache from the texture pass, reused by the later crop pass (content-keyed and LRU-bounded).
+        internal UvCoverageCache Coverage;
         public readonly GenerationSummary Summary = new GenerationSummary();
         // The build report: started by the first pass, written by the texture pass, refreshed by later passes.
         internal OptimizationLog Report;
@@ -751,6 +789,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 foreach (var renderer in root.GetComponentsInChildren<Renderer>(true))
                 {
                     if (!(renderer is MeshRenderer) && !(renderer is SkinnedMeshRenderer)) continue;
+                    // Excluded renderers keep their materials here too: Apply skipped them, so a clone only
+                    // lands on their slots if they share a material with an optimized renderer.
+                    if (Exclusions.Excluded(renderer)) continue;
                     var materials = renderer.sharedMaterials;
                     bool changed = false;
                     for (int slot = 0; slot < materials.Length; slot++)
@@ -869,7 +910,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         }
                     }
 
-                    PrepareCurveEdits(scan.Animation, replacements, state, curveEdits);
+                    // Object-swap curves must not aim an excluded renderer at a clone either. Curve paths are
+                    // animator-object-relative: the root Animator's match is exact; each nested Animator's transform
+                    // prefix is tried as well, so one bound relative to a nested Animator still hits the exclusion.
+                    var excludedPaths = new HashSet<string>(buildRoot.GetComponentsInChildren<Renderer>(true)
+                        .Where(r => (r is MeshRenderer || r is SkinnedMeshRenderer) && Exclusions.Excluded(r))
+                        .Select(r => AnimationUtility.CalculateTransformPath(r.transform, buildRoot.transform)), StringComparer.Ordinal);
+                    var animatorPrefixes = buildRoot.GetComponentsInChildren<Animator>(true)
+                        .Where(a => a && a.transform != buildRoot.transform)
+                        .Select(a => AnimationUtility.CalculateTransformPath(a.transform, buildRoot.transform) + "/")
+                        .Distinct().ToList();
+                    PrepareCurveEdits(scan.Animation, replacements, state, curveEdits, excludedPaths, animatorPrefixes);
                     foreach (var pair in state.Clones) register?.Invoke(pair.Key, pair.Value);
                     // NDMF's registry keys each replacement object once (TryRegisterReplacedObject refuses a second
                     // reference to it), so only the first copy of a source can be recorded as replaced by that source.
@@ -932,7 +983,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static void PrepareCurveEdits(AnimationSnapshot animation, Dictionary<Texture, Texture> replacements,
-            SubstitutionState state, List<CurveEdit> edits)
+            SubstitutionState state, List<CurveEdit> edits, HashSet<string> excludedPaths, List<string> animatorPrefixes)
         {
             if (animation == null || !animation.CanRewriteObjectCurves) return;
             foreach (var group in animation.ObjectBindings.GroupBy(b => b.Clip))
@@ -940,6 +991,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var clip = group.Key;
                 foreach (var binding in group.Select(b => b.Binding).Distinct())
                 {
+                    // Excluded by exact root-Animator path, or by any nested Animator's prefix (over-approximating
+                    // which only ever declines a rewrite — the excluded renderer keeps its original materials).
+                    if (excludedPaths.Contains(binding.path) || animatorPrefixes.Any(p => excludedPaths.Contains(p + binding.path))) continue;
                     var original = clip.GetObjectCurve(binding);
                     if (original == null) continue;
                     var replacement = (ObjectReferenceKeyframe[])original.Clone();

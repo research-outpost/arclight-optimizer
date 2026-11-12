@@ -60,6 +60,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Hold this around work that estimates repeatedly, so the object scan happens once. A no-op when no bundle is built.
         internal static KeepAlive KeepObjectsAlive() => new KeepAlive(WillBuild);
 
+        // A failed estimate (manifest missing, zero bytes, exception) is systemic, not per-texture: after the first
+        // failure for a build target, stop paying a throwaway bundle build for every later texture. Retried when
+        // the target changes; a successful target is never poisoned, and the memo below still records successes.
+        private static BuildTarget? failedTarget;
+
         // False when no estimate could be made (Play Mode, a failed build); callers fall back to the PNG file size.
         internal static bool TryMeasure(string assetPath, out long bytes)
         {
@@ -70,9 +75,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return bytes > 0;
             }
             if (EditorApplication.isPlayingOrWillChangePlaymode) return false;
+            var target = EditorUserBuildSettings.activeBuildTarget;
+            if (failedTarget == target) return false;
             string dependencyHash = AssetDatabase.GetAssetDependencyHash(assetPath).ToString();
             // Survives domain reloads within an editor session; keyed on the asset content, its import settings and the target.
-            string key = "Arclight.Optimizer.BundleBytes." + EditorUserBuildSettings.activeBuildTarget + "." + dependencyHash;
+            string key = "Arclight.Optimizer.BundleBytes." + target + "." + dependencyHash;
             if (long.TryParse(SessionState.GetString(key, ""), out bytes) && bytes > 0) return true;
             bytes = 0;
 
@@ -86,13 +93,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     manifest = BuildPipeline.BuildAssetBundles(directory, new[] { build }, BuildAssetBundleOptions.None,
                         EditorUserBuildSettings.activeBuildTarget);
                 string file = Path.Combine(directory, "size");
-                if (!manifest || !File.Exists(file)) return false;
+                if (!manifest || !File.Exists(file)) { failedTarget = target; return false; }
                 bytes = new FileInfo(file).Length;
-                if (bytes <= 0) return false;
+                if (bytes <= 0) { failedTarget = target; return false; }
                 SessionState.SetString(key, bytes.ToString());
                 return true;
             }
-            catch (Exception) { bytes = 0; return false; }
+            catch (Exception) { bytes = 0; failedTarget = target; return false; }
             finally
             {
                 try { if (Directory.Exists(directory)) Directory.Delete(directory, true); } catch (IOException) { }

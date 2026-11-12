@@ -18,7 +18,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //  - A contact receiver goes when its parameter is empty or read by no animator, named by no expression parameter and no
     //    other component, nothing references the receiver, and it writes no materials. A plain receiver does nothing but write
     //    that parameter; a material contact (writeToMaterials) also drives its target renderers' materials, unread parameter
-    //    or not. Senders stay: other avatars read them.
+    //    or not. Senders stay: other avatars read them. Both parameter verdicts stand down entirely while any Udon-named
+    //    component sits on the avatar (fail closed): an Udon program can read a parameter from its program asset, invisible here.
     //  - Empty entries, entries repeating the one directly before, and colliders on objects that are never active leave
     //    PhysBone collider lists. Back to back, the second push out of the same shape finds nothing to correct; a collider
     //    whose object never activates never registers.
@@ -39,6 +40,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var declared = new HashSet<string>(animatorParameters.Concat(expressionParameters).Where(n => !string.IsNullOrEmpty(n)), StringComparer.Ordinal);
             var components = root.GetComponentsInChildren<Component>(true).Where(c => c && !(c is Transform)).ToList();
             var strings = components.ToDictionary(c => c, c => { var set = new HashSet<string>(StringComparer.Ordinal); ParameterCleaner.Strings(c, set); return set; });
+            // Fail closed on Udon: an Udon program reads animator parameters from strings inside its program asset,
+            // which this component-string scan cannot see, so "nothing reads it" proves nothing while one is present.
+            bool udonReader = components.Any(c => (c.GetType().FullName ?? string.Empty).IndexOf("Udon", StringComparison.OrdinalIgnoreCase) >= 0);
             bool NamedElsewhere(Component self, Func<string, bool> matches) =>
                 declared.Any(matches) || components.Any(c => c != self && strings[c].Any(matches));
 
@@ -49,7 +53,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 using (var serialized = new SerializedObject(physBone))
                 {
                     var parameter = serialized.FindProperty("parameter");
-                    if (!string.IsNullOrEmpty(parameter?.stringValue))
+                    if (!udonReader && !string.IsNullOrEmpty(parameter?.stringValue))
                     {
                         string prefix = parameter.stringValue;
                         if (!NamedElsewhere(physBone, n => n == prefix || n.StartsWith(prefix + "_", StringComparison.Ordinal)))
@@ -90,7 +94,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
 
-            foreach (var receiver in components.Where(c => c.GetType().Name == "VRCContactReceiver" && !Exclusions.Excluded(c)))
+            foreach (var receiver in components.Where(c => !udonReader && c.GetType().Name == "VRCContactReceiver" && !Exclusions.Excluded(c)))
             {
                 string name; bool drivesMaterials;
                 using (var serialized = new SerializedObject(receiver))

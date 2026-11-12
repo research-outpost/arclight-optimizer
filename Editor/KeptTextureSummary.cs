@@ -95,11 +95,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var results = new List<AvatarResult>();
             string temporary = "Assets/__ArclightKeptTextureSummary_" + Guid.NewGuid().ToString("N");
-            AssetDatabase.CreateFolder("Assets", Path.GetFileName(temporary));
-            var scene = EditorSceneManager.NewPreviewScene();
+            bool folderMade = false, sceneMade = false;
+            var scene = new Scene();
             collecting = results;
             try
             {
+                // Created inside the try so the finally still removes the folder when either step throws.
+                AssetDatabase.CreateFolder("Assets", Path.GetFileName(temporary));
+                folderMade = true;
+                scene = EditorSceneManager.NewPreviewScene();
+                sceneMade = true;
                 for (int i = 0; i < avatars.Count; i++)
                 {
                     var avatar = avatars[i];
@@ -124,8 +129,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             finally
             {
                 collecting = null;
-                EditorSceneManager.ClosePreviewScene(scene);
-                AssetDatabase.DeleteAsset(temporary);
+                if (sceneMade) EditorSceneManager.ClosePreviewScene(scene);
+                if (folderMade) AssetDatabase.DeleteAsset(temporary);
             }
 
             AutomaticTextureOptimizer.EnsureFolder(outputFolder);

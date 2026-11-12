@@ -34,7 +34,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var renderer in renderers)
             {
                 var mesh = renderer.sharedMesh;
-                if (mesh.blendShapeCount < 2 || swaps.Contains(mesh) || renderers.Count(r => r.sharedMesh == mesh) != 1 || Exclusions.Excluded(renderer)) continue;
+                if (mesh.blendShapeCount < 2 || !mesh.isReadable || swaps.Contains(mesh) || renderers.Count(r => r.sharedMesh == mesh) != 1 || Exclusions.Excluded(renderer)) continue;
                 // A mesh swap whose idle state writes nothing leaves the current mesh out of the swapped values.
                 if (analysis.IsAnimated(renderer, p => p == "m_Mesh")) continue;
                 if (analysis.ReferencesTo(mesh).Any(c => c != renderer) || renderer.GetComponent<Cloth>()) continue;

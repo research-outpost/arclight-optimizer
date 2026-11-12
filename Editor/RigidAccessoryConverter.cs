@@ -47,7 +47,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             bone = null;
             var mesh = renderer.sharedMesh;
-            if (!mesh || !renderer.enabled || mesh.blendShapeCount > 0 || swaps.Contains(mesh) || renderer.GetComponent<Cloth>() || TextureUsageScanner.HasPropertyBlock(renderer)) return false;
+            if (!mesh || !mesh.isReadable || !renderer.enabled || mesh.blendShapeCount > 0 || swaps.Contains(mesh) || renderer.GetComponent<Cloth>() || TextureUsageScanner.HasPropertyBlock(renderer)) return false;
             if (analysis.BindingsOn(renderer).Any() || analysis.ReferencesTo(renderer).Any()) return false;
             if (analysis.ReferencesTo(mesh).Any(c => c != renderer)) return false;
             var perVertex = mesh.GetBonesPerVertex();
@@ -93,14 +93,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // lilToon reads absolute object-space positions only for these features (lil_common_frag.hlsl, 2.3.4).
-        internal static bool ObjectSpaceSafe(Material material)
+        // animated: for callers whose renderer may carry material curves, the values animation can write into a
+        // material property ("_AudioLinkUVMode", or "_DissolveParams.x" for a vector's component), or null when no
+        // curve binds it. A switch is then judged over everything between its stored value and those values (states
+        // blend), so a clip that turns a position effect on counts as on. Without it only the stored values count,
+        // which is right for callers that already refuse animated renderers.
+        internal static bool ObjectSpaceSafe(Material material, Func<string, (float Min, float Max)?> animated = null)
         {
             if (!VertexStreamStripper.IsAuditedLilToonShader(material.shader, out _)) return false;
             float Get(string p) => material.HasProperty(p) ? material.GetFloat(p) : 0;
             Vector4 Vec(string p) => material.HasProperty(p) ? material.GetVector(p) : Vector4.zero;
-            if (Vec("_DissolveParams").x == 3) return false;
-            if (Vec("_Main2ndDissolveParams").x == 3 || Vec("_Main3rdDissolveParams").x == 3) return false;
-            if (Get("_UseAudioLink") != 0 && Get("_AudioLinkUVMode") == 5) return false;
+            (float Min, float Max) Range(string p, float stored)
+            {
+                var written = animated?.Invoke(p);
+                return written == null ? (stored, stored) : (Mathf.Min(stored, written.Value.Min), Mathf.Max(stored, written.Value.Max));
+            }
+            bool Reaches(string p, float stored, float value) { var range = Range(p, stored); return range.Min <= value && value <= range.Max; }
+            if (Reaches("_DissolveParams.x", Vec("_DissolveParams").x, 3)) return false;
+            if (Reaches("_Main2ndDissolveParams.x", Vec("_Main2ndDissolveParams").x, 3) ||
+                Reaches("_Main3rdDissolveParams.x", Vec("_Main3rdDissolveParams").x, 3)) return false;
+            var audioLink = Range("_UseAudioLink", Get("_UseAudioLink"));
+            if ((audioLink.Min != 0 || audioLink.Max != 0) && Reaches("_AudioLinkUVMode", Get("_AudioLinkUVMode"), 5)) return false;
             return true;
         }
 

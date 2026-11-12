@@ -11,8 +11,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // render the same way are drawn by one renderer (fewer renderers; identical materials then share a submesh). The
     // first renderer in hierarchy order hosts; members' vertices are moved into the host's space, their submeshes and
     // slots appended, and their MeshRenderer and MeshFilter removed (their objects stay). Only when provably the same:
-    //  - Neither the renderers nor anything up to the avatar root can be toggled, and no renderer is animated (material
-    //    properties would reach the other part's materials) or referenced by another component.
+    //  - Neither the renderers nor anything up to the avatar root is toggled, or every toggle reaching them is
+    //    provably identical (the skinned merger's ToggleSignature/EnabledSignature), and no renderer is animated
+    //    (material properties would reach the other part's materials) or referenced by another component.
     //  - Host and member never move relative to each other, and both have world scale exactly 1 that nothing can
     //    change, so the move is a rotation and translation and object-space distances stay the same; every material is
     //    an audited lilToon entry without object-space position effects, opaque (queue up to 2500), and does not read
@@ -31,7 +32,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var root = analysis.Root;
             var swaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
             var candidates = root.GetComponentsInChildren<MeshRenderer>(true).Where(r => !Exclusions.Excluded(r) && Eligible(r, analysis, swaps)).ToList();
-            foreach (var group in candidates.GroupBy(r => Key(r)))
+            foreach (var group in candidates.GroupBy(r => Key(r, analysis)))
             {
                 var remaining = group.ToList();
                 while (remaining.Count > 1)
@@ -53,9 +54,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var filter = renderer.GetComponent<MeshFilter>();
             var mesh = filter ? filter.sharedMesh : null;
-            if (!mesh || swaps.Contains(mesh) || renderer.additionalVertexStreams || TextureUsageScanner.HasPropertyBlock(renderer) || mesh.blendShapeCount > 0 || mesh.GetBonesPerVertex().Length > 0) return false;
-            if (!renderer.enabled || !renderer.gameObject.activeInHierarchy || analysis.ActivenessAnimated(renderer.gameObject)) return false;
-            if (analysis.IsAnimated(renderer) || analysis.IsAnimated(filter) || analysis.ReferencesTo(renderer).Count > 0 || analysis.ReferencesTo(filter).Count > 0) return false;
+            if (!mesh || !mesh.isReadable || swaps.Contains(mesh) || renderer.additionalVertexStreams || TextureUsageScanner.HasPropertyBlock(renderer) || mesh.blendShapeCount > 0 || mesh.GetBonesPerVertex().Length > 0) return false;
+            if (!renderer.enabled || !renderer.gameObject.activeInHierarchy) return false;
+            // An animated m_Enabled stays mergeable: the EnabledSignature branch of Toggles() pins identical toggling.
+            if (analysis.IsAnimated(renderer, p => p != "m_Enabled") || analysis.IsAnimated(filter) || analysis.ReferencesTo(renderer).Count > 0 || analysis.ReferencesTo(filter).Count > 0) return false;
             if (!RigidAccessoryConverter.UnitScaleForever(renderer.transform, analysis)) return false;
             var materials = renderer.sharedMaterials;
             if (materials.Length != mesh.subMeshCount || Enumerable.Range(0, mesh.subMeshCount).Any(s => mesh.GetTopology(s) != MeshTopology.Triangles)) return false;
@@ -66,11 +68,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return !probes || renderer.probeAnchor;
         }
 
-        private static string Key(MeshRenderer r)
+        // Objects reached by a toggle may merge only when every toggle reaching them is provably identical (the
+        // same signatures the skinned merger uses): after merging, the host's renderer carries the parts together.
+        private static string Toggles(MeshRenderer r, AvatarAnalysis analysis)
+        {
+            var toggles = new List<string>();
+            for (var t = r.transform; t != analysis.Root.transform; t = t.parent)
+                if (analysis.IsAnimated(t.gameObject, p => p == "m_IsActive")) toggles.Add(SkinnedMeshMerger.ToggleSignature(t.gameObject, analysis));
+            if (analysis.IsAnimated(r, p => p == "m_Enabled")) toggles.Add("renderer " + SkinnedMeshMerger.EnabledSignature(r, analysis));
+            toggles.Sort(StringComparer.Ordinal);
+            return string.Join(";", toggles);
+        }
+
+        private static string Key(MeshRenderer r, AvatarAnalysis analysis)
         {
             var mesh = r.GetComponent<MeshFilter>().sharedMesh;
             string layout = string.Join(",", mesh.GetVertexAttributes().Select(d => d.attribute + ":" + d.format + ":" + d.dimension + ":" + d.stream));
-            return layout + "#" + r.gameObject.layer + "#" + r.shadowCastingMode + "#" + r.receiveShadows + "#" + r.lightProbeUsage + "#" +
+            return layout + "#" + Toggles(r, analysis) + "#" + r.gameObject.layer + "#" + r.shadowCastingMode + "#" + r.receiveShadows + "#" + r.lightProbeUsage + "#" +
                 r.reflectionProbeUsage + "#" + (r.probeAnchor ? r.probeAnchor.GetInstanceID() : 0) + "#" +
                 (r.lightProbeProxyVolumeOverride ? r.lightProbeProxyVolumeOverride.GetInstanceID() : 0) + "#" + r.motionVectorGenerationMode + "#" +
                 r.allowOcclusionWhenDynamic + "#" + r.renderingLayerMask + "#" + r.sortingLayerID + "#" + r.sortingOrder + "#" + r.rendererPriority + "#" +

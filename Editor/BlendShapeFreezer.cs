@@ -73,7 +73,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var mesh = pair.Key;
                 var renderers = pair.Value;
-                if (mesh.blendShapeCount == 0 || blocked.Contains(mesh)) continue;
+                if (mesh.blendShapeCount == 0 || !mesh.isReadable || blocked.Contains(mesh)) continue;
                 if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer))) continue;
                 if (renderers.Any(r => r.GetComponent<Cloth>() || analysis.IsAnimated(r, p => p == "m_Mesh") ||
                     analysis.ReferencesTo(r).Any(c => c.GetType().Name != "VRCAvatarDescriptor"))) continue;
@@ -137,15 +137,34 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // The frames and factors Unity applies at this weight, or null when the weight is outside what can be reproduced.
         internal static (int Frame, float Factor)[] Frames(Mesh mesh, int shape, float weight)
         {
-            int count = mesh.GetBlendShapeFrameCount(shape);
+            var frameWeights = new float[mesh.GetBlendShapeFrameCount(shape)];
+            for (int f = 0; f < frameWeights.Length; f++) frameWeights[f] = mesh.GetBlendShapeFrameWeight(shape, f);
+            return Frames(frameWeights, weight);
+        }
+
+        // The same decision on the frame weights alone, so malformed weights can be tested without a mesh that holds
+        // them (Mesh.AddBlendShapeFrame refuses a frame weight that does not exceed the one before it).
+        internal static (int Frame, float Factor)[] Frames(float[] frameWeights, float weight)
+        {
+            int count = frameWeights.Length;
             if (weight == 0) return Array.Empty<(int, float)>();
-            if (count == 1) return new[] { (0, weight / mesh.GetBlendShapeFrameWeight(shape, 0)) };
-            float first = mesh.GetBlendShapeFrameWeight(shape, 0), last = mesh.GetBlendShapeFrameWeight(shape, count - 1);
+            if (count == 0) return null;
+            if (count == 1)
+            {
+                float only = frameWeights[0];
+                if (only <= 0) return null; // Unity assumes 100 for a lone frame; zero is malformed input, not reproducible.
+                return new[] { (0, weight / only) };
+            }
+            // Unity requires increasing frame weights; equal or decreasing ones cannot be interpolated, whichever
+            // segment the weight falls in, so the whole shape is not reproduced.
+            for (int i = 1; i < count; i++)
+                if (frameWeights[i] <= frameWeights[i - 1]) return null;
+            float first = frameWeights[0], last = frameWeights[count - 1];
             if (first > 0 && weight >= 0 && weight < first) return new[] { (0, weight / first) };
             if (weight < first || weight > last) return null; // Extrapolation: not reproduced.
             for (int i = 1; i < count; i++)
             {
-                float a = mesh.GetBlendShapeFrameWeight(shape, i - 1), b = mesh.GetBlendShapeFrameWeight(shape, i);
+                float a = frameWeights[i - 1], b = frameWeights[i];
                 if (weight <= b)
                 {
                     float ratio = (weight - a) / (b - a);

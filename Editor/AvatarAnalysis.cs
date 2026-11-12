@@ -57,6 +57,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private readonly HashSet<Transform> otherMotion = new HashSet<Transform>();
         private readonly Dictionary<Transform, List<Component>> physBonesMoving = new Dictionary<Transform, List<Component>>();
         private readonly Dictionary<object, int> clipIds = new Dictionary<object, int>();
+        // (owner, path) -> every transform the path can name. Passes re-resolve the same binding paths over and over,
+        // so the walk is memoized per analysis; RescanReferences (run by every structural pass) clears it.
+        private readonly Dictionary<(Transform Owner, string Path), List<Transform>> resolved = new Dictionary<(Transform Owner, string Path), List<Transform>>();
 
         private AvatarAnalysis(GameObject root) { Root = root; }
 
@@ -90,7 +93,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             foreach (var entry in controllers)
             {
-                if (entry.Value == null) continue;
+                // A tool can delete an Animator after merging its controller (VRCFury and Avatar Pose System do
+                // this); without a live Animator its clip paths are unreadable — skip the entry, as the rewriter does.
+                if (entry.Value == null || entry.Key is UnityEngine.Object gone && !gone) continue;
                 var owner = entry.Key is Animator animator && animator ? animator.transform : Root.transform;
                 var summed = Summed(entry.Key, entry.Value);
                 // A synced layer keeps its own behaviours for the states it shares.
@@ -190,7 +195,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             if (!clipIds.TryGetValue(clip, out int id)) clipIds.Add(clip, id = clipIds.Count);
             CurvePaths.Add((owner, curve.path ?? ""));
-            foreach (var transform in Resolve(owner, curve.path))
+            foreach (var transform in Resolved(owner, curve.path))
             {
                 Object target = curve.type == typeof(GameObject) ? transform.gameObject
                     : curve.type == typeof(Transform) ? transform
@@ -204,6 +209,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Every transform the path can name, starting at owner (same-named siblings all match).
+        // Pure walk without a memo; callers holding an AvatarAnalysis should prefer the memoized Resolved.
         internal static IEnumerable<Transform> Resolve(Transform owner, string path)
         {
             IEnumerable<Transform> current = new[] { owner };
@@ -214,6 +220,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 current = current.SelectMany(t => t.Cast<Transform>().Where(child => child.name == name)).ToArray();
             }
             return current;
+        }
+
+        // Resolve memoized for this analysis. The stored list is shared, not copied: callers enumerate it and must not mutate it.
+        internal IEnumerable<Transform> Resolved(Transform owner, string path)
+        {
+            if (!resolved.TryGetValue((owner, path), out var list)) resolved[(owner, path)] = list = Resolve(owner, path).ToList();
+            return list;
         }
 
         // Curves that drive this GameObject or component (optionally only properties the predicate accepts).
@@ -243,7 +256,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal IEnumerable<Object> AnimatedObjectValues => Bindings.Where(b => b.Values != null).SelectMany(b => b.Values).Where(v => v);
 
         // References change when a pass replaces objects (for example meshes); scan them again before relying on them.
-        internal void RescanReferences() { referencedBy.Clear(); referencesFrom.Clear(); ScanReferences(); }
+        // Structural passes rename or reparent nodes too, so the path memo is cleared with the reference maps.
+        internal void RescanReferences() { referencedBy.Clear(); referencesFrom.Clear(); resolved.Clear(); ScanReferences(); }
 
         private void ScanReferences()
         {

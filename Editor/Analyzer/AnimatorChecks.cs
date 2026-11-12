@@ -92,7 +92,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 using (var serialized = new SerializedObject(behaviour))
                 {
                     var target = serialized.FindProperty("playable");
-                    string named = target != null && target.propertyType == SerializedPropertyType.Enum ? target.enumNames[target.enumValueIndex] : null;
+                    // enumValueIndex is not guaranteed to index enumNames for a stale serialized value (options come and
+                    // go across SDK versions); mirror the LayerControls guard further down.
+                    int nameIndex = target != null && target.propertyType == SerializedPropertyType.Enum ? target.enumValueIndex : -1;
+                    string named = nameIndex >= 0 && nameIndex < target.enumNames.Length ? target.enumNames[nameIndex] : null;
                     if (named == null || named == playable.Name) controls++;
                     if ((named == null || named == playable.Name) && (serialized.FindProperty("goalWeight")?.floatValue ?? 1) > 0)
                         raised.Add(serialized.FindProperty("layer")?.intValue ?? -1);
@@ -105,8 +108,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 var machine = layers[i].syncedLayerIndex >= 0 && layers[i].syncedLayerIndex < layers.Length ? layers[layers[i].syncedLayerIndex].stateMachine : layers[i].stateMachine;
                 if (Divider(layers[i].name) && !States(machine).Any()) continue;
                 if (!States(machine).Any()) { dead.Add("\"" + layers[i].name + "\" (no states)"); deadNames.Add(layers[i].name); }
-                // A weight-0 layer still runs its state machine, so one holding behaviours (drivers, tracking or layer controls) acts.
-                else if (layers[i].defaultWeight == 0 && !raised.Contains(i) && !Acts(layers[i], machine)) { dead.Add("\"" + layers[i].name + "\" (weight 0)"); deadNames.Add(layers[i].name); }
+                // A weight-0 layer still runs its state machine (Unity evaluates every non-synced state machine even at
+                // weight 0), so one holding behaviours (drivers, tracking or layer controls) acts — and one whose states
+                // write defaults rewrites the defaults of everything they bind, suppressing the layers below.
+                else if (layers[i].defaultWeight == 0 && !raised.Contains(i) && !Acts(layers[i], machine) &&
+                    !Machines(machine).SelectMany(sm => sm.states).Any(s => s.state && s.state.writeDefaultValues))
+                { dead.Add("\"" + layers[i].name + "\" (weight 0)"); deadNames.Add(layers[i].name); }
             }
             if (dead.Count == 0) return;
             // Removing is safe only when no layer index can shift under a Layer Control or a synced layer, and names are unique.

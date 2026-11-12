@@ -138,6 +138,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static TextureChannels Channel(Material material, string property)
         {
+            // A missing selector float reads as 0 (channel R), claiming a too-narrow set; widen like Orels does.
+            if (!material.HasProperty(property)) return TextureChannels.All;
             float value = MaterialInputs.Float(material, property);
             return value == 0 ? TextureChannels.R : value == 1 ? TextureChannels.G : value == 2 ? TextureChannels.B
                 : value == 3 ? TextureChannels.A : TextureChannels.All;

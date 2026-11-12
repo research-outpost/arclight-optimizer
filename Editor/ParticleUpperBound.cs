@@ -15,7 +15,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // system an animation changes.
     internal static class ParticleUpperBound
     {
-        // The longest frame the simulation takes in one step is Time.maximumDeltaTime (1/3 s by default).
+        // The longest step the simulation takes in one frame is Time.maximumDeltaTime (1/3 s by default); the margin
+        // keeps headroom over that, so a slower-than-default maximumDeltaTime can never shrink the safety window.
         internal const float FrameMargin = .5f;
 
         internal sealed class Result { public int Systems, Removed, Trails, Collisions; public long Before, After; }
@@ -40,7 +41,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var system in systems)
             {
                 var renderer = system.GetComponent<ParticleSystemRenderer>();
-                if (subEmitterTargets.Contains(system) || analysis.IsAnimated(system) || analysis.IsAnimated(renderer) || Exclusions.Excluded(system)) continue;
+                // Renderer animation (typically material curves) no longer stands the pass down: it cannot change
+                // particle counts, so removal, maxParticles bounding and inert-module cleanup keep their safety argument.
+                if (subEmitterTargets.Contains(system) || analysis.IsAnimated(system) || Exclusions.Excluded(system)) continue;
                 long bound = Bound(system);
                 var main = system.main;
                 // A Stop Action (Disable, Destroy, Callback) still acts when the system ends, even with nothing emitted.

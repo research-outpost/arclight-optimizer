@@ -114,27 +114,51 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .SelectMany(m => aimedAt.TryGetValue(m, out var list) ? list : Enumerable.Empty<Receiver>())
                 .Select(r => r.ReceiverComponent).Distinct().ToList();
             int repacked = 0;
-            foreach (var component in touched)
-                using (var serialized = new SerializedObject(component))
-                {
-                    var array = serialized.FindProperty(TargetArray);
-                    if (array == null) continue;
-                    var original = Enumerable.Range(0, array.arraySize).Select(i => array.GetArrayElementAtIndex(i).objectReferenceValue).ToList();
-                    var kept = new List<Object>();
-                    var seen = new HashSet<Object>();
-                    foreach (var value in original)
+            // A failure part-way through puts every receiver list already rewritten back, so a failed merge catch
+            // never leaves contacts aimed at the host while the meshes were restored.
+            var applied = new List<(Component Component, List<Object> Original)>();
+            try
+            {
+                foreach (var component in touched)
+                    using (var serialized = new SerializedObject(component))
                     {
-                        if (!value) { kept.Add(null); continue; }
-                        var mapped = members.Any(m => m == value) ? (Object)host : value;
-                        if (mapped && !seen.Add(mapped)) continue; // The member slot joined the host's; one entry does it.
-                        kept.Add(mapped);
+                        var array = serialized.FindProperty(TargetArray);
+                        if (array == null) continue;
+                        var original = Enumerable.Range(0, array.arraySize).Select(i => array.GetArrayElementAtIndex(i).objectReferenceValue).ToList();
+                        var kept = new List<Object>();
+                        var seen = new HashSet<Object>();
+                        foreach (var value in original)
+                        {
+                            if (!value) { kept.Add(null); continue; }
+                            var mapped = members.Any(m => m == value) ? (Object)host : value;
+                            if (mapped && !seen.Add(mapped)) continue; // The member slot joined the host's; one entry does it.
+                            kept.Add(mapped);
+                        }
+                        if (kept.Count == original.Count && kept.Zip(original, (a, b) => a == b).All(same => same)) continue;
+                        for (int i = original.Count - 1; i >= kept.Count; i--) array.DeleteArrayElementAtIndex(i);
+                        for (int i = 0; i < kept.Count; i++) array.GetArrayElementAtIndex(i).objectReferenceValue = kept[i];
+                        serialized.ApplyModifiedPropertiesWithoutUndo();
+                        applied.Add((component, original));
+                        repacked++;
                     }
-                    if (kept.Count == original.Count && kept.Zip(original, (a, b) => a == b).All(same => same)) continue;
-                    for (int i = original.Count - 1; i >= kept.Count; i--) array.DeleteArrayElementAtIndex(i);
-                    for (int i = 0; i < kept.Count; i++) array.GetArrayElementAtIndex(i).objectReferenceValue = kept[i];
-                    serialized.ApplyModifiedPropertiesWithoutUndo();
-                    repacked++;
-                }
+            }
+            catch
+            {
+                foreach (var entry in applied)
+                    using (var serialized = new SerializedObject(entry.Component))
+                    {
+                        var array = serialized.FindProperty(TargetArray);
+                        if (array == null) continue;
+                        for (int i = array.arraySize - 1; i >= 0; i--) array.DeleteArrayElementAtIndex(i);
+                        for (int i = 0; i < entry.Original.Count; i++)
+                        {
+                            array.InsertArrayElementAtIndex(i);
+                            array.GetArrayElementAtIndex(i).objectReferenceValue = entry.Original[i];
+                        }
+                        serialized.ApplyModifiedPropertiesWithoutUndo();
+                    }
+                throw;
+            }
             return repacked;
         }
 

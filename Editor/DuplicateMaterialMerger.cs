@@ -47,9 +47,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             foreach (var renderer in renderers) foreach (var material in renderer.sharedMaterials) Add(material);
             var ownedClips = clips.Where(clip => isBuildOwned(clip) && !isSpecialMotion(clip)).ToArray();
+            // Swaps onto an excluded renderer keep their materials (Arclight Exclude leaves its objects untouched):
+            // seed candidates with the same filter the rewrite below applies, so an excluded-only material is never
+            // counted as merged.
+            var protectedRenderers = root.GetComponentsInChildren<Renderer>(true).Where(Exclusions.Excluded).ToArray();
             foreach (var clip in ownedClips)
                 foreach (var binding in SwapBindings(clip))
+                {
+                    if (protectedRenderers.Any(r => PathMatches(root, r, binding.path ?? ""))) continue;
                     foreach (var key in AnimationUtility.GetObjectReferenceCurve(clip, binding)) Add(key.value);
+                }
 
             var keepers = new Dictionary<string, List<(Material Material, byte[] Data)>>(StringComparer.Ordinal);
             var replace = new Dictionary<Material, Material>();
@@ -78,7 +85,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (changed) renderer.sharedMaterials = materials;
             }
             // Swaps onto an excluded renderer keep their materials (Arclight Exclude leaves its objects untouched).
-            var protectedRenderers = root.GetComponentsInChildren<Renderer>(true).Where(Exclusions.Excluded).ToArray();
             foreach (var clip in ownedClips)
                 foreach (var binding in SwapBindings(clip))
                 {

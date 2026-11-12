@@ -30,12 +30,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static Dictionary<AudioClip, AudioClip> Convert(IEnumerable<(Component Owner, AudioClip Clip)> references, ICollection<GameObject> vetoed = null)
         {
             var result = new Dictionary<AudioClip, AudioClip>();
-            foreach (var group in references.GroupBy(r => r.Clip))
+            // Start the pass from the on-disk record: the cache cleanup may have pruned it since the last marks, and marks
+            // left over from a pass with no end point (texture crops) are not carried into this one. See MarkUsed.
+            usagePending = null;
+            try
             {
-                if (!group.All(r => Qualifies(r.Owner, r.Clip) && (vetoed == null || !vetoed.Contains(r.Owner.gameObject)))) continue;
-                var mono = MonoCopy(group.Key);
-                if (mono) result.Add(group.Key, mono);
+                foreach (var group in references.GroupBy(r => r.Clip))
+                {
+                    if (!group.All(r => Qualifies(r.Owner, r.Clip) && (vetoed == null || !vetoed.Contains(r.Owner.gameObject)))) continue;
+                    var mono = MonoCopy(group.Key);
+                    if (mono) result.Add(group.Key, mono);
+                }
             }
+            finally { FlushUsage(); } // One save for the whole pass, even when it throws part-way: clips marked used up to there keep their record.
             return result;
         }
 
@@ -84,12 +91,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 !(AssetImporter.GetAtPath(path) is AudioImporter importer) || importer.ambisonic || importer.forceToMono) return null;
             string meta = path + ".meta";
             if (!File.Exists(LongPath.For(path)) || !File.Exists(LongPath.For(meta))) return null;
-            string hash = FingerprintService.Hash(File.ReadAllBytes(LongPath.For(path)).Concat(File.ReadAllBytes(LongPath.For(meta))).ToArray());
+            string hash = SourceSignature(path, meta);
+            if (hash == null) return null;
             AutomaticTextureOptimizer.EnsureFolder(Folder);
             string safeName = new string(Path.GetFileNameWithoutExtension(path).Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_').Take(36).ToArray());
-            string output = Folder + "/" + safeName + "_" + hash.Substring(0, 12) + "_mono.wav";
+            string output = OutputPath(Folder, safeName, hash);
+            if (output == null) return null; // The cache folder is too deep for a generated name that fits within MAX_PATH.
             string marker = "ArclightMono:" + hash;
-            if (File.Exists(output))
+            if (File.Exists(LongPath.For(output)))
             {
                 // Only a file of ours is reused or replaced: anything else at this path is left alone.
                 if (!IsGenerated(output)) return null;
@@ -121,9 +130,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var wav = FloatWav(mono, frequency);
             string copiedMeta = CopiedAudioMeta(meta, marker + ":" + FingerprintService.Hash(wav));
             if (copiedMeta == null) return null;
-            if (File.Exists(output)) AssetDatabase.DeleteAsset(output); // A stale generated copy of ours (checked above).
-            File.WriteAllText(output + ".meta", copiedMeta); // Before the audio, so it is never imported with defaults.
-            File.WriteAllBytes(output, wav);
+            if (File.Exists(LongPath.For(output))) AssetDatabase.DeleteAsset(output); // A stale generated copy of ours (checked above).
+            File.WriteAllText(LongPath.For(output + ".meta"), copiedMeta); // Before the audio, so it is never imported with defaults.
+            File.WriteAllBytes(LongPath.For(output), wav);
             AssetDatabase.ImportAsset(output, ImportAssetOptions.ForceSynchronousImport);
             var result = AssetDatabase.LoadAssetAtPath<AudioClip>(output);
             if (!result || result.channels != 1 || result.frequency != clip.frequency || result.samples != clip.samples)
@@ -135,6 +144,35 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return result;
         }
 
+        // The source's bytes and its raw .meta folded into the signature that names and marks the copy. Memoized in
+        // SessionState (it survives Play Mode's domain reloads) by Unity's dependency hash, which covers the source's
+        // content and importer, and by the .meta's hash, since the signature folds in the .meta's bytes: a build no
+        // longer re-reads a big audio file, only clips new to the editor session pay the full read. IO failures are not memoized.
+        private static string SourceSignature(string path, string meta)
+        {
+            string key;
+            try { key = "Arclight.Optimizer.MonoSourceSignature." + FingerprintService.Version + "." + AssetDatabase.GetAssetDependencyHash(path) + "." + FingerprintService.FileHash(meta); }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { return null; }
+            string cached = SessionState.GetString(key, "");
+            if (cached.Length > 0) return cached;
+            string hash = FingerprintService.Hash(File.ReadAllBytes(LongPath.For(path)).Concat(File.ReadAllBytes(LongPath.For(meta))).ToArray());
+            SessionState.SetString(key, hash);
+            return hash;
+        }
+
+        // Unity's own tools still fail on paths past MAX_PATH, so the generated clip keeps its full path, including the
+        // longest file written ("<name>.wav.meta"), within 259 characters: the source name (shortened as needed) plus 12
+        // hex digits of the source signature, mirroring GenerationCoordinator.OutputPath. A cache folder too deep to
+        // leave room returns null rather than throwing: a clip left as it is beats a throw, which would stop every
+        // avatar-wide pass after this one.
+        private static string OutputPath(string folder, string safeName, string signature)
+        {
+            string tail = "_" + signature.Substring(0, 12) + "_mono.wav";
+            int budget = 259 - Path.GetFullPath(folder + "/" + tail + ".meta").Length;
+            if (budget < 0) return null;
+            return folder + "/" + safeName.Substring(0, Math.Min(safeName.Length, budget)) + tail;
+        }
+
         // The source's samples as Unity decodes them, read from a temporary uncompressed copy (the source and its
         // importer are never changed).
         private static float[] DecodedSamples(string path, out int frequency)
@@ -144,7 +182,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string temp = Folder + "/" + Guid.NewGuid().ToString("N") + "_decode" + Path.GetExtension(path);
             try
             {
-                File.Copy(LongPath.For(path), temp, true);
+                File.Copy(LongPath.For(path), LongPath.For(temp), true);
                 AssetDatabase.ImportAsset(temp, ImportAssetOptions.ForceSynchronousImport);
                 var importer = (AudioImporter)AssetImporter.GetAtPath(temp);
                 var settings = importer.defaultSampleSettings;
@@ -186,8 +224,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Last build day each generated clip was used, for the cache cleanup's 30-day rule. Kept in Library: it is
-        // per machine, like the builds that refresh it, and changing it never reimports anything.
-        private const string UsageFile = "Library/AvatarTextureOptimizer/audio-usage.json";
+        // per machine, like the builds that refresh it, and changing it never reimports anything. Test fixtures
+        // redirect the cache folder into themselves (AutomaticTextureOptimizer.CacheFolder); the record follows that
+        // redirect, so fixtures never touch the shared machine-wide file.
+        private static string UsageFile => AutomaticTextureOptimizer.CacheFolder == AvatarTextureOptimizer.OutputFolder
+            ? "Library/AvatarTextureOptimizer/audio-usage.json"
+            : AutomaticTextureOptimizer.CacheFolder + "/audio-usage.json";
         [Serializable] private sealed class Usage { public List<string> paths = new List<string>(); public List<int> days = new List<int>(); }
 
         internal static Dictionary<string, int> LoadUsage()
@@ -212,11 +254,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Shared last-used record for generated files the cache cleanup tracks (mono clips and texture crops).
+        // Marking used loaded and rewrote the whole file per clip, so marks land in usagePending instead and the
+        // mono pass saves once at its end (try/finally in Convert, so a pass that throws part-way still keeps what
+        // it marked). Passes with no end point here (texture crops) have their marks dropped, not written late:
+        // the next pass starts from the on-disk record, so at most one build's crop re-touches are lost. Entries
+        // only start their staleness clock, and the cache cleanup records any generated file it finds unrecorded,
+        // so the cost is at most 30 more days before that crop goes.
+        private static Dictionary<string, int> usagePending;
+
         internal static void MarkUsed(string path)
         {
-            var usage = LoadUsage();
-            usage[path] = CacheCleanup.Today;
-            SaveUsage(usage);
+            if (usagePending == null) usagePending = LoadUsage();
+            usagePending[path] = CacheCleanup.Today;
+        }
+
+        // Write the marks collected so far and forget them; the next pass reloads, which also drops records the
+        // cache cleanup has since pruned.
+        private static void FlushUsage()
+        {
+            if (usagePending != null) SaveUsage(usagePending);
+            usagePending = null;
         }
 
         // The copy imports with the source's .meta, so its settings match the source's until someone edits either.

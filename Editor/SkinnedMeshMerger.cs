@@ -168,6 +168,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var mesh = renderer.sharedMesh;
             if (!mesh || Exclusions.Excluded(renderer)) return "no mesh, or excluded from Arclight";
+            if (!mesh.isReadable) return "its mesh has Read/Write off, so its vertices cannot be copied";
             if (!renderer.enabled && !analysis.IsAnimated(renderer, p => p == "m_Enabled")) return "the renderer is disabled";
             if (meshSwaps.Contains(mesh)) return "an animation swaps its mesh";
             if (renderer.GetComponent<Cloth>()) return "Cloth simulates it";
@@ -199,7 +200,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // that clip and the exact curve. Two curves in one clip share its layer, weight and time, so they always give the same
         // value; avatar masks never filter activation (MaskFilteringTests). Objects with equal signatures are therefore always
         // active together. Anything else (a legacy Animation clip) keeps the object's own identity.
-        private static string ToggleSignature(GameObject toggled, AvatarAnalysis analysis) => Signature(toggled, toggled.activeSelf, "m_IsActive", analysis);
+        internal static string ToggleSignature(GameObject toggled, AvatarAnalysis analysis) => Signature(toggled, toggled.activeSelf, "m_IsActive", analysis);
 
         // A renderer's enabled flag, in the same terms: renderers with equal signatures are always on and off together.
         internal static string EnabledSignature(Renderer renderer, AvatarAnalysis analysis) => Signature(renderer, renderer.enabled, "m_Enabled", analysis);
@@ -532,6 +533,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             for (int s = 0; s < weightsByName.Count; s++) host.SetBlendShapeWeight(s, weightsByName[s].Item2);
             string hostPath = AnimationUtility.CalculateTransformPath(host.transform, root.transform);
             var planned = new List<Move>();
+            // Snapshot the descriptor fields retargeting touches, so a failure part-way through cannot leave earlier
+            // members' retargets applied (the "no half merged" promise above).
+            var descriptors = root.GetComponents<Component>()
+                .Where(c => c && c.GetType().Name == "VRCAvatarDescriptor")
+                .Select(c => (Component: c, State: EditorJsonUtility.ToJson(c))).ToList();
             try
             {
                 int slotOffset = 0, shapeOffset = 0;
@@ -547,6 +553,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             catch
             {
+                foreach (var entry in descriptors) EditorJsonUtility.FromJsonOverwrite(entry.State, entry.Component);
                 Rebind(host, () =>
                 {
                     host.bones = original.Bones;

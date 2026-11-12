@@ -132,7 +132,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return unique.Select(p => (p.Key, p.Value.Item1, p.Value.Item2)).ToList();
         }
 
-        internal static string CreateKey(TextureGroup group, int width, int height, int padding, Action cancel)
+        internal static string CreateKey(TextureGroup group, int width, int height, int padding, bool pad, Action cancel)
         {
             // Coverage is a union, so order and duplicate identical paths do not affect its output.
             var paths = new SortedSet<string>(UniquePaths(group, cancel).Select(p => p.Key), StringComparer.Ordinal);
@@ -143,6 +143,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 writer.Write(width); writer.Write(height);
                 writer.Write(group.Source.width); writer.Write(group.Source.height);
                 writer.Write(padding);
+                writer.Write(pad); // pad decides the stored mask (padded vs sampled-only), so it belongs in the key.
                 writer.Write(paths.Count);
                 foreach (string path in paths) writer.Write(path);
                 writer.Flush();
@@ -258,14 +259,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             Build(group, width, height, out sampled, null, cancel);
 
         // pad: false when the caller keeps only the sampled mask (colour repair rebuilds padding itself); the padded result is then
-        // not computed, and the sampled mask is returned as both.
+        // not computed, and the sampled mask is cached and returned as both (repair callers read only the sampled one).
         internal static bool[] Build(TextureGroup group, int width, int height, out bool[] sampled, UvCoverageCache cache, Action cancel = null, bool pad = true)
         {
             ValidateSize(width, height);
             // Padding is measured in the imported texture. Convert it back to PNG texels
             // per axis so platform downscaling does not shrink the requested protection.
             int padding = AvatarTextureOptimizer.GetPaddingPixels(group.Source.width, group.Source.height);
-            string cacheKey = cache == null ? null : UvCoverageCache.CreateKey(group, width, height, padding, cancel);
+            string cacheKey = cache == null ? null : UvCoverageCache.CreateKey(group, width, height, padding, pad, cancel);
             if (cache != null && cache.TryGet(cacheKey, out var cached, out sampled, cancel))
             {
                 cancel?.Invoke();
@@ -316,7 +317,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             budget.Check();
             if (wraps.Count == 0) throw new InvalidOperationException("No sampled texture uses.");
             sampled = mask;
-            if (!pad) return mask;
+            if (!pad)
+            {
+                // The key pins the pad flag, so this sampled-only entry is only ever handed back to pad:false callers,
+                // which use only `sampled`; a repeated repair build then reuses the raster instead of recomputing it.
+                cache?.Store(cacheKey, mask, mask, cancel);
+                return mask;
+            }
             var result = new bool[mask.Length];
             // Padding the full union under every applicable sampler is deliberately conservative.
             foreach (var wrap in wraps)

@@ -36,7 +36,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     foreach (var controller in owned)
                         if (D4rkLayerFold.Run(controller, controllers, IsBuildOwned) is string into)
                             Note($"Moved d4rk's merged layer into the \"{into}\" blend tree in {controller.name} (one animator layer fewer).");
-                    int clips = AnimationClipDeduplicator.MergeCommitted(owned, special);
+                    int clips = AnimationClipDeduplicator.MergeCommitted(owned, special, IsBuildOwned);
                     if (materials + clips > 0 || owned.Length < controllers.Length)
                         Note($"Merged {materials} duplicate material(s) and {clips} duplicate animation clip(s) d4rk left" +
                             (owned.Length < controllers.Length ? $"; {controllers.Length - owned.Length} controller(s) skipped as source assets." : "."));
@@ -51,11 +51,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         .SelectMany(a => a.runtimeAnimatorController.animationClips));
                     // Every renderer any animation on the avatar swaps a mesh onto, from any controller, Animator or legacy clip.
                     var meshSwapped = new System.Collections.Generic.HashSet<Transform>();
+                    // Same path under the same owner is walked once; Swaps runs over every clip binding on the avatar.
+                    var resolvedByOwnerPath = new System.Collections.Generic.Dictionary<(UnityEngine.Transform, string), System.Collections.Generic.List<UnityEngine.Transform>>();
                     void Swaps(Transform owner, System.Collections.Generic.IEnumerable<AnimationClip> source)
                     {
                         foreach (var clip in source.Where(c => c))
                             foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip).Where(b => b.propertyName == "m_Mesh"))
-                                meshSwapped.UnionWith(AvatarAnalysis.Resolve(owner, binding.path));
+                            {
+                                if (!resolvedByOwnerPath.TryGetValue((owner, binding.path), out var found))
+                                    resolvedByOwnerPath[(owner, binding.path)] = found = AvatarAnalysis.Resolve(owner, binding.path).ToList();
+                                meshSwapped.UnionWith(found);
+                            }
                     }
                     Swaps(avatarGameObject.transform, controllers.SelectMany(c => c.animationClips));
                     foreach (var animator in avatarGameObject.GetComponentsInChildren<Animator>(true).Where(a => a && a.runtimeAnimatorController))
@@ -67,7 +73,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (keys > 0 || curves > 0)
                         Note($"Removed {curves} animation curve(s) that drive nothing and {keys} redundant animation key(s).");
                     // Clips that differed only in those keys or curves are identical now.
-                    if (merge && (keys > 0 || curves > 0) && AnimationClipDeduplicator.MergeCommitted(owned, special) is int same && same > 0)
+                    if (merge && (keys > 0 || curves > 0) && AnimationClipDeduplicator.MergeCommitted(owned, special, IsBuildOwned) is int same && same > 0)
                         Note($"Merged {same} animation clip(s) that became identical once redundant keys and curves were removed.");
                 }
                 if (streams && StripAfterD4rk(avatarGameObject, bindings) is string stripped) Note(stripped);

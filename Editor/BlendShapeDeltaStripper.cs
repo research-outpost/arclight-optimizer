@@ -27,7 +27,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var group in root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh).GroupBy(r => r.sharedMesh))
             {
                 var mesh = group.Key;
-                if (mesh.blendShapeCount == 0 || swaps.Contains(mesh) || group.Any(Exclusions.Excluded) ||
+                if (mesh.blendShapeCount == 0 || !mesh.isReadable || swaps.Contains(mesh) || group.Any(Exclusions.Excluded) ||
                     root.GetComponentsInChildren<MeshFilter>(true).Any(f => f.sharedMesh == mesh && Exclusions.Excluded(f))) continue;
                 if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer) && !(c is MeshFilter))) continue;
                 var copy = Strip(mesh, out int frames);

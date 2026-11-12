@@ -20,8 +20,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             if (!IsStandalone && EditorUserBuildSettings.activeBuildTarget != BuildTarget.Android)
                 throw new InvalidOperationException("Only Standalone and Android targets are supported.");
-            if (!skipPngSizeGate) TextureFileSizePolicy.Validate(new System.IO.FileInfo(AssetDatabase.GetAssetPath(source)).Length,
-                new System.IO.FileInfo(AssetDatabase.GetAssetPath(replacement)).Length);
+            if (!skipPngSizeGate) TextureFileSizePolicy.Validate(LongPath.Length(AssetDatabase.GetAssetPath(source)),
+                LongPath.Length(AssetDatabase.GetAssetPath(replacement)));
             var originalImporter = TextureSafety.Validate(source);
             var outputImporter = TextureSafety.Validate(replacement);
             bool changed = standaloneFormat != 0;

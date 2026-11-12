@@ -22,6 +22,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (full.Length < 260) return path;
             return full.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + full.Substring(2) : @"\\?\" + full;
         }
+
+        // The file's size in bytes. One place for every size check, so none of them stats the bare path and fails
+        // on a file past MAX_PATH while the reads next to it succeed.
+        internal static long Length(string path) => new FileInfo(For(path)).Length;
     }
 
     internal static class FingerprintService
@@ -54,6 +58,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public static string Recipe(TextureGroup group)
         {
             if (group.CachedRecipe != null) return group.CachedRecipe;
+            return RecomputeRecipe(group);
+        }
+
+        // Re-hash the source file and importer, bypassing this scan's memo: the recheck during generation must
+        // notice a source that changed on disk after the recipe was first captured, which the memo would hide.
+        public static string RecipeRefreshed(TextureGroup group) => RecomputeRecipe(group);
+
+        private static string RecomputeRecipe(TextureGroup group)
+        {
             var path = AssetDatabase.GetAssetPath(group.Source);
             string sourceHash = FileHash(path);
             var uses = new SortedSet<string>(group.Uses.Select(use => UseEntry(group.Source, use)), StringComparer.Ordinal);

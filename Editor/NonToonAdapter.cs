@@ -110,7 +110,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 string texture = Details + "Detail" + i + "Texture";
                 if (property != texture && property != Details + "Detail" + i + "NormalMap") continue;
-                int uv = MaterialInputs.Int(material, Details + "Detail" + i + "UV");
+                // Read through Value(): these selectors may be float-stored Ints, exactly as the helper documents.
+                int uv = (int)Value(material, Details + "Detail" + i + "UV");
                 if (uv < 0 || uv > 3) return Unsupported("NonToon detail UV selector is outside UV0-UV3; original retained.");
                 return Supported(property == texture ? TextureSemantics.Color : NormalSemantics(material), new SamplingPath { UvChannel = uv,
                     Scale = MaterialInputs.Scale(material, texture), Offset = MaterialInputs.Offset(material, texture),
@@ -123,13 +124,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static string SourceFailure(string path) => ShaderAdapterRegistry.PinnedSourceFailure(path, AuditedSources[path], () =>
             {
-                var source = AssetDatabase.LoadAllAssetsAtPath(path).OfType<TextAsset>().FirstOrDefault();
+                // The generated source is the TextAsset named "Shader Source" (mirrors ShaderFacts.ContainerSource);
+                // hashing any other sub-asset would false-fail the pin when the container grows one.
+                var source = AssetDatabase.LoadAllAssetsAtPath(path).OfType<TextAsset>().FirstOrDefault(t => t.name == "Shader Source");
                 return source ? FingerprintService.Hash(Encoding.UTF8.GetBytes(source.text.Replace("\r\n", "\n"))) : null;
             },
             "The generated NonToon shader differs from the audited NonToon 0.1.3 / Shader Core 0.1.12 and NonToon 0.3.0 / Shader Core 0.3.0 builds with all ten NonToon modules; original retained.");
 
         private static TextureSemantics NormalSemantics(Material material) =>
-            MaterialInputs.Int(material, "_NormalMapWithRoughness") != 0 ? TextureSemantics.Data : TextureSemantics.Normal;
+            (int)Value(material, "_NormalMapWithRoughness") != 0 ? TextureSemantics.Data : TextureSemantics.Normal;
 
         // Unassigned, the shader's default white texture samples with Repeat.
         private static SamplingDescription BaseUv(Texture baseTexture, TextureSemantics semantics) => Supported(semantics,

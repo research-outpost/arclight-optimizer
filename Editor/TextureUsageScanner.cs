@@ -185,6 +185,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Keep byte-identical files on the old cheap path. Differently encoded PNGs pass a
         // header/importer bucket, then a memoized pixel signature; only signature matches are
         // decoded again, retaining one candidate plus one representative pixel array while verifying.
+        // A stat failure (the file moved between the exists check and here, or a path past MAX_PATH)
+        // drops the candidate like an unreadable file below does: it stays separate, next build retries.
+        private static long TryFileLength(string path)
+        {
+            try { return new FileInfo(path).Length; }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is PathTooLongException) { return -1; }
+        }
+
         private static void MergeDuplicates(ScanResult result, OptimizationProgress progress)
         {
             var candidates = result.Groups
@@ -192,11 +200,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .Where(c => c.Group.Source is Texture2D && AssetDatabase.IsMainAsset(c.Group.Source) &&
                             AssetImporter.GetAtPath(c.Path) is TextureImporter && File.Exists(c.Path) &&
                             !c.Group.Uses.Any(u => Exclusions.Excluded(u.Renderer)))
+                .Select(c => (Group: c.Group, Path: c.Path, Size: TryFileLength(c.Path)))
+                .Where(c => c.Size >= 0)
                 .OrderBy(c => c.Path, StringComparer.Ordinal)
                 .ToArray();
 
             foreach (var bucket in candidates
-                .GroupBy(c => new FileInfo(c.Path).Length + "|" +
+                .GroupBy(c => c.Size + "|" +
                     TextureSafety.SettingsFingerprint((TextureImporter)AssetImporter.GetAtPath(c.Path)))
                 .Where(bucket => bucket.Count() > 1))
             {
@@ -216,7 +226,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         byFileHash.Add(hash, copies);
                         copiesByHash.Add(copies);
                     }
-                    copies.Add(candidate);
+                    copies.Add((candidate.Group, candidate.Path));
                 }
                 foreach (var copies in copiesByHash)
                 {
@@ -232,8 +242,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 .Where(c => c.Group.Source is Texture2D && AssetDatabase.IsMainAsset(c.Group.Source) &&
                             c.Path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) &&
                             AssetImporter.GetAtPath(c.Path) is TextureImporter && File.Exists(c.Path) &&
-                            new FileInfo(c.Path).Length <= 128L * 1024 * 1024 &&
                             !c.Group.Uses.Any(u => Exclusions.Excluded(u.Renderer)))
+                .Select(c => (Group: c.Group, Path: c.Path, Size: TryFileLength(c.Path)))
+                .Where(c => c.Size >= 0 && c.Size <= 128L * 1024 * 1024)
                 .Select(c => new DuplicateCandidate
                 {
                     Group = c.Group,
@@ -649,9 +660,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     progress?.CheckCancelled();
                     var uses = group.Uses.Where(u => u.RendererPath == pair.Key).ToArray();
                     if (uses.Length == 0) continue;
-                    foreach (var use in uses) use.Warning = warning;
-                    if (group.Warning == null || warning.StartsWith("Animation", StringComparison.Ordinal) ||
-                        warning.StartsWith("Material", StringComparison.Ordinal)) group.Warning = warning;
+                    // A use the pass already rejected keeps its more specific reason (mirrors ApplyFloatAnimationSafety).
+                    bool noted = false;
+                    foreach (var use in uses) if (use.Warning == null) { use.Warning = warning; noted = true; }
+                    if (noted && (group.Warning == null || warning.StartsWith("Animation", StringComparison.Ordinal) ||
+                        warning.StartsWith("Material", StringComparison.Ordinal))) group.Warning = warning;
                 }
             }
 
@@ -660,8 +673,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 const string warning = "Animation references could not be inspected. Skipped; original texture retained.";
                 foreach (var group in result.Groups)
                 {
-                    foreach (var use in group.Uses) use.Warning = warning;
-                    group.Warning = warning;
+                    // Same specificity rule as the loops above: a rejection already on record keeps its reason.
+                    foreach (var use in group.Uses) if (use.Warning == null) use.Warning = warning;
+                    if (group.Warning == null) group.Warning = warning;
                 }
             }
         }

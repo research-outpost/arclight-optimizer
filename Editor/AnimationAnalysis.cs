@@ -34,6 +34,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal int ClipCount;
         internal int BindingCount;
         internal int KeyframeCount;
+        // Stable per-clip discriminator for BindingKeys: distinct clips can share a display name, and their
+        // bindings on one path+property would then collapse to a single entry (mirrors AvatarAnalysis.clipIds).
+        // The serialized and virtual passes run on separate snapshots, so a clip seen in both counts twice —
+        // the bound fails safe by retaining more, never less.
+        private readonly Dictionary<object, int> clipIds = new Dictionary<object, int>();
         // Mesh renderers that the scanner models, with their root-relative paths.
         private List<(string Path, Renderer Renderer)> scannedRenderers =
             new List<(string Path, Renderer Renderer)>();
@@ -44,6 +49,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             HasVirtualContext = hasVirtualContext;
             VirtualIndex = virtualIndex;
+        }
+
+        // Assigns each clip a small id, used to keep same-named clips apart in BindingKeys.
+        internal int ClipId(object clip)
+        {
+            if (!clipIds.TryGetValue(clip, out int id)) clipIds.Add(clip, id = clipIds.Count);
+            return id;
         }
 
         internal AnimationRendererState Get(string path, Renderer renderer)
@@ -221,20 +233,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static void AnalyzeVirtualClip(GameObject root, string prefix, VirtualClip clip,
             AnimationSnapshot snapshot, bool unbounded)
         {
+            string clipKey = clip.Name + "#" + snapshot.ClipId(clip); // the id keeps same-named clips apart
             foreach (var binding in clip.GetFloatCurveBindings())
             {
                 if (!IsRelevantFloat(binding)) continue;
                 if (!NextBinding(snapshot)) return;
 
                 var curve = clip.GetFloatCurve(binding);
-                AnalyzeFloatBinding(root, prefix, binding, curve == null ? null : curve.keys, clip.Name, snapshot, unbounded);
+                AnalyzeFloatBinding(root, prefix, binding, curve == null ? null : curve.keys, clipKey, snapshot, unbounded);
             }
             foreach (var binding in clip.GetObjectCurveBindings())
             {
                 if (!IsRelevantObject(binding)) continue;
                 if (!NextBinding(snapshot)) return;
 
-                if (AnalyzeObjectBinding(root, prefix, binding, clip.GetObjectCurve(binding), clip.Name, snapshot))
+                if (AnalyzeObjectBinding(root, prefix, binding, clip.GetObjectCurve(binding), clipKey, snapshot))
                     snapshot.ObjectBindings.Add(new VirtualObjectBinding(clip, binding));
             }
         }
@@ -337,7 +350,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var layer in layers)
             {
                 bool additive = additivePlayable || layer.blendingMode == AnimatorLayerBlendingMode.Additive;
-                bool synced = layer.syncedLayerIndex >= 0 && layer.syncedLayerIndex < layers.Length;
+                // syncedLayerIndex names the OTHER half of a synced pair; a layer whose index names a different
+                // layer is the synced half (its per-state overrides replace the source motions). When Unity
+                // leaves it negative or equal to the layer's own index, the layer is the source: play its own motions.
+                int sourceIndex = System.Array.IndexOf(layers, layer);
+                bool synced = layer.syncedLayerIndex >= 0 && layer.syncedLayerIndex < layers.Length && layer.syncedLayerIndex != sourceIndex;
                 var machine = synced ? layers[layer.syncedLayerIndex].stateMachine : layer.stateMachine;
                 foreach (var state in States(machine, new HashSet<AnimatorStateMachine>()))
                     MarkMotion(synced ? layer.GetOverrideMotion(state) : state.motion, additive, overrides, unbounded,
@@ -382,13 +399,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static void AnalyzeSerializedClip(GameObject root, string prefix, AnimationClip clip,
             AnimationSnapshot snapshot, bool unbounded)
         {
+            string clipKey = clip.name + "#" + snapshot.ClipId(clip); // the id keeps same-named clips apart
             foreach (var binding in AnimationUtility.GetCurveBindings(clip))
             {
                 if (!IsRelevantFloat(binding)) continue;
                 if (!NextBinding(snapshot)) return;
 
                 AnalyzeFloatBinding(root, prefix, binding,
-                    AnimationUtility.GetEditorCurve(clip, binding)?.keys, clip.name, snapshot, unbounded);
+                    AnimationUtility.GetEditorCurve(clip, binding)?.keys, clipKey, snapshot, unbounded);
             }
             foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
             {
@@ -396,7 +414,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (!NextBinding(snapshot)) return;
 
                 AnalyzeObjectBinding(root, prefix, binding,
-                    AnimationUtility.GetObjectReferenceCurve(clip, binding), clip.name, snapshot);
+                    AnimationUtility.GetObjectReferenceCurve(clip, binding), clipKey, snapshot);
             }
         }
 
@@ -521,13 +539,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static void AnalyzeFloatBinding(GameObject root, string prefix, EditorCurveBinding binding,
-            Keyframe[] keys, string clipName, AnimationSnapshot snapshot, bool unbounded)
+            Keyframe[] keys, string clipKey, AnimationSnapshot snapshot, bool unbounded)
         {
             if (!CountKeys(snapshot, keys?.Length ?? 0)) return;
             var state = GetState(root, prefix, binding, snapshot);
             if (state == null) return;
             string property = binding.propertyName ?? "";
-            CountBinding(state, clipName + "|" + CombinePath(prefix, binding.path) + "|" + property);
+            CountBinding(state, clipKey + "|" + CombinePath(prefix, binding.path) + "|" + property);
             if (IsMeshBinding(binding)) { state.HasMeshBinding = true; return; }
             if (!property.StartsWith("material.", StringComparison.OrdinalIgnoreCase)) return;
             state.FloatProperties.Add(MaterialPropertyName(property));
@@ -536,13 +554,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static bool AnalyzeObjectBinding(GameObject root, string prefix, EditorCurveBinding binding,
-            ObjectReferenceKeyframe[] keys, string clipName, AnimationSnapshot snapshot)
+            ObjectReferenceKeyframe[] keys, string clipKey, AnimationSnapshot snapshot)
         {
             if (!CountKeys(snapshot, keys?.Length ?? 0)) return false;
             var state = GetState(root, prefix, binding, snapshot);
             if (state == null) return false;
             string property = binding.propertyName ?? "";
-            CountBinding(state, clipName + "|" + CombinePath(prefix, binding.path) + "|" + property);
+            CountBinding(state, clipKey + "|" + CombinePath(prefix, binding.path) + "|" + property);
             if (IsMeshBinding(binding)) { state.HasMeshBinding = true; return false; }
             snapshot.HasObjectCurves = true;
             snapshot.HasMaterialAnimation = true;
@@ -646,7 +664,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal readonly Dictionary<int, HashSet<Material>> SlotMaterials = new Dictionary<int, HashSet<Material>>();
         internal readonly Dictionary<string, HashSet<Texture>> TextureValues =
             new Dictionary<string, HashSet<Texture>>(StringComparer.Ordinal);
-        // Distinct animated bindings (clip|path|property), bounded by MaxBindingsPerRenderer.
+        // Distinct animated bindings (clip#id|path|property), bounded by MaxBindingsPerRenderer.
         internal readonly HashSet<string> BindingKeys = new HashSet<string>(StringComparer.Ordinal);
         // Material properties changed by float curves, e.g. "_MainTex_ST" or "_Color".
         internal readonly HashSet<string> FloatProperties = new HashSet<string>(StringComparer.Ordinal);

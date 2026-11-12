@@ -32,7 +32,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var group in users)
             {
                 var mesh = group.Key;
-                if (swaps.Contains(mesh)) continue;
+                if (swaps.Contains(mesh) || !mesh.isReadable) continue; // Plane tests and rebuilds read the vertex positions.
                 if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer) && !(c is MeshFilter))) continue;
                 // Extra vertex streams override the mesh's own attributes, and a particle shape can emit from a renderer's vertices,
                 // edges or triangles.

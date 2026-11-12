@@ -51,8 +51,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
                 case "_EmissionMap": case "_EmissionMap2":
                 {
-                    if (property == "_EmissionMap" && (Value(material, "_EmissionAnimation") > 0 ||
-                        Value(material, "_EmissionScrX") != 0 || Value(material, "_EmissionScrY") != 0))
+                    // Emission animation/scrolling is one state for both maps: guard both, not just the first.
+                    if (Value(material, "_EmissionAnimation") > 0 ||
+                        Value(material, "_EmissionScrX") != 0 || Value(material, "_EmissionScrY") != 0)
                         return Unsupported("Sunao emission animation or scrolling moves sampling over time; original retained.");
                     Vector2 scale = MaterialInputs.Scale(material, property), offset = MaterialInputs.Offset(material, property);
                     return Path(material, TextureSemantics.Color, Vector2.Scale(mainScale, scale), mainOffset + offset, false, TextureChannels.All);

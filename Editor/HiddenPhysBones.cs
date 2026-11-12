@@ -29,6 +29,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var result = new Result();
             if (!analysis.Complete) return result;
+            // Fail closed with the parameter passes: an Udon gadget toggling a PhysBone with SetBehaviourEnabled is
+            // not visible to the animator-curve analysis, and writing m_Enabled curves would override the program.
+            if (ParameterCleaner.HasInvisibleReaders(analysis.Root)) return result;
             var root = analysis.Root.transform;
             var follow = new Dictionary<Object, List<Component>>();
             foreach (var physBone in root.GetComponentsInChildren<Component>(true).Where(c => c && c.GetType().Name == "VRCPhysBone" && !Exclusions.Excluded(c)))

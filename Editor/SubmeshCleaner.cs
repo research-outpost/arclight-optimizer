@@ -39,7 +39,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var mesh = MeshOf(renderer);
                 // A property block can hold values per material slot, which renumbering slots would move.
-                if (!mesh || meshUsers[mesh] != 1 || swaps.Contains(mesh) || Exclusions.Excluded(renderer) || TextureUsageScanner.HasPropertyBlock(renderer)) continue;
+                if (!mesh || !mesh.isReadable || meshUsers[mesh] != 1 || swaps.Contains(mesh) || Exclusions.Excluded(renderer) || TextureUsageScanner.HasPropertyBlock(renderer)) continue;
                 // A mesh swap whose idle state writes nothing leaves the current mesh out of the swapped values.
                 if (analysis.IsAnimated(renderer, p => p == "m_Mesh") ||
                     (renderer is MeshRenderer && renderer.GetComponent<MeshFilter>() is MeshFilter filter && analysis.IsAnimated(filter, p => p == "m_Mesh"))) continue;

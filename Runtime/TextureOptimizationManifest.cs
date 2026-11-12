@@ -24,6 +24,9 @@ namespace Okarin.AvatarTextureOptimizer
         public string retainedReason;
         // Whether the compressed size could be estimated when this was recorded. A "no pixel changes" found without it (Play Mode,
         // or a record older than this field) may have missed a smaller format alone, so an upload that can estimate checks it again.
+        // True when estimating was possible for this texture but its measurement failed: the entry is then kept even where an
+        // estimate is generally possible, so a permanently unmeasurable texture does not re-run the whole analysis every build.
+        public bool estimateAttempted;
         public bool estimated;
     }
 
@@ -38,6 +41,11 @@ namespace Okarin.AvatarTextureOptimizer
         public long candidateBytes;
         // True when the two sizes are estimated compressed bundle bytes, not PNG file sizes.
         public bool compressedEstimate;
+        // See UnchangedTextureAnalysis.estimateAttempted.
+        public bool estimateAttempted;
+        // Set when the byte pair cannot be quoted honestly (a flattened source compared without an estimate);
+        // null means the standard Explain() wording applies. Old cache entries deserialize it as null.
+        public string explanation;
     }
 
     [Serializable]
@@ -66,6 +74,8 @@ namespace Okarin.AvatarTextureOptimizer
         // target); 0 for mappings made under the PNG file-size rule, whose validity is still judged by that rule.
         public long compressedSourceBytes;
         public long compressedReplacementBytes;
+        // See UnchangedTextureAnalysis.estimateAttempted.
+        public bool estimateAttempted;
         // Standalone format the replacement was given because its shaders never read the dropped channels
         // (UnityEditor.TextureImporterFormat value); 0 when it keeps the source's import settings unchanged.
         public int standaloneFormat;

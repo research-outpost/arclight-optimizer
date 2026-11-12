@@ -121,7 +121,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             catch (UnauthorizedAccessException) { }
         }
 
-        private static string Line(string entry, string value) => entry.Replace("\n", " ") + "\t" + value.Replace("\n", " ") + End + "\n";
+        // Load splits at the last tab, so tabs (not just newlines) in either side would move the split and
+        // strand the entry; keep each side tab- and newline-free WITHOUT touching the separator between kind and key.
+        private static string Line(string entry, string value)
+        {
+            int split = entry.IndexOf('\t');
+            string head = split < 0 ? entry : entry.Substring(0, split), key = split < 0 ? "" : entry.Substring(split + 1);
+            string Clean(string s) => s.Replace("\n", " ").Replace("\t", " ");
+            return (split < 0 ? Clean(head) : Clean(head) + "\t" + Clean(key)) + "\t" + Clean(value) + End + "\n";
+        }
 
         private static void Load()
         {

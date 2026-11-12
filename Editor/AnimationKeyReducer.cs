@@ -16,10 +16,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Like MergeRequests: the NDMF pass records the avatar, the post-optimizer hook reduces its clips.
     internal static class KeyReductionRequests
     {
-        private static readonly HashSet<int> Requested = new HashSet<int>();
-        internal static void BeginBuild() => Requested.Clear();
-        internal static void Add(GameObject avatar) => Requested.Add(avatar.GetInstanceID());
-        internal static bool Take(GameObject avatar) => Requested.Remove(avatar.GetInstanceID());
+        private static readonly LateBuildRequests Requested = new LateBuildRequests("key-reduction");
+        internal static void BeginBuild() => Requested.BeginBuild();
+        internal static void Add(GameObject avatar) => Requested.Add(avatar);
+        internal static bool Take(GameObject avatar) => Requested.Take(avatar);
     }
 
     internal static class AnimationKeyReducer
@@ -94,10 +94,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static int RemoveDead(IEnumerable<AnimationClip> clips, Transform root, ISet<AnimationClip> elsewhere, ISet<Transform> meshSwapped)
         {
             var list = clips.Where(c => c && !c.legacy && !elsewhere.Contains(c)).Distinct().ToList();
+            // One path walk per distinct path, not per curve: clips repeat paths heavily and root is fixed here.
+            var resolvedByPath = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Transform>>(System.StringComparer.Ordinal);
             bool Dead(EditorCurveBinding b)
             {
                 if (b.type == typeof(Animator)) return false;
-                var targets = AvatarAnalysis.Resolve(root, b.path).ToList();
+                if (!resolvedByPath.TryGetValue(b.path, out var found))
+                    resolvedByPath[b.path] = found = AvatarAnalysis.Resolve(root, b.path).ToList();
+                var targets = found;
                 if (targets.Count == 0) return true;
                 if (b.type == typeof(GameObject) || b.type == typeof(Transform)) return false;
                 if (b.type == null) return true; // A type that no longer exists binds nothing.

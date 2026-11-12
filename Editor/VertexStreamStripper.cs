@@ -27,10 +27,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // so streams are removed only after its merge, on its final meshes (PostOptimizerMerge).
     internal static class StreamRequests
     {
-        private static readonly HashSet<int> Requested = new HashSet<int>();
-        internal static void BeginBuild() => Requested.Clear();
-        internal static void Add(GameObject avatar) => Requested.Add(avatar.GetInstanceID());
-        internal static bool Take(GameObject avatar) => Requested.Remove(avatar.GetInstanceID());
+        private static readonly LateBuildRequests Requested = new LateBuildRequests("streams");
+        internal static void BeginBuild() => Requested.BeginBuild();
+        internal static void Add(GameObject avatar) => Requested.Add(avatar);
+        internal static bool Take(GameObject avatar) => Requested.Take(avatar);
     }
 
     internal static class VertexStreamStripper
@@ -108,7 +108,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var pair in users)
             {
                 var mesh = pair.Key;
-                if (blocked.Contains(mesh) || eligible != null && !eligible(mesh)) continue;
+                if (blocked.Contains(mesh) || !mesh.isReadable || eligible != null && !eligible(mesh)) continue;
                 var materials = pair.Value.SelectMany(r => r.sharedMaterials.Concat(analysis.SwappedMaterials(r))).Distinct().ToArray();
                 var animated = new HashSet<string>(pair.Value.SelectMany(analysis.AnimatedMaterialProperties), StringComparer.Ordinal);
                 var strip = Optional.Where(a => mesh.HasVertexAttribute(a) && materials.All(m => !Needs(m, a, animated.Contains))).ToArray();
@@ -202,6 +202,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             "e35681be90382a8d1ecf1445a6063f8150729ec56bb0a926effbf51457c6a0ff",
         };
         private static readonly Dictionary<string, bool> LilSsaoFolders = new Dictionary<string, bool>(StringComparer.Ordinal);
+
+        internal static bool IsAuditedLilSsaoFolder(string folder) => AuditedLilSsao(folder);
 
         private static bool AuditedLilSsao(string folder)
         {

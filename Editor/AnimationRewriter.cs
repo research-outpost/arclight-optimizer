@@ -38,12 +38,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             private Transform Owner(object key) => key is Animator animator && animator ? animator.transform : context.AvatarRootObject.transform;
 
+            // A tool can delete an Animator after merging its controller (VRCFury and Avatar Pose System do this with
+            // their prefab's own Animator); without a live Animator the clip paths are unreadable — skip those entries,
+            // mirroring AnimationAnalysis.AnalyzeVirtual.
+            private static bool LiveOwner(object key) => !(key is UnityEngine.Object owner && !owner);
+
             internal override IEnumerable<(Transform Owner, string Path)> MaskPaths()
             {
                 var controllers = context.ActivateExtensionContext<VirtualControllerContext>();
                 try
                 {
-                    return controllers.Controllers.Where(e => e.Value != null).SelectMany(e => e.Value.Layers
+                    return controllers.Controllers.Where(e => e.Value != null && LiveOwner(e.Key)).SelectMany(e => e.Value.Layers
                         .Where(l => l.AvatarMask != null).SelectMany(l => l.AvatarMask.Elements.Keys.Select(k => (Owner(e.Key), k)))).ToList();
                 }
                 finally { ControllerCommit.Preserving(context.AvatarRootObject, () => context.DeactivateExtensionContext<VirtualControllerContext>()); }
@@ -55,7 +60,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 try
                 {
                     var done = new HashSet<VirtualAvatarMask>();
-                    foreach (var entry in controllers.Controllers.Where(e => e.Value != null))
+                    foreach (var entry in controllers.Controllers.Where(e => e.Value != null && LiveOwner(e.Key)))
                         foreach (var mask in entry.Value.Layers.Select(l => l.AvatarMask).Where(m => m != null && done.Add(m)))
                         {
                             var elements = System.Collections.Immutable.ImmutableDictionary<string, float>.Empty.ToBuilder();
@@ -93,7 +98,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     foreach (var entry in controllers.Controllers)
                     {
-                        if (entry.Value == null) continue;
+                        if (entry.Value == null || !LiveOwner(entry.Key)) continue;
                         var owner = entry.Key is Animator animator && animator ? animator.transform : context.AvatarRootObject.transform;
                         foreach (var clip in entry.Value.AllReachableNodes().OfType<VirtualClip>().Where(c => !c.IsMarkerClip).Distinct())
                             foreach (var binding in clip.GetFloatCurveBindings().ToList())
@@ -111,7 +116,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     foreach (var entry in controllers.Controllers)
                     {
-                        if (entry.Value == null) continue;
+                        if (entry.Value == null || !LiveOwner(entry.Key)) continue;
                         var owner = entry.Key is Animator animator && animator ? animator.transform : context.AvatarRootObject.transform;
                         foreach (var clip in entry.Value.AllReachableNodes().OfType<VirtualClip>().Where(c => !c.IsMarkerClip).Distinct())
                         {

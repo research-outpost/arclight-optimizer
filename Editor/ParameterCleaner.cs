@@ -16,10 +16,31 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // tracking ForwardToAnimator behaviours also stay, since VRChat writes those into the Animator at runtime. Such a
     // parameter can only hold a value that nothing reads. Expression parameters all stay: OSC apps outside the avatar
     // can read and write them, and VRChat syncs the PC and Android uploads by their list position. Nothing changes when
-    // any controller or menu cannot be read.
+    // any controller or menu cannot be read, nor while the avatar carries an Udon-named component or a d4rk Fighting
+    // Actions component: both read parameters through assets this scan cannot see (fail closed, parameters all stay).
     internal static class ParameterCleaner
     {
         internal sealed class Result { public int Animator; public List<string> Names = new List<string>(); }
+
+        // Fail-closed detection for parameter readers this scan cannot see (the class doc's stand-down).
+        // Udon: any component whose type name contains "Udon" (the SDK UdonBehaviour), plus components derived from
+        // UdonSharpBehaviour, whose concrete author-named types carry no "Udon" until the UdonSharp build converts them.
+        // d4rk Fighting Actions declares/injects its parameters at the SDK stage, after NDMF; d4rk puts its live
+        // components in the GLOBAL namespace, so the marker must match the type name — never namespace alone.
+        private static bool InvisibleReader(Component component)
+        {
+            var type = component.GetType();
+            string full = type.FullName ?? string.Empty;
+            if (full.IndexOf("Udon", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            for (var baseType = type.BaseType; baseType != null && baseType != typeof(Component); baseType = baseType.BaseType)
+                if ((baseType.FullName ?? string.Empty).IndexOf("UdonSharp", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            return full.IndexOf("d4rk", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   type.Name.IndexOf("Action", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        // True while the avatar carries any component that could read parameters outside this scan's view.
+        internal static bool HasInvisibleReaders(GameObject root) =>
+            root.GetComponentsInChildren<Component>(true).Any(c => c && !(c is Transform) && InvisibleReader(c));
 
         internal static Result Run(GameObject root, IEnumerable<VirtualAnimatorController> controllers, AvatarAnalysis analysis, Action<Object, Object> register)
         {
@@ -32,9 +53,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var used = AnimatorReads(root, list, analysis);
             if (used == null) return result;
             used.UnionWith(NativeForwardedParameters(descriptor));
+            bool invisibleReaders = false;
             foreach (var component in root.GetComponentsInChildren<Component>(true))
             {
                 if (!component || component == descriptor || component is Transform) continue;
+                // Fail closed: Udon programs keep parameter names in their program assets, and d4rk Fighting Actions
+                // declares its parameters and injects its states at the SDK stage, after NDMF — "unread" here proves nothing.
+                if (InvisibleReader(component)) invisibleReaders = true;
                 if (component.GetType().Name == "VRCPhysBone")
                     using (var serialized = new SerializedObject(component))
                     {
@@ -43,6 +68,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     }
                 Strings(component, used);
             }
+            if (invisibleReaders) return result;
             var prefixes = used.Where(u => u.EndsWith("_*", StringComparison.Ordinal)).Select(u => u.Substring(0, u.Length - 1)).ToList();
             bool Used(string name) => used.Contains(name) || prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
 
@@ -140,9 +166,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // parameters. Such a write changes nothing anyone can observe. A driver left with no entries is removed, so a toggle
         // layer that only carried it can fold. Random entries stay (they draw from the shared random sequence). Drivers in
         // synced layer overrides are read but not changed. Repeats until stable: a removed Copy entry no longer reads its source.
+        // The same fail-closed stand-down as Run(): a driver writing into a parameter only an Udon program asset or a
+        // d4rk Fighting Actions state reads looks dead to this scan but is not.
         internal static int RemoveDeadDrivers(GameObject root, IEnumerable<VirtualAnimatorController> controllers, AvatarAnalysis analysis)
         {
             if (!analysis.Complete) return 0;
+            if (HasInvisibleReaders(root)) return 0;
             var list = controllers.Where(c => c != null).ToList();
             var descriptor = root.GetComponents<Component>().FirstOrDefault(c => c && c.GetType().Name == "VRCAvatarDescriptor");
             if (!descriptor) return 0;

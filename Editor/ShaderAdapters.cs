@@ -142,7 +142,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // alpha-blended shaders (creators.vrchat.com/avatars/shader-fallback-system/ supported-tag list).
         internal static bool FallbackReadsAlpha(Material material)
         {
-            string fallback = material.GetTag("VRCFallback", false, "") + " " + material.shader.name;
+            string fallback = string.IsNullOrEmpty(material.GetTag("VRCFallback", false, "")) ? material.shader.name : material.GetTag("VRCFallback", false, "");
+            // An explicit tag decides VRChat's fallback; the shader-name guess applies only when there is no tag
+            // (creators.vrchat.com/avatars/shader-fallback-system).
             return System.Array.Exists(new[] { "Cutout", "Transparent", "Fade", "Particle", "Sprite" },
                 mode => fallback.IndexOf(mode, System.StringComparison.OrdinalIgnoreCase) >= 0);
         }

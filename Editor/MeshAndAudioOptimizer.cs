@@ -48,9 +48,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (merge)
             {
                 BuildTimings.Step("Duplicate meshes");
-                result.Meshes = MergeIdentical(references.OfType<Mesh>(), MeshSignature, replace, MeshShape);
+                // Signatures read vertex data: a non-readable mesh's reads come back empty, which would let two
+                // different-shaped meshes signature-merge as identical.
+                result.Meshes = MergeIdentical(references.OfType<Mesh>().Where(m => m.isReadable), MeshSignature, replace, MeshShape);
                 BuildTimings.Step("Duplicate audio");
-                result.AudioClips = MergeIdentical(references.OfType<AudioClip>(), AudioSignature, replace);
+                result.AudioClips = MergeIdentical(references.OfType<AudioClip>(), AudioSignature, replace, AudioShape);
                 foreach (var dropped in replace.Keys)
                     if (dropped is Mesh mesh) result.MeshBytes += MeshBytes(mesh);
                     else if (dropped is AudioClip clip)
@@ -280,19 +282,32 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             writer.Write(bounds.extents.x); writer.Write(bounds.extents.y); writer.Write(bounds.extents.z);
         }
 
+        // Source file length and import settings (.meta minus the per-clip lines), so clips that could import
+        // identically always share this cheap shape; only shape collisions get the full read in AudioSignature.
+        internal static string AudioShape(AudioClip clip)
+        {
+            string path = AssetDatabase.GetAssetPath(clip);
+            if (string.IsNullOrEmpty(path)) return null;
+            return new FileInfo(path).Length + "|" + FingerprintService.Hash(System.Text.Encoding.UTF8.GetBytes(AudioSettingsLines(path)));
+        }
+
+        // The .meta without the lines that differ per clip (GUID, user data, asset-bundle assignment): what is left
+        // is the import settings that make two files import to identical audio.
+        private static string AudioSettingsLines(string path) => string.Join("\n",
+            File.ReadAllText(LongPath.For(path + ".meta")).Replace("\r\n", "\n").Split('\n')
+                .Where(line => !line.StartsWith("guid:", StringComparison.Ordinal) && !line.StartsWith("  userData:", StringComparison.Ordinal) &&
+                               !line.StartsWith("  assetBundleName:", StringComparison.Ordinal) && !line.StartsWith("  assetBundleVariant:", StringComparison.Ordinal)));
+
         // Null for clips that are not imported audio files (generated clips have nothing to compare).
         internal static byte[] AudioSignature(AudioClip clip)
         {
             string path = AssetDatabase.GetAssetPath(clip);
             if (string.IsNullOrEmpty(path) || !AssetDatabase.IsMainAsset(clip) || !(AssetImporter.GetAtPath(path) is AudioImporter) ||
                 !File.Exists(LongPath.For(path)) || !File.Exists(LongPath.For(path + ".meta"))) return null;
-            var settings = File.ReadAllText(LongPath.For(path + ".meta")).Replace("\r\n", "\n").Split('\n')
-                .Where(line => !line.StartsWith("guid:", StringComparison.Ordinal) && !line.StartsWith("  userData:", StringComparison.Ordinal) &&
-                               !line.StartsWith("  assetBundleName:", StringComparison.Ordinal) && !line.StartsWith("  assetBundleVariant:", StringComparison.Ordinal));
             using (var stream = new MemoryStream())
             using (var writer = new BinaryWriter(stream))
             {
-                writer.Write(string.Join("\n", settings));
+                writer.Write(AudioSettingsLines(path));
                 writer.Write(File.ReadAllBytes(LongPath.For(path)));
                 writer.Flush();
                 return stream.ToArray();
@@ -303,7 +318,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // copy's triangles differ in any way from the original's.
         internal static Mesh Compact(Mesh mesh)
         {
-            if (!mesh || mesh.indexFormat != IndexFormat.UInt32) return null;
+            if (!mesh || !mesh.isReadable || mesh.indexFormat != IndexFormat.UInt32) return null;
             ushort[] indices;
             SubMeshDescriptor[] submeshes;
             using (var array = MeshUtility.AcquireReadOnlyMeshData(mesh))

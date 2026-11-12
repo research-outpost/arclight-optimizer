@@ -7,8 +7,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     internal static class EdgeValueExtender
     {
 
+        // available is also the visited set. Original protected texels remain unavailable to overwrite.
+        // Scratch buffers may be reused across calls (candidates of one texture): Extend fully re-derives
+        // output and scratch state from source/mask every time.
+        internal sealed class Scratch
+        {
+            internal bool[] Available = System.Array.Empty<bool>();
+            internal int[] Queue = System.Array.Empty<int>(), Left = System.Array.Empty<int>(), Right = System.Array.Empty<int>();
+            internal void Ensure(int length, int maxLine)
+            {
+                if (Available.Length != length) Available = new bool[length]; else System.Array.Clear(Available, 0, length);
+                if (Queue.Length < length) Queue = new int[length];
+                if (Left.Length < maxLine) { Left = new int[maxLine]; Right = new int[maxLine]; }
+            }
+        }
+
         public static int Extend(Color32[] source, Color32[] output, bool[] protectedMask,
-            int width, int height, int radiusX, int radiusY, bool repeatX, bool repeatY, Action cancel = null)
+            int width, int height, int radiusX, int radiusY, bool repeatX, bool repeatY, Action cancel = null) =>
+            Extend(source, output, protectedMask, width, height, radiusX, radiusY, repeatX, repeatY, cancel, null);
+
+        public static int Extend(Color32[] source, Color32[] output, bool[] protectedMask,
+            int width, int height, int radiusX, int radiusY, bool repeatX, bool repeatY, Action cancel, Scratch scratch)
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
             if (output == null) throw new ArgumentNullException(nameof(output));
@@ -22,18 +41,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             radiusX = Math.Min(radiusX, width);
             radiusY = Math.Min(radiusY, height);
+            scratch = scratch ?? new Scratch();
+            scratch.Ensure(length, Math.Max(width, height));
             var budget = new WorkBudget(cancel);
             return radiusX == radiusY
-                ? ExtendSquare(source, output, protectedMask, width, height, radiusX, repeatX, repeatY, budget)
-                : ExtendRectangle(source, output, protectedMask, width, height, radiusX, radiusY, repeatX, repeatY, budget);
+                ? ExtendSquare(source, output, protectedMask, width, height, radiusX, repeatX, repeatY, budget, scratch)
+                : ExtendRectangle(source, output, protectedMask, width, height, radiusX, radiusY, repeatX, repeatY, budget, scratch);
         }
 
         private static int ExtendSquare(Color32[] source, Color32[] output, bool[] protectedMask,
-            int width, int height, int radius, bool repeatX, bool repeatY, WorkBudget budget)
+            int width, int height, int radius, bool repeatX, bool repeatY, WorkBudget budget, Scratch scratch)
         {
-            // available is also the visited set. Original protected texels remain unavailable to overwrite.
-            var available = new bool[protectedMask.Length];
-            var queue = new int[protectedMask.Length];
+            var available = scratch.Available;
+            var queue = scratch.Queue;
             int head = 0, tail = 0;
             for (int i = 0; i < protectedMask.Length; i++)
             {
@@ -79,10 +99,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static int ExtendRectangle(Color32[] source, Color32[] output, bool[] protectedMask,
-            int width, int height, int radiusX, int radiusY, bool repeatX, bool repeatY, WorkBudget budget)
+            int width, int height, int radiusX, int radiusY, bool repeatX, bool repeatY, WorkBudget budget, Scratch scratch)
         {
             // This set starts with only original protected perimeter texels and grows in two separable passes.
-            var available = new bool[protectedMask.Length];
+            var available = scratch.Available;
             for (int i = 0; i < protectedMask.Length; i++)
             {
                 if ((i & 4095) == 0) budget.Check();
@@ -92,9 +112,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (IsBoundary(protectedMask, width, height, x, y, repeatX, repeatY)) available[i] = true;
             }
 
-            int scratchLength = Math.Max(width, height);
-            var left = new int[scratchLength];
-            var right = new int[scratchLength];
+            var left = scratch.Left;
+            var right = scratch.Right;
             int extended = 0;
             for (int y = 0; y < height; y++)
             {

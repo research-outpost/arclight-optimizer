@@ -122,6 +122,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             // v2 specular has no _SpecularTilingMode property; the uniform stays 0 (synced).
             float mode = material.HasProperty(prefix + "TilingMode") ? MaterialInputs.Float(material, prefix + "TilingMode") : 0;
+            // A missing Tiling float would read as 0 and collapse the sampled area to a point; the shader's own
+            // uniform default is (typically) 1, so claim nothing.
+            if (!material.HasProperty(prefix + "Tiling")) return Unsupported(prefix + "Tiling is missing; original retained.");
             float tiling = MaterialInputs.Float(material, prefix + "Tiling");
             if (mode != 0 && mode != 1) return Unsupported(prefix + "TilingMode blends two UV transforms; original retained.");
             var path = mode == 0
@@ -157,6 +160,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static int Index(Material material, string property)
         {
+            // A missing selector reads as 0 from GetFloat: claim nothing, let the call site widen or stand down.
+            if (!material.HasProperty(property)) return -1;
             float value = MaterialInputs.Float(material, property);
             return value == Mathf.Round(value) ? (int)value : -1;
         }
@@ -164,6 +169,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // [Enum(R,0,G,1,B,2,A,3)] channel selectors.
         private static TextureChannels Channel(Material material, string property)
         {
+            // A missing selector float reads as 0 (channel R), claiming a too-narrow set; widen like Union does.
+            if (!material.HasProperty(property)) return TextureChannels.All;
             switch (Index(material, property))
             {
                 case 0: return TextureChannels.R;

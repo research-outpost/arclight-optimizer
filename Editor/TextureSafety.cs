@@ -32,7 +32,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             if (source.wrapModeU == TextureWrapMode.MirrorOnce || source.wrapModeV == TextureWrapMode.MirrorOnce)
                 throw new InvalidOperationException("Mirror Once coverage is implemented, but PC/Android sampler equivalence is not certified.");
-            if (new FileInfo(path).Length > 128L * 1024 * 1024) throw new InvalidOperationException("Source file exceeds the 128 MiB encoded-file budget.");
+            if (LongPath.Length(path) > 128L * 1024 * 1024) throw new InvalidOperationException("Source file exceeds the 128 MiB encoded-file budget.");
             if (flattened)
             {
                 SourceImages.Size(importer, out int flatWidth, out int flatHeight);
@@ -463,19 +463,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // For a 16-bit PNG source: whether an 8-bit copy rounded as Decode16 reads it, imported with the source's
         // settings, gives exactly the texture data Unity builds from the source on the active platform. Only then does
         // anything derived from the rounded pixels match the original. The temporary copy lives in folder for the call.
-        private static readonly System.Collections.Generic.Dictionary<string, bool> roundedMatches = new System.Collections.Generic.Dictionary<string, bool>();
-
         internal static bool RoundedImportMatches(Texture2D source, string folder)
         {
             string path = AssetDatabase.GetAssetPath(source);
             if (!SourceImages.IsPng(path)) return true; // Flattened sources (PSD, TGA...) are read by Unity at 8 bits.
+            // The IHDR answers the bit-depth question in 33 bytes; only a real 16-bit source reads and hashes the file.
+            if (InspectHeader(path).BitDepth != 16) return true;
             var bytes = File.ReadAllBytes(LongPath.For(path));
             var info = Inspect(bytes);
             if (info.BitDepth != 16) return true;
-            string key = FingerprintService.Hash(bytes) + "|" + FingerprintService.ImporterHash(source) + "|" + EditorUserBuildSettings.activeBuildTarget;
-            if (roundedMatches.TryGetValue(key, out bool cached)) return cached;
+            string key = "Arclight.Optimizer.RoundedImport." + FingerprintService.Version + "." +
+                FingerprintService.Hash(bytes) + "|" + FingerprintService.ImporterHash(source) + "|" + EditorUserBuildSettings.activeBuildTarget;
+            // SessionState, like the pixel signature: the probe (temp import plus raw-data compare) would otherwise
+            // rerun after every domain reload and in every batch build. The key pins source bytes, importer and target.
+            string stored = SessionState.GetString(key, "");
+            if (stored.Length == 1) return stored[0] == '1';
             string meta = GenerationCoordinator.CopiedImporterMeta(path + ".meta", "AvatarTextureOptimizer:rounding");
-            if (meta == null) return roundedMatches[key] = false;
+            if (meta == null) { SessionState.SetString(key, "0"); return false; }
             string temp = folder + "/" + SourceImages.TempPrefix + Guid.NewGuid().ToString("N") + ".png";
             try
             {
@@ -483,9 +487,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 File.WriteAllText(temp + ".meta", meta, new System.Text.UTF8Encoding(false));
                 AssetDatabase.ImportAsset(temp, ImportAssetOptions.ForceSynchronousImport);
                 var copy = AssetDatabase.LoadAssetAtPath<Texture2D>(temp);
+                // An empty raw-data array (an imported-state edge, not a comparison) must never count as a match.
+                var copyData = copy ? copy.GetRawTextureData() : null;
+                var sourceData = source.GetRawTextureData();
                 bool match = copy && copy.format == source.format && copy.width == source.width && copy.height == source.height &&
-                    copy.mipmapCount == source.mipmapCount && copy.GetRawTextureData().SequenceEqual(source.GetRawTextureData());
-                return roundedMatches[key] = match;
+                    copy.mipmapCount == source.mipmapCount && sourceData.Length > 0 && copyData != null && copyData.Length > 0 &&
+                    copyData.SequenceEqual(sourceData);
+                SessionState.SetString(key, match ? "1" : "0");
+                return match;
             }
             finally
             {

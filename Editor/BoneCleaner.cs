@@ -40,7 +40,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var group in users)
             {
                 var mesh = group.Key;
-                if (group.Count() != 1 || swaps.Contains(mesh) || analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer))) continue;
+                if (group.Count() != 1 || !mesh.isReadable || swaps.Contains(mesh) || analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer))) continue;
                 var renderer = group.First();
                 if (analysis.IsAnimated(renderer, p => p == "m_Mesh") || renderer.GetComponent<Cloth>()) continue;
                 int removed = Prune(renderer, register);

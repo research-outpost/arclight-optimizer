@@ -9,14 +9,57 @@ using UnityEngine;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
+    // A per-avatar request from an NDMF pass to a late SDK hook of the same build. A domain reload mid-build
+    // (a script recompiling, another tool importing) wipes statics, so membership is mirrored into SessionState
+    // keyed by the avatar's scene-rooted path: InstanceIDs die with the reload and recycle after it, but the
+    // path survives, so a re-found avatar still gets its request and no later avatar inherits a recycled one.
+    internal sealed class LateBuildRequests
+    {
+        private readonly HashSet<int> requested = new HashSet<int>(); // same session, same object: the fast path
+        private readonly string stateKey;
+        internal LateBuildRequests(string name) => stateKey = "Arclight.Optimizer.LateRequests." + name;
+
+        // An aborted build leaves its entry behind, so BeginBuild clears the SessionState list as well as the set.
+        internal void BeginBuild() { requested.Clear(); SessionState.EraseString(stateKey); }
+
+        internal void Add(GameObject avatar)
+        {
+            requested.Add(avatar.GetInstanceID());
+            string id = ScenePath(avatar);
+            if (id.Length == 0) return; // an unnamed root cannot name a mirror entry
+            string joined = SessionState.GetString(stateKey, "");
+            if (!joined.Split('\n').Contains(id, StringComparer.Ordinal))
+                SessionState.SetString(stateKey, joined.Length == 0 ? id : joined + "\n" + id);
+        }
+
+        // Take consumes both sides so neither one can serve the request a second time.
+        internal bool Take(GameObject avatar)
+        {
+            bool inSession = requested.Remove(avatar.GetInstanceID());
+            string id = ScenePath(avatar);
+            var ids = new List<string>(SessionState.GetString(stateKey, "").Split('\n'));
+            bool mirrored = id.Length > 0 && ids.Remove(id);
+            if (mirrored) SessionState.SetString(stateKey, string.Join("\n", ids));
+            return inSession || mirrored;
+        }
+
+        // Unique among the avatars of the open scene and unchanged by a domain reload.
+        private static string ScenePath(GameObject avatar)
+        {
+            string path = avatar.name;
+            for (var t = avatar.transform.parent; t; t = t.parent) path = t.name + "/" + path;
+            return path;
+        }
+    }
+
     // Avatars whose NDMF pass asked for the later merge. NDMF removes the component during the pass, so the
     // request travels here (keyed by the build avatar object) to the SDK hook that runs after d4rk.
     internal static class MergeRequests
     {
-        private static readonly HashSet<int> Requested = new HashSet<int>();
-        internal static void BeginBuild() => Requested.Clear();
-        internal static void Add(GameObject avatar) => Requested.Add(avatar.GetInstanceID());
-        internal static bool Take(GameObject avatar) => Requested.Remove(avatar.GetInstanceID());
+        private static readonly LateBuildRequests Requested = new LateBuildRequests("merge");
+        internal static void BeginBuild() => Requested.BeginBuild();
+        internal static void Add(GameObject avatar) => Requested.Add(avatar);
+        internal static bool Take(GameObject avatar) => Requested.Take(avatar);
     }
 
     // Points every controller reference to a clip at one clip with identical data, so the bundle carries one
@@ -24,8 +67,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Runs on committed controllers after the other optimizers (d4rkAvatarOptimizer rewrites clips and can
     // make different clips identical). The caller must pass only controllers generated for this build, never
     // source assets. VRChat proxy, legacy, humanoid/root-motion and additive-reference-pose clips are left
-    // alone, and a controller with a synced layer is skipped whole (its per-state motion overrides are not
-    // rewritten). Clips also held outside the controllers keep their own reference: that only forgoes a saving.
+    // alone. A controller with a synced layer merges too, except that the source layer's own states keep their
+    // motions (the override table is not rewritten). BlendTree children are rewritten only inside build-owned trees:
+    // an otherwise unmodified controller can still reference the creator's original .blendtree assets, and those are
+    // never written to. Clips also held outside the controllers keep their own reference: that only forgoes a saving.
     internal static class AnimationClipDeduplicator
     {
         private static readonly FieldInfo[] SettingsFields =
@@ -34,15 +79,30 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static readonly HashSet<string> MuscleNames = new HashSet<string>(HumanTrait.MuscleName, StringComparer.Ordinal);
 
-        // Returns the number of clips whose references now point to an identical clip.
-        internal static int MergeCommitted(IEnumerable<AnimatorController> controllers, Func<Motion, bool> isSpecialMotion)
+        // Returns the number of distinct clips merged away (a duplicate rewired at several sites counts once).
+        internal static int MergeCommitted(IEnumerable<AnimatorController> controllers, Func<Motion, bool> isSpecialMotion,
+            Func<UnityEngine.Object, bool> isBuildOwned)
         {
-            var usable = controllers.Where(c => c && c.layers.All(layer => layer.syncedLayerIndex < 0)).Distinct().ToArray();
+            var usable = controllers.Where(c => c).Distinct().ToArray();
             var states = new List<AnimatorState>();
             var trees = new List<BlendTree>();
+            var syncedSourceStates = new HashSet<AnimatorState>();
             foreach (var controller in usable)
-                foreach (var layer in controller.layers)
+            {
+                var layers = controller.layers;
+                foreach (var layer in layers)
+                {
                     Collect(layer.stateMachine, states, trees, new HashSet<UnityEngine.Object>());
+                    // The source layer of a synced pair has its state motions overridden per state in the synced
+                    // layer's table, which this pass does not rewrite: those states keep their motions.
+                    if (layer.syncedLayerIndex >= 0 && layer.syncedLayerIndex < layers.Length)
+                    {
+                        var sourceStates = new List<AnimatorState>();
+                        Collect(layers[layer.syncedLayerIndex].stateMachine, sourceStates, new List<BlendTree>(), new HashSet<UnityEngine.Object>());
+                        syncedSourceStates.UnionWith(sourceStates);
+                    }
+                }
+            }
             var clips = states.Select(state => state.motion).Concat(trees.SelectMany(tree => tree.children.Select(c => c.motion)))
                 .OfType<AnimationClip>().Distinct().ToArray();
 
@@ -62,22 +122,33 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (replace.Count == 0) return 0;
 
             Motion Map(Motion motion) => motion is AnimationClip clip && replace.TryGetValue(clip, out var keeper) ? keeper : motion;
+            // Count distinct clips merged, not rewrites: one shared duplicate rewired at five states saves one clip,
+            // and a synced-source state (or unowned blend tree) suppresses its write, which must not count at all.
+            var mergedClips = new HashSet<AnimationClip>();
             foreach (var state in states)
-                if (Map(state.motion) != state.motion) state.motion = Map(state.motion);
+            {
+                if (syncedSourceStates.Contains(state)) continue;
+                var mapped = Map(state.motion);
+                if (mapped == state.motion) continue;
+                if (state.motion is AnimationClip source) mergedClips.Add(source);
+                state.motion = mapped;
+            }
             foreach (var tree in trees)
             {
+                if (!isBuildOwned(tree)) continue; // NDMF keeps unmodified motions by reference: an original .blendtree asset is never written to.
                 var children = tree.children;
                 bool changed = false;
                 for (int i = 0; i < children.Length; i++)
                 {
                     var mapped = Map(children[i].motion);
                     if (mapped == children[i].motion) continue;
+                    if (children[i].motion is AnimationClip source) mergedClips.Add(source);
                     children[i].motion = mapped;
                     changed = true;
                 }
                 if (changed) tree.children = children;
             }
-            return replace.Count;
+            return mergedClips.Count;
         }
 
         // Every clip a controller can play, including per-state overrides of synced layers and nested blend trees.

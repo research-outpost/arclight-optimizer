@@ -19,9 +19,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     {
         public readonly long SourceBytes, CandidateBytes;
         public readonly bool Compressed;
-        public NoFileSizeReductionException(long sourceBytes, long candidateBytes, bool compressed = false)
-            : base(Explain(sourceBytes, candidateBytes, compressed))
-        { SourceBytes = sourceBytes; CandidateBytes = candidateBytes; Compressed = compressed; }
+        // Set when the generic byte figure would misreport the decision (a flattened source compared without
+        // an estimate); Explain/Remember quote this instead of the two byte counts.
+        public readonly string CustomReason;
+        public NoFileSizeReductionException(long sourceBytes, long candidateBytes, bool compressed = false, string reason = null)
+            : base(reason ?? Explain(sourceBytes, candidateBytes, compressed))
+        { SourceBytes = sourceBytes; CandidateBytes = candidateBytes; Compressed = compressed; CustomReason = reason; }
         public static string Explain(long sourceBytes, long candidateBytes, bool compressed = false) => compressed
             ? $"No compressed-size saving: estimated candidate {candidateBytes:N0} bytes, original {sourceBytes:N0} bytes (compressed texture data as stored in the avatar bundle). Original retained."
             : $"No PNG file-size saving: candidate {candidateBytes:N0} bytes, original {sourceBytes:N0} bytes. Original retained.";
@@ -38,8 +41,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         public static bool IsSmaller(Texture2D source, Texture2D candidate) =>
-            IsSmaller(new FileInfo(AssetDatabase.GetAssetPath(source)).Length,
-                new FileInfo(AssetDatabase.GetAssetPath(candidate)).Length);
+            IsSmaller(LongPath.Length(AssetDatabase.GetAssetPath(source)), LongPath.Length(AssetDatabase.GetAssetPath(candidate)));
 
         // Mapping made under the compressed-size estimate or by padding repair: the PNG file sizes do not decide.
         public static bool SkipsPngGate(GeneratedTextureMapping mapping) =>
@@ -61,7 +63,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             manifest.nonBeneficialTextures.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
             manifest.nonBeneficialTextures.Add(new NonBeneficialTextureAnalysis
                 { source = source, sourceId = id, recipeHash = recipe, sourceBytes = e.SourceBytes, candidateBytes = e.CandidateBytes, compressedEstimate = e.Compressed,
-                  lastUsedDay = CacheCleanup.Today });
+                  explanation = e.CustomReason,
+                  estimateAttempted = BundleSizeEstimator.CanEstimate, lastUsedDay = CacheCleanup.Today });
             // Remove mappings only; existing PNG assets are never deleted.
             manifest.mappings.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
             EditorUtility.SetDirty(manifest);
@@ -234,11 +237,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             int preserved = mask.Count(used => used);
             Color32 background = default;
             Color32[] output = null;
+            var attempt = new Color32[pixels.Length]; // one buffer for every candidate; `output` ends up holding it
+            var extenderScratch = new EdgeValueExtender.Scratch();
             string path = null;
             Texture2D replacement = null;
             long compressedSource = 0, compressedReplacement = 0;
             bool unchanged = false;
-            NoFileSizeReductionException notSmaller = null;
+            NoFileSizeReductionException notSmallerPng = null, notSmallerCompressed = null;
             // What ships is the compressed texture inside the bundle, not the PNG: a larger PNG with flat unused areas
             // can still shrink. Without a usable estimate (Play Mode, a failed build) the PNG file size decides.
             // Padding repair is gated the same way: without an estimate it must make the PNG smaller (a larger repaired PNG grew
@@ -258,7 +263,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     throw new InvalidOperationException("PNG round-trip changed encoded pixels; output not written.");
                 progress?.Stage("Rechecking source inputs");
                 checkCancelled?.Invoke();
-                if (FingerprintService.Recipe(group) != recipe || FingerprintService.SourceHash(group) != FingerprintService.Hash(bytes))
+                // RecipeRefreshed bypasses the scan's memo so drift since the bytes were read below is caught, not hidden.
+                if (FingerprintService.RecipeRefreshed(group) != recipe || FingerprintService.SourceHash(group) != FingerprintService.Hash(bytes))
                     throw new InvalidOperationException("Inputs changed during generation; retry.");
                 checkCancelled?.Invoke();
                 string outPath = OutputPath(folder, source.name, recipe);
@@ -304,52 +310,60 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (ownsMeta && File.Exists(outPath + ".meta")) File.Delete(outPath + ".meta");
                 }
                 progress?.Stage("Importing PNG", false);
-                AssetDatabase.ImportAsset(outPath, ImportAssetOptions.ForceSynchronousImport);
-                var importer = (TextureImporter)AssetImporter.GetAtPath(outPath);
-                if (meta == null || importer.userData != userData ||
-                    TextureSafety.SettingsFingerprint(importer) != TextureSafety.SettingsFingerprint(sourceImporter))
+                // A rejection after the import (validation, the DXT1 probe, a cancel) must delete the fresh asset like the
+                // size-rejected candidates do: an orphan with no mapping makes the next attempt take the exists/new-revision path.
+                try
                 {
-                    // The copied metadata was unavailable or not applied: copy settings through the API and reimport.
-                    ImporterFallbacks++;
-                    TextureSafety.CopyImporter(sourceImporter, importer);
-                    importer.userData = userData;
-                    importer.SaveAndReimport();
+                    AssetDatabase.ImportAsset(outPath, ImportAssetOptions.ForceSynchronousImport);
+                    var importer = (TextureImporter)AssetImporter.GetAtPath(outPath);
+                    if (meta == null || importer.userData != userData ||
+                        TextureSafety.SettingsFingerprint(importer) != TextureSafety.SettingsFingerprint(sourceImporter))
+                    {
+                        // The copied metadata was unavailable or not applied: copy settings through the API and reimport.
+                        ImporterFallbacks++;
+                        TextureSafety.CopyImporter(sourceImporter, importer);
+                        importer.userData = userData;
+                        importer.SaveAndReimport();
+                    }
+                    TextureSafety.DropReadable(importer);
+                    // Decided on the written output: clearing unused pixels can leave its alpha fully opaque.
+                    standaloneFormat = ChannelFormat(importer, expected.All(p => p.a == 255));
+                    if (standaloneFormat != null)
+                    {
+                        progress?.Stage("Importing with " + standaloneFormat.Value + " format", false);
+                        importer.SetPlatformTextureSettings(ChannelFormats.Standalone(importer, standaloneFormat.Value));
+                        importer.SaveAndReimport();
+                    }
+                    progress?.Stage("Validating imported PNG", false);
+                    var imported = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
+                    GeneratedTargetValidator.ValidatePair(source, imported, repair || estimate, (int)(standaloneFormat ?? 0));
+                    // DXT1 for a texture whose alpha a shader reads relies on the encoder never using its transparent index on opaque
+                    // input; the GPU's decode confirms it where the active platform imports the DXT1 (Fable final review).
+                    if (standaloneFormat == TextureImporterFormat.DXT1 && (channels & TextureChannels.A) != 0 && imported.format == TextureFormat.DXT1 &&
+                        !TextureCropper.OpaqueOnGpu(imported))
+                        throw new InvalidOperationException("The DXT1 replacement decodes a texel with alpha below 1.");
+                    return (outPath, imported);
                 }
-                TextureSafety.DropReadable(importer);
-                // Decided on the written output: clearing unused pixels can leave its alpha fully opaque.
-                standaloneFormat = ChannelFormat(importer, expected.All(p => p.a == 255));
-                if (standaloneFormat != null)
-                {
-                    progress?.Stage("Importing with " + standaloneFormat.Value + " format", false);
-                    importer.SetPlatformTextureSettings(ChannelFormats.Standalone(importer, standaloneFormat.Value));
-                    importer.SaveAndReimport();
-                }
-                progress?.Stage("Validating imported PNG", false);
-                var imported = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
-                GeneratedTargetValidator.ValidatePair(source, imported, repair || estimate, (int)(standaloneFormat ?? 0));
-                // DXT1 for a texture whose alpha a shader reads relies on the encoder never using its transparent index on opaque
-                // input; the GPU's decode confirms it where the active platform imports the DXT1 (Fable final review).
-                if (standaloneFormat == TextureImporterFormat.DXT1 && (channels & TextureChannels.A) != 0 && imported.format == TextureFormat.DXT1 &&
-                    !TextureCropper.OpaqueOnGpu(imported))
+                catch (Exception e) when (e is InvalidOperationException || e is OperationCanceledException)
                 {
                     AssetDatabase.DeleteAsset(outPath);
-                    throw new InvalidOperationException("The DXT1 replacement decodes a texel with alpha below 1.");
+                    throw;
                 }
-                return (outPath, imported);
             }
 
             foreach (var candidate in candidates)
             {
                 progress?.Stage("Filling unused pixels");
                 checkCancelled?.Invoke();
-                var attempt = (Color32[])pixels.Clone();
+                // One buffer for every candidate: the loop rewrites each texel from pixels and the mask, so
+                // the per-candidate Clone (up to 3 x 64 MB at the pixel cap) is the only allocation worth.
                 for (int i = 0; i < attempt.Length; i++)
                 {
                     if ((i & 0xffff) == 0) checkCancelled?.Invoke();
-                    if (!mask[i]) attempt[i] = candidate;
+                    attempt[i] = mask[i] ? pixels[i] : candidate;
                 }
                 progress?.Stage("Extending padding");
-                EdgeValueExtender.Extend(pixels, attempt, mask, info.Width, info.Height, radiusX, radiusY, repeatX, repeatY, checkCancelled);
+                EdgeValueExtender.Extend(pixels, attempt, mask, info.Width, info.Height, radiusX, radiusY, repeatX, repeatY, checkCancelled, extenderScratch);
                 // Unchanged pixels are still worth writing for a smaller format, which only the estimate can show.
                 if (!(formatOnly && estimate) && attempt.SequenceEqual(pixels)) { unchanged = true; continue; }
                 checkCancelled?.Invoke();
@@ -357,10 +371,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var encoded = PngPixels.Encode(attempt, info);
                 checkCancelled?.Invoke();
                 bool pngSmaller = TextureFileSizePolicy.IsSmaller(bytes.LongLength, encoded.LongLength);
-                void RejectByPngSize()
+                void RejectByPngSize(string reason = null)
                 {
-                    if (notSmaller == null || encoded.LongLength < notSmaller.CandidateBytes)
-                        notSmaller = new NoFileSizeReductionException(bytes.LongLength, encoded.LongLength);
+                    // Units never mix: the closest PNG-rule rejection is chosen only among PNG-rule rejections.
+                    if (notSmallerPng == null || encoded.LongLength < notSmallerPng.CandidateBytes)
+                        notSmallerPng = new NoFileSizeReductionException(bytes.LongLength, encoded.LongLength, false, reason);
                 }
                 // Without an estimate, compare complete encoded files (including preserved profiles) before writing anything.
                 if (!estimate && !pngSmaller) { RejectByPngSize(); continue; }
@@ -375,8 +390,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         {
                             // The candidate is a fresh asset of this run; drop it so a rejected texture leaves nothing behind.
                             AssetDatabase.DeleteAsset(written.Path);
-                            if (notSmaller == null || candidateCompressed < notSmaller.CandidateBytes)
-                                notSmaller = new NoFileSizeReductionException(compressedSource, candidateCompressed, true);
+                            if (notSmallerCompressed == null || candidateCompressed < notSmallerCompressed.CandidateBytes)
+                                notSmallerCompressed = new NoFileSizeReductionException(compressedSource, candidateCompressed, true);
                             continue;
                         }
                         compressedReplacement = candidateCompressed;
@@ -386,7 +401,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         // The estimate failed mid-run: this and later candidates fall back to the PNG file size.
                         estimate = false;
                         compressedSource = 0;
-                        if (flattened || !pngSmaller) { AssetDatabase.DeleteAsset(written.Path); RejectByPngSize(); continue; }
+                        if (flattened || !pngSmaller)
+                        {
+                            AssetDatabase.DeleteAsset(written.Path);
+                            // A flattened source has no comparable PNG file size: quoting its whole-file bytes as if
+                            // they were PNG bytes would misreport the decision.
+                            RejectByPngSize(flattened
+                                ? "The compressed-size estimate failed mid-run and the flattened source has no comparable PNG file size, so the format-only candidate was kept as is. Original retained."
+                                : null);
+                            continue;
+                        }
                     }
                 }
                 background = candidate; output = attempt; path = written.Path; replacement = written.Replacement;
@@ -396,7 +420,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 // A changed candidate rejected by the size gate is the useful result, even if a later
                 // fallback candidate happened to match the source pixels exactly.
-                throw SelectNoOutputException(notSmaller, unchanged, estimate);
+                // Prefer a compressed-rule rejection; never compare the two rules' units against each other.
+                throw SelectNoOutputException(notSmallerCompressed ?? notSmallerPng, unchanged, estimate);
             }
             return new GeneratedTextureMapping
             {
@@ -405,6 +430,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 outputImporterHash = FingerprintService.ImporterHash(replacement), width = info.Width, height = info.Height,
                 padding = padding, preservedPixels = preserved, background = background, repairedPadding = repair, hasReportMetadata = true, extensionRadiusX = radiusX, extensionRadiusY = radiusY,
                 compressedSourceBytes = estimate ? compressedSource : 0, compressedReplacementBytes = estimate ? compressedReplacement : 0,
+                estimateAttempted = BundleSizeEstimator.CanEstimate,
                 standaloneFormat = (int)(standaloneFormat ?? 0),
                 // Only the active target has actually been imported. This does not certify visual equivalence.
                 standaloneValidated = GeneratedTargetValidator.IsStandalone,

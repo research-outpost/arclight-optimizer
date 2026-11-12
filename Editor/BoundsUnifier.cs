@@ -16,8 +16,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // shape offsets, whatever the joints rotate to. That holds for every vertex of every qualifying mesh, including meshes
     // switched off, so nothing visible can be culled. A mesh keeps its own bounds when that reach is not fixed: a bone
     // between it and the Hips is constrained, moved by physics, animated in position or scale, or in a PhysBone that can
-    // stretch; when it has no bones; or when it samples probes without an anchor (its bounds centre is then its lighting
-    // point). It changes culling (meshes can draw when just off screen), so it is the component's Unified Bounds setting.
+    // stretch; when it has no bones; when it samples probes without an anchor (its bounds centre is then its lighting
+    // point); or when its root bone is not the Hips already and one of its materials reads object-space positions or
+    // is not audited free of them (the root bone defines that space; see MaterialReason). It changes culling (meshes
+    // can draw when just off screen), so it is the component's Unified Bounds setting.
     internal static class BoundsUnifier
     {
         internal sealed class Result { public int Changed; public float Size; public readonly List<string> Kept = new List<string>(); }
@@ -42,7 +44,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (chains.TryGetValue(bone, out var known)) return known;
                 float? length = null;
                 if (bone == hips) length = 0;
-                else if (bone.parent && !free.Contains(bone) &&
+                // A bone whose local pose/scale something else writes at runtime (VRC Head Chop targets are the
+                // ScaleChanges set, AvatarAnalysis:412) breaks the parent-chain reach assumption: a chopped limb can
+                // extend past the cube, exactly the culling failure this class guards against.
+                else if (bone.parent && !free.Contains(bone) && !analysis.ScaleChanges(bone) &&
                          !analysis.IsAnimated(bone, p => p.StartsWith("m_LocalPosition", StringComparison.Ordinal) || p.StartsWith("m_LocalScale", StringComparison.Ordinal)))
                 {
                     var parent = Chain(bone.parent);
@@ -57,7 +62,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 if (!renderer.sharedMesh || Exclusions.Excluded(renderer)) continue;
                 bool probes = renderer.lightProbeUsage != LightProbeUsage.Off || renderer.reflectionProbeUsage != ReflectionProbeUsage.Off;
-                string why = probes && !renderer.probeAnchor ? "no probe anchor" : null;
+                string why = probes && !renderer.probeAnchor ? "no probe anchor"
+                    : MaterialReason(renderer, hips, renderer.sharedMaterials.Concat(analysis.SwappedMaterials(renderer)), AnimatedRange(analysis, renderer));
                 float reach = why == null ? Reach(renderer, Chain, out why) : 0;
                 if (why != null) { result.Kept.Add(renderer.name + " (" + why + ")"); continue; }
                 picked.Add(renderer);
@@ -81,11 +87,56 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return result;
         }
 
+        // Why this mesh must keep its root bone for the sake of the materials it can draw (its slots and every material
+        // an animation swaps in), or null. Vertices render in the root bone's space (the renderer's own transform when
+        // it has none), so repointing it moves object-space effects (dissolve position modes, AudioLink mode 5): only
+        // materials audited free of those may switch frames. A mesh already in the Hips' frame switches nothing, it
+        // only gets new bounds, which no material can see, so its materials are not asked.
+        // animated: what animation can write into the renderer's material properties (see AnimatedRange); a switch a
+        // clip can turn on counts as on.
+        internal static string MaterialReason(SkinnedMeshRenderer renderer, Transform hips, IEnumerable<Material> materials,
+            Func<string, (float Min, float Max)?> animated = null)
+        {
+            if ((renderer.rootBone ? renderer.rootBone : renderer.transform) == hips) return null;
+            string why = null;
+            foreach (var material in materials)
+            {
+                if (!material || RigidAccessoryConverter.ObjectSpaceSafe(material, animated)) continue;
+                // An audited lilToon material fails only for a position effect that is on, or that an animation can
+                // turn on. Any other shader is not known to read object space, only not known to be free of it: say
+                // which it is.
+                if (VertexStreamStripper.IsAuditedLilToonShader(material.shader, out _))
+                    return RigidAccessoryConverter.ObjectSpaceSafe(material) ? "an animation can switch on an object-space effect" : "a material reads object-space positions";
+                why = "a shader not audited for object-space effects, and a root bone other than the Hips";
+            }
+            return why;
+        }
+
+        // What animation can write into one material property of this renderer, by the property's name without the
+        // "material." prefix ("_AudioLinkUVMode", "_DissolveParams.x"); a material curve reaches every material the
+        // renderer draws. Null when no curve binds the property; the span of the curves' values when every curve holds
+        // one value; everything when a curve moves or adds to others, since any value can then come out.
+        internal static Func<string, (float Min, float Max)?> AnimatedRange(AvatarAnalysis analysis, Renderer renderer) => property =>
+        {
+            (float Min, float Max)? range = null;
+            foreach (var binding in analysis.BindingsOn(renderer, p => p == "material." + property))
+            {
+                var keys = binding.FloatCurve?.keys;
+                if (keys == null || keys.Length == 0 || binding.Summed ||
+                    keys.Any(k => k.value != keys[0].value || !AnimatorLayerMerger.Flat(k.inTangent) || !AnimatorLayerMerger.Flat(k.outTangent)))
+                    return (float.NegativeInfinity, float.PositiveInfinity);
+                float value = keys[0].value;
+                range = range == null ? (value, value) : (Mathf.Min(range.Value.Min, value), Mathf.Max(range.Value.Max, value));
+            }
+            return range;
+        };
+
         // The farthest any vertex of this mesh can get from the Hips, or why that is unknown.
         private static float Reach(SkinnedMeshRenderer renderer, Func<Transform, float?> chain, out string why)
         {
             why = null;
             var mesh = renderer.sharedMesh;
+            if (!mesh.isReadable) { why = "mesh not readable"; return 0; }
             var bones = renderer.bones;
             var bindposes = mesh.bindposes;
             if (bones.Length == 0 || bindposes.Length < bones.Length) { why = "no bones"; return 0; }

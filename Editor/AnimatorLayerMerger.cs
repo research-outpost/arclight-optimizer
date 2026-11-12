@@ -598,6 +598,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     b.type == typeof(GameObject) || b.type == typeof(Transform) || b.type != null && t.GetComponent(b.type)))) return true;
             // Only properties nothing but animation writes: activeness, enabled flags and material properties. Transforms, blend
             // shapes VRChat drives and audio properties a behaviour sets would lose their per-frame default rewrite.
+            // A weight-0 layer whose states write defaults still rewrites the defaults of everything it binds (Unity
+            // evaluates non-synced state machines every frame), so a material-binding layer needs write defaults off too.
+            if (bindings.Any(b => (b.propertyName ?? "").StartsWith("material.", StringComparison.Ordinal)) &&
+                nodes.OfType<VirtualState>().Any(s => s != null && s.WriteDefaultValues)) return false;
             return shareOwner && layer.DefaultWeight == 0 && bindings.All(b => b.type == typeof(GameObject) && b.propertyName == "m_IsActive" ||
                 b.propertyName == "m_Enabled" || (b.propertyName ?? "").StartsWith("material.", StringComparison.Ordinal)) && !bindings.Overlaps(others);
         }

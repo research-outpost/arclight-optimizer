@@ -93,6 +93,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // insert (custom.hlsl) that only reads _SSAOMask and changes fd.col before fog. The container's own Shader line,
             // with lilSSAO's shader name, must match. ltsmulti_o uses lilSSAO's own Multi outline block, which is not audited.
             if (!Variants.Contains(entry + ".shader") || entry == "ltsmulti_o") return false;
+            // A container installed under Packages/ is the real lilSSAO package: require its audited folder fingerprint,
+            // the same trust the vertex-stream passes give it (shortcut: user copies under Assets/ stay name-gated;
+            // close fully with the Unity 6 overhaul).
+            if (assetPath.StartsWith("Packages/", StringComparison.Ordinal) &&
+                !VertexStreamStripper.IsAuditedLilSsaoFolder(Path.GetDirectoryName(assetPath))) return false;
             string container;
             try { container = File.ReadAllText(assetPath); } catch (IOException) { return false; }
             var declared = System.Text.RegularExpressions.Regex.Match(container, @"Shader\s+""([^""]+)""");

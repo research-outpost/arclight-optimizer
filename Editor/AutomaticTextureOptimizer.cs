@@ -66,7 +66,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 foreach (string warning in scan.Warnings) log.Add(config, warning);
                 if (TextureUsageScanner.RepairMipmapPadding)
                     log.Add(config, "Mipmap padding repair enabled for colour textures. Existing padding is rebuilt; larger replacement PNGs are allowed. Final download size and mip appearance require a build/visual comparison.");
-                selected = Prepare(scan, folder, state.Summary, log.Add, progress);
+                selected = Prepare(scan, folder, state.Summary, log.Add, progress, state.Coverage ??= new UvCoverageCache());
 
                 // Last cancellable checkpoint (a forced dialog poll); applying replacements cannot be cancelled.
                 progress?.Overall("Ready to apply replacements", .95f);
@@ -104,15 +104,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static bool SceneReloadDisabled => EditorSettings.enterPlayModeOptionsEnabled &&
             (EditorSettings.enterPlayModeOptions & EnterPlayModeOptions.DisableSceneReload) != 0;
 
+        // The coverageCache lets the later crop pass reuse this pass's UV rasters (the cache is content-keyed and
+        // bounded, so sharing it cannot grow the working set).
         internal static TextureOptimizationManifest Prepare(ScanResult scan, string folder, GenerationSummary summary,
-            Action<UnityEngine.Object, string> warn, OptimizationProgress progress = null)
+            Action<UnityEngine.Object, string> warn, OptimizationProgress progress = null, UvCoverageCache coverageCache = null)
         {
             var selected = ScriptableObject.CreateInstance<TextureOptimizationManifest>();
             // A bundle build (the compressed-size estimate) unloads objects that only managed code references.
             var keepAlive = BundleSizeEstimator.KeepObjectsAlive();
             TextureOptimizationManifest cache = null;
             bool cacheWarned = false;
-            var coverageCache = new UvCoverageCache();
+            coverageCache = coverageCache ?? new UvCoverageCache();
             summary.TextureResults.Clear();
             try
             {
@@ -169,34 +171,53 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                     AssetDatabase.GetAssetPath(mapping.replacement).StartsWith(folder + "/", StringComparison.Ordinal) &&
                                     // A replacement made without a size estimate (Play Mode) passed only the PNG-size check, which does not prove the
                                     // bundle shrinks; where an estimate can be made now (a build), it is made again and the size gate applies.
-                                    !(mapping.compressedSourceBytes == 0 && BundleSizeEstimator.CanEstimate))
+                                    !(mapping.compressedSourceBytes == 0 && BundleSizeEstimator.CanEstimate && !mapping.estimateAttempted))
                                 {
                                     result.CacheLookup = true;
                                     result.CacheValidation = true;
                                     progress?.Stage("Validating cached replacement");
-                                    // Copies made before 1.1.13. The .meta changes, so its recorded hash follows, or the next build would remake it.
-                                    if (TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(mapping.replacement))))
+                                    bool revalidate = true;
+                                    try
                                     {
-                                        mapping.outputImporterHash = FingerprintService.ImporterHash(mapping.replacement);
-                                        EditorUtility.SetDirty(cache);
+                                        // Copies made before 1.1.13. The .meta changes, so its recorded hash follows, or the next build would remake it.
+                                        var replacementImporter = AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(mapping.replacement)) as TextureImporter;
+                                        if (replacementImporter != null && TextureSafety.DropReadable(replacementImporter))
+                                        {
+                                            mapping.outputImporterHash = FingerprintService.ImporterHash(mapping.replacement);
+                                            EditorUtility.SetDirty(cache);
+                                        }
+                                        GeneratedTargetValidator.ValidatePair((Texture2D)group.Source, mapping.replacement, TextureFileSizePolicy.SkipsPngGate(mapping), mapping.standaloneFormat);
+                                        if (!GeneratedTargetValidator.IsValidated(mapping))
+                                        {
+                                            GeneratedTargetValidator.ValidateExisting(mapping);
+                                            EditorUtility.SetDirty(cache);
+                                        }
                                     }
-                                    GeneratedTargetValidator.ValidatePair((Texture2D)group.Source, mapping.replacement, TextureFileSizePolicy.SkipsPngGate(mapping), mapping.standaloneFormat);
-                                    if (!GeneratedTargetValidator.IsValidated(mapping))
+                                    catch (OperationCanceledException) { throw; }
+                                    catch (Exception)
                                     {
-                                        GeneratedTargetValidator.ValidateExisting(mapping);
-                                        EditorUtility.SetDirty(cache);
+                                        // The import environment (not a hashed input) made this replacement fail validation after the
+                                        // cheap checks passed: drop the entry so the next build regenerates instead of recording the
+                                        // same skip against the same mapping forever.
+                                        revalidate = false;
+                                        result.CacheValidation = false;
                                     }
-                                    progress?.CheckCancelled();
-                                    MarkUsed(cache, ref mapping.lastUsedDay);
-                                    selected.mappings.Add(mapping);
-                                    summary.Reused++;
-                                    result.Outcome = TextureResultKind.Reused;
-                                    result.Reason = "A matching validated replacement was reused from the cache.";
-                                    continue;
+                                    if (revalidate)
+                                    {
+                                        progress?.CheckCancelled();
+                                        MarkUsed(cache, ref mapping.lastUsedDay);
+                                        selected.mappings.Add(mapping);
+                                        summary.Reused++;
+                                        result.Outcome = TextureResultKind.Reused;
+                                        result.Reason = "A matching validated replacement was reused from the cache.";
+                                        continue;
+                                    }
+                                    cache.mappings.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
+                                    EditorUtility.SetDirty(cache);
                                 }
                                 var unchanged = cache.unchangedTextures.FirstOrDefault(m => m.sourceId == id && m.recipeHash == recipe);
                                 // "No pixel changes" found without an estimate is checked again where one exists: the format alone may shrink.
-                                if (unchanged != null && !(string.IsNullOrEmpty(unchanged.retainedReason) && !unchanged.estimated && BundleSizeEstimator.CanEstimate))
+                                if (unchanged != null && !(string.IsNullOrEmpty(unchanged.retainedReason) && !unchanged.estimated && BundleSizeEstimator.CanEstimate && !unchanged.estimateAttempted))
                                 {
                                     result.CacheLookup = true;
                                     MarkUsed(cache, ref unchanged.lastUsedDay);
@@ -216,13 +237,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 if (unchanged != null) { cache.unchangedTextures.Remove(unchanged); EditorUtility.SetDirty(cache); } // Checked again below.
                                 var nonBeneficial = TextureFileSizePolicy.Find(cache, id, recipe);
                                 // A "no saving" found by PNG size alone (Play Mode) is checked again where the compressed size can be estimated.
-                                if (nonBeneficial != null && !(!nonBeneficial.compressedEstimate && BundleSizeEstimator.CanEstimate))
+                                if (nonBeneficial != null && !(!nonBeneficial.compressedEstimate && BundleSizeEstimator.CanEstimate && !nonBeneficial.estimateAttempted))
                                 {
                                     result.CacheLookup = true;
                                     MarkUsed(cache, ref nonBeneficial.lastUsedDay);
                                     summary.NotSmaller++;
                                     result.Outcome = TextureResultKind.NotSmaller;
-                                    result.Reason = "Cached size check: " + NoFileSizeReductionException.Explain(nonBeneficial.sourceBytes, nonBeneficial.candidateBytes, nonBeneficial.compressedEstimate);
+                                    result.Reason = "Cached size check: " + (nonBeneficial.explanation ?? NoFileSizeReductionException.Explain(nonBeneficial.sourceBytes, nonBeneficial.candidateBytes, nonBeneficial.compressedEstimate));
                                     warn?.Invoke(group.Source, result.Reason);
                                     continue;
                                 }
@@ -244,7 +265,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 catch (NoTextureChangesException e)
                                 {
                                     cache.unchangedTextures.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
-                                    cache.unchangedTextures.Add(new UnchangedTextureAnalysis { source = (Texture2D)group.Source, sourceId = id, recipeHash = recipe, lastUsedDay = CacheCleanup.Today, estimated = e.Estimated });
+                                    // House contract: a fresh "no pixel changes" contradicts an older generated mapping
+                                    // or "no saving" verdict for the same key (the mapping/Remember writers prune this way).
+                                    cache.nonBeneficialTextures?.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
+                                    cache.mappings.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
+                                    cache.unchangedTextures.Add(new UnchangedTextureAnalysis { source = (Texture2D)group.Source, sourceId = id, recipeHash = recipe, lastUsedDay = CacheCleanup.Today, estimated = e.Estimated, estimateAttempted = BundleSizeEstimator.CanEstimate });
                                     EditorUtility.SetDirty(cache);
                                     summary.Unchanged++;
                                     result.Outcome = TextureResultKind.Unchanged;
@@ -253,6 +278,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 }
                                 // Keep other avatars' recipes. Never delete or overwrite old PNG revisions.
                                 cache.mappings.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
+                                // A generated mapping and a remembered "no saving" for the same key cannot both be true; the
+                                // generation just won that decision, so drop the stale verdict (Remember does the mirror).
+                                cache.nonBeneficialTextures?.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
                                 mapping.lastUsedDay = CacheCleanup.Today;
                                 cache.mappings.Add(mapping);
                                 EditorUtility.SetDirty(cache);
@@ -269,6 +297,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 // Fixed by the recipe: remembered, so later builds skip the analysis.
                                 if (recipe != null && cache)
                                 {
+                                    cache.unchangedTextures.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
+                                    // Same house contract as the mapping/Remember writers: the fresh retained verdict
+                                    // contradicts any older generated mapping or "no saving" for this key.
+                                    cache.nonBeneficialTextures?.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
+                                    cache.mappings.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
                                     cache.unchangedTextures.Add(new UnchangedTextureAnalysis { source = (Texture2D)group.Source, sourceId = id, recipeHash = recipe, lastUsedDay = CacheCleanup.Today, retainedReason = e.Message });
                                     EditorUtility.SetDirty(cache);
                                 }
@@ -324,8 +357,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var cache = AssetDatabase.LoadAssetAtPath<TextureOptimizationManifest>(path);
             if (cache)
             {
-                if (cache.cacheOwner != CacheOwner || cache.schemaVersion != 1)
+                if (cache.cacheOwner != CacheOwner)
                     throw new InvalidOperationException("Automatic cache path is occupied by an unrecognized manifest; original textures retained.");
+                if (cache.schemaVersion != 1)
+                {
+                    // Our own cache written under another schema (the entry shape changed in a newer version, or a
+                    // downgrade back to this one): every list can be regenerated from its source, so clear it in place
+                    // instead of wedging every build on a hand-deleted file (the failure mode the warning above names).
+                    UnityEngine.Debug.LogWarning("Arclight Optimizer: the automatic cache was written under schema version " + cache.schemaVersion +
+                        "; its regenerable entries were cleared and start again under schema 1.");
+                    cache.mappings = new System.Collections.Generic.List<GeneratedTextureMapping>();
+                    cache.unchangedTextures = new System.Collections.Generic.List<UnchangedTextureAnalysis>();
+                    cache.nonBeneficialTextures = new System.Collections.Generic.List<NonBeneficialTextureAnalysis>();
+                    cache.schemaVersion = 1;
+                    EditorUtility.SetDirty(cache);
+                }
                 cache.hideFlags |= HideFlags.DontUnloadUnusedAsset;
                 return cache;
             }
