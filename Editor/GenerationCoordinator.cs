@@ -150,6 +150,42 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return string.Join(newline, lines);
         }
 
+        // The copied importer metadata with the Standalone platform block's format replaced, so the first import already
+        // compresses to the channel format and the second import (SetPlatformTextureSettings + SaveAndReimport) is not needed.
+        // Only for a source whose Standalone block is already overridden: the format is then that block's one
+        // "textureFormat:" line and nothing else in the block changes (ChannelFormats.Standalone changes only the format
+        // there). Exactly one Standalone block with exactly one textureFormat line and "overridden: 1" is required; any other
+        // layout returns null, and the caller imports with the copied settings and changes the format through the importer.
+        internal static string WithStandaloneFormat(string meta, TextureImporterFormat format)
+        {
+            if (meta == null) return null;
+            string newline = meta.Contains("\r\n") ? "\r\n" : "\n";
+            var lines = meta.Split(new[] { newline }, StringSplitOptions.None);
+            int blocks = 0, formatLine = -1;
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (lines[i] != "    buildTarget: Standalone") continue;
+                if (++blocks > 1) return null;
+                // The block's fields are the four-space lines around its buildTarget line, between two "  - " list items.
+                int first = i, last = i;
+                while (first > 0 && lines[first - 1].StartsWith("    ", StringComparison.Ordinal)) first--;
+                if (first == 0 || !lines[first - 1].StartsWith("  - ", StringComparison.Ordinal)) return null;
+                while (last + 1 < lines.Length && lines[last + 1].StartsWith("    ", StringComparison.Ordinal)) last++;
+                int formats = 0, overridden = 0;
+                for (int j = first - 1; j <= last; j++)
+                {
+                    string field = lines[j].Substring(4);
+                    if (field.StartsWith("textureFormat:", StringComparison.Ordinal)) { formats++; formatLine = j; }
+                    else if (field == "overridden: 1") overridden++;
+                    else if (field.StartsWith("overridden:", StringComparison.Ordinal)) return null;
+                }
+                if (formats != 1 || overridden != 1) return null;
+            }
+            if (blocks != 1 || formatLine < 0) return null;
+            lines[formatLine] = lines[formatLine].Substring(0, 4) + "textureFormat: " + (int)format;
+            return string.Join(newline, lines);
+        }
+
         internal static GeneratedTextureMapping GenerateOne(TextureGroup group, string folder, string recipe, Action cancel = null, UvCoverageCache coverageCache = null, bool allowNewRevision = false, OptimizationProgress progress = null)
         {
             Action checkCancelled = cancel ?? (progress == null ? null : (Action)progress.CheckCancelled);
@@ -283,6 +319,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 string staging = outPath + ".writing";
                 string userData = "AvatarTextureOptimizer:" + recipe;
                 string meta = CopiedImporterMeta(AssetDatabase.GetAssetPath(source) + ".meta", userData);
+                // The channel format is decided on the written pixels and the source's settings, which the copy imports with,
+                // so it is known before the first import and can be folded into it (see WithStandaloneFormat).
+                var plannedFormat = ChannelFormat(sourceImporter, expected.All(p => p.a == 255));
+                string foldedMeta = plannedFormat != null ? WithStandaloneFormat(meta, plannedFormat.Value) : null;
                 bool ownsStaging = false, ownsMeta = false;
                 progress?.Stage("Writing PNG", false);
                 try
@@ -297,7 +337,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         using (var stream = new FileStream(outPath + ".meta", FileMode.CreateNew, FileAccess.Write))
                         {
                             ownsMeta = true;
-                            var metaBytes = new System.Text.UTF8Encoding(false).GetBytes(meta);
+                            var metaBytes = new System.Text.UTF8Encoding(false).GetBytes(foldedMeta ?? meta);
                             stream.Write(metaBytes, 0, metaBytes.Length);
                         }
                     }
@@ -316,8 +356,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     AssetDatabase.ImportAsset(outPath, ImportAssetOptions.ForceSynchronousImport);
                     var importer = (TextureImporter)AssetImporter.GetAtPath(outPath);
-                    if (meta == null || importer.userData != userData ||
-                        TextureSafety.SettingsFingerprint(importer) != TextureSafety.SettingsFingerprint(sourceImporter))
+                    // Folded: everything but the Standalone block equals the source's, and that block equals what the settings
+                    // round below would have written. Anything else takes the two-import path as before.
+                    bool folded = foldedMeta != null && importer.userData == userData &&
+                        TextureSafety.SettingsFingerprint(importer, withoutStandalone: true) == TextureSafety.SettingsFingerprint(sourceImporter, withoutStandalone: true) &&
+                        ChannelFormats.Matches(sourceImporter, importer, plannedFormat.Value);
+                    if (!folded && (meta == null || importer.userData != userData ||
+                        TextureSafety.SettingsFingerprint(importer) != TextureSafety.SettingsFingerprint(sourceImporter)))
                     {
                         // The copied metadata was unavailable or not applied: copy settings through the API and reimport.
                         ImporterFallbacks++;
@@ -327,8 +372,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     }
                     TextureSafety.DropReadable(importer);
                     // Decided on the written output: clearing unused pixels can leave its alpha fully opaque.
-                    standaloneFormat = ChannelFormat(importer, expected.All(p => p.a == 255));
-                    if (standaloneFormat != null)
+                    standaloneFormat = folded ? plannedFormat : ChannelFormat(importer, expected.All(p => p.a == 255));
+                    if (standaloneFormat != null && !folded)
                     {
                         progress?.Stage("Importing with " + standaloneFormat.Value + " format", false);
                         importer.SetPlatformTextureSettings(ChannelFormats.Standalone(importer, standaloneFormat.Value));

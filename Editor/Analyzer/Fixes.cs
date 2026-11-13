@@ -26,6 +26,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         internal sealed class Curves { public List<(AnimationClip Clip, EditorCurveBinding Binding, bool ObjectReference)> Bindings = new List<(AnimationClip, EditorCurveBinding, bool)>(); }
         // Texture assets (paths in Assets) whose import settings get Streaming Mipmaps turned on.
         internal sealed class Streaming { public List<string> Paths = new List<string>(); }
+        // Scene objects whose active state differs from how the FX layer starts them in game, with the in-game state.
+        internal sealed class StartStates { public List<(GameObject Object, bool On)> Objects = new List<(GameObject, bool)>(); }
 
         // A clip the fix may edit: its own .anim file in Assets (not inside a model, a controller or a read-only package).
         private static bool Editable(AnimationClip clip) => clip && AssetDatabase.IsMainAsset(clip) &&
@@ -141,6 +143,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         finally { AssetDatabase.StopAssetEditing(); }
                         return "Turned on Streaming Mipmaps on " + changed.Count + " texture(s): " + string.Join(", ", changed) + ". To undo, untick it in their import settings.";
                     });
+                // A scene edit only (never a prefab asset), undone with Edit > Undo: each object is turned on or off as the game
+                // starts it. In game the animator decides this anyway, so only what the scene shows changes.
+                case StartStates start when start.Objects.Count > 0 && start.Objects.All(o => !o.Object || !EditorUtility.IsPersistent(o.Object)):
+                    return ("Match the game", () =>
+                    {
+                        int changed = 0;
+                        foreach (var (target, on) in start.Objects)
+                        {
+                            if (!target || target.activeSelf == on) continue;
+                            Undo.RecordObject(target, "Match in-game start states");
+                            target.SetActive(on);
+                            changed++;
+                        }
+                        return "Turned " + changed + " object(s) on or off in the scene to match how they start in game.";
+                    });
                 case Curves c when c.Bindings.Any(b => Editable(b.Clip)):
                     return ("Remove them", () =>
                     {
@@ -246,7 +263,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         // (a layer turned up, an object renamed back). Null when nothing is left to do. Adding fixes are safe to repeat as they are.
         internal static Finding Recheck(Finding shown, GameObject avatar)
         {
-            if (!(shown.Data is Layers || shown.Data is Curves || shown.Data is Scripts || shown.Data is References)) return shown;
+            if (!(shown.Data is Layers || shown.Data is Curves || shown.Data is Scripts || shown.Data is References || shown.Data is StartStates)) return shown;
             if (!avatar) return null;
             var fresh = AvatarAnalyzer.Group(AvatarAnalyzer.Check(avatar)).FirstOrDefault(f => f.Key == shown.Key);
             if (fresh == null || fresh.Data == null || fresh.Data.GetType() != shown.Data.GetType()) return null;
@@ -264,6 +281,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 case References r:
                     var fields = new HashSet<(Object, string)>(((References)shown.Data).Fields);
                     r.Fields.RemoveAll(f => !fields.Contains(f)); left = r.Fields.Count; break;
+                case StartStates start:
+                    var listedStates = new HashSet<(GameObject, bool)>(((StartStates)shown.Data).Objects);
+                    start.Objects.RemoveAll(o => !listedStates.Contains(o)); left = start.Objects.Count; break;
                 default: return null;
             }
             return left > 0 ? fresh : null;

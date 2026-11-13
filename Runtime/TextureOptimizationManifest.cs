@@ -11,6 +11,19 @@ namespace Okarin.AvatarTextureOptimizer
         public List<GeneratedTextureMapping> mappings = new List<GeneratedTextureMapping>();
         public List<UnchangedTextureAnalysis> unchangedTextures = new List<UnchangedTextureAnalysis>();
         public List<NonBeneficialTextureAnalysis> nonBeneficialTextures = new List<NonBeneficialTextureAnalysis>();
+        // Read/Write-off byte copies of readable sources that were kept as they are (see ReadableTextureCopies).
+        public List<ReadableDropCopy> readableDrops = new List<ReadableDropCopy>();
+    }
+
+    [Serializable]
+    public sealed class ReadableDropCopy
+    {
+        public Texture2D source;
+        public Texture2D copy;
+        public string sourceId;
+        public string recipeHash;
+        public int lastUsedDay; // UTC days since 1970 of the last build that used this entry; 0 = unknown.
+        public string outputImporterHash;
     }
 
     [Serializable]

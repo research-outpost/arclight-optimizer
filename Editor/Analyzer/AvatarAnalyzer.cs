@@ -173,11 +173,47 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             buildError = null;
             syncedBits = SyncedBits(Read(root));
             if (!includeBuild) return Group(Check(root));
-            (List<Finding> Findings, HashSet<string> Names, int Bits) built;
+            (List<Finding> Findings, HashSet<string> Names, int Bits, List<Finding> Notes) built;
             try { built = CheckBuilt(root); }
             catch (Exception e) { buildError = e.GetBaseException().Message; return Group(Check(root)); }
             syncedBits = built.Bits;
-            return Group(Merge(Check(root, laterNames: built.Names), built.Findings, Read(root)));
+            var merged = Merge(Check(root, laterNames: built.Names), built.Findings, Read(root));
+            // What Arclight's own passes said during that build; they point at the avatar as authored.
+            foreach (var note in built.Notes) { note.Target = root; merged.Add(note); }
+            return Group(merged);
+        }
+
+        // Advice from Arclight's own build passes (AnalyzerBuildNotes), read right after the hidden build.
+        //  - VRCFury had not built the avatar when Arclight ran, so Arclight only removed exact duplicates: the upload is far
+        //    less optimized than it could be, and the build only says so in a warning that is easy to miss.
+        //  - Skinned meshes that stayed separate renderers, with the reason for each group: often one setting away from merging.
+        internal static List<Finding> BuildNotes(bool vrcfuryStoodDown, Dictionary<string, List<string>> skinnedWhyNot)
+        {
+            var notes = new List<Finding>();
+            if (vrcfuryStoodDown)
+                notes.Add(new Finding
+                {
+                    Severity = Severity.WorthChecking, Key = "vrcfury",
+                    Title = "Arclight Optimizer barely runs on this upload: VRCFury doesn't build the avatar first",
+                    Detail = "The avatar has VRCFury components, but VRCFury had not built it when Arclight ran, so its animation was incomplete. " +
+                        "Arclight then only merges exact duplicate meshes and audio, and skips textures, animators and every other optimization.",
+                    Fix = "Upload with VRCFury enabled and don't bake the avatar by hand beforehand. If VRCFury is enabled and this still shows, a VRCFury update may have changed how it marks a built avatar: please report it."
+                });
+            if (skinnedWhyNot != null && skinnedWhyNot.Count > 0)
+            {
+                var reasons = skinnedWhyNot.OrderByDescending(p => p.Value.Count).ThenBy(p => p.Key, StringComparer.Ordinal).ToList();
+                notes.Add(new Finding
+                {
+                    Severity = Severity.TidyUp, Key = "whynot|skinned",
+                    Title = N(reasons.SelectMany(p => p.Value).Distinct().Count(), "skinned mesh") + " couldn't be merged with another",
+                    Detail = "Each skinned mesh is drawn on its own. Arclight merges those that are provably drawn the same way; these stayed separate:\n" +
+                        string.Join("\n", reasons.Take(8).Select(p => "• " + p.Key + ": " + string.Join(", ", p.Value.Distinct().Take(6)) + (p.Value.Distinct().Count() > 6 ? ", ..." : ""))) +
+                        (reasons.Count > 8 ? "\n• and " + (reasons.Count - 8) + " more reasons" : ""),
+                    Fix = "Where a reason names a setting (a probe anchor, a renderer setting, a vertex layout), making it the same as on the other meshes lets them merge. Leave the rest as they are.",
+                    Identity = string.Join("\n", reasons.Select(p => p.Key + ": " + string.Join(",", p.Value.Distinct().OrderBy(n => n, StringComparer.Ordinal))))
+                });
+            }
+            return notes;
         }
 
         // The findings to show from the authored and the uploaded version (see Run).
@@ -186,7 +222,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             bool Breaks(Finding f) => Breakage(f);
             // Animation targets and driver targets count only when missing in both: before the build, Modular Avatar may not have
             // added them yet; after it, optimizers can leave curves to objects they removed.
-            bool InBoth(Finding f) => f.Key.StartsWith("path|", StringComparison.Ordinal) || f.Key.StartsWith("driver|", StringComparison.Ordinal);
+            bool InBoth(Finding f) => f.Key.StartsWith("path|", StringComparison.Ordinal) || f.Key.StartsWith("driver|", StringComparison.Ordinal) ||
+                f.Key.StartsWith("playdead|", StringComparison.Ordinal); // A Play Audio source path, like an animation path, can be fixed by the build.
             var authoredKeys = new HashSet<string>(authored.Select(f => f.Key));
             var builtKeys = new HashSet<string>(builtFindings.Select(f => f.Key));
             var result = authored.Where(f => !Breaks(f) && (!InBoth(f) || builtKeys.Contains(f.Key))).ToList();
@@ -210,7 +247,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         // True while CheckBuilt runs the upload steps, so the upload report (UploadReport) stays quiet for that copy.
         internal static bool Building { get; private set; }
 
-        private static (List<Finding>, HashSet<string>, int) CheckBuilt(GameObject root)
+        private static (List<Finding>, HashSet<string>, int, List<Finding>) CheckBuilt(GameObject root)
         {
             string temporary = "Assets/__ArclightAnalyzer_" + Guid.NewGuid().ToString("N");
             AssetDatabase.CreateFolder("Assets", Path.GetFileName(temporary));
@@ -221,6 +258,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             {
                 SceneManager.MoveGameObjectToScene(clone, scene);
                 Building = true;
+                AnalyzerBuildNotes.Reset(); // A build without Arclight's passes must not show an earlier build's notes.
                 // The SDK's own entry point runs every upload hook in order; without it (no SDK found), NDMF alone.
                 var sdk = AppDomain.CurrentDomain.GetAssemblies()
                     .Select(a => a.GetType("VRC.SDKBase.Editor.BuildPipeline.VRCBuildPipelineCallbacks")).FirstOrDefault(t => t != null)
@@ -231,7 +269,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     else AvatarProcessor.ProcessAvatar(clone);
                 }
                 var avatar = Read(clone);
-                return (Check(clone, built: true), new HashSet<string>(avatar.Playables.SelectMany(p => p.Controller.parameters.Select(q => q.name)), StringComparer.Ordinal), SyncedBits(avatar));
+                return (Check(clone, built: true), new HashSet<string>(avatar.Playables.SelectMany(p => p.Controller.parameters.Select(q => q.name)), StringComparer.Ordinal), SyncedBits(avatar),
+                    BuildNotes(AnalyzerBuildNotes.VrcfuryStoodDown, AnalyzerBuildNotes.SkinnedWhyNot));
             }
             finally
             {
@@ -259,9 +298,41 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             if (avatar.Playables.Count > 0) LayerControls(avatar, findings);
             SetupChecks(avatar, findings);
             MenuStructure(avatar, findings);
-            if (!built) { StartStates(avatar, findings); Components(avatar, findings, laterNames); MaterialChecks(avatar, findings); }
+            if (!built) { StartStates(avatar, findings); Components(avatar, findings, laterNames); MaterialChecks(avatar, findings); RootController(avatar, findings); }
             ExpressionsAndMenu(avatar, findings, built, laterNames);
             return findings;
+        }
+
+        // Animation that never reaches the game: VRChat plays only the descriptor's playable layers and replaces whatever
+        // controller sits on the avatar root's Animator. A controller there with states in it, which no playable layer names,
+        // works in the editor's preview and is silently dropped at upload. Judged as authored, by the controller object itself
+        // (the build copies controllers, so identity means nothing there). Silent while a Modular Avatar or VRCFury component
+        // is anywhere on the avatar: those tools can merge a controller into the playable layers at upload. Advice only.
+        private static void RootController(Avatar avatar, List<Finding> findings)
+        {
+            var animator = avatar.Root.GetComponent<Animator>();
+            var runtime = animator ? animator.runtimeAnimatorController : null;
+            var controller = runtime as AnimatorController ?? (runtime as AnimatorOverrideController)?.runtimeAnimatorController as AnimatorController;
+            if (!controller || avatar.Playables.Any(p => p.Controller == controller)) return;
+            var layers = controller.layers.Where(l => States(l.stateMachine).Any()).Select(l => l.name).ToList();
+            if (layers.Count == 0) return;
+            if (avatar.Root.GetComponentsInChildren<Component>(true).Any(c => c && (c.GetType().Name.Contains("VRCFury") ||
+                    (c.GetType().Namespace ?? "").StartsWith("VF.", StringComparison.Ordinal) ||
+                    (c.GetType().Namespace ?? "").StartsWith("nadena.dev.modular_avatar", StringComparison.Ordinal)))) return;
+            // With no playable layer of its own, the avatar's whole animation setup is this controller.
+            bool nothingElse = avatar.Playables.Count == 0;
+            findings.Add(new Finding
+            {
+                Severity = nothingElse ? Severity.Broken : Severity.WorthChecking,
+                Key = "deadanim|" + controller.name, Target = animator,
+                Title = "The Animator's controller \"" + controller.name + "\" isn't used in VRChat",
+                Detail = "VRChat only plays the controllers listed under Playable Layers in the avatar descriptor, and replaces the one on the avatar's Animator. " +
+                    "This controller isn't in that list, so " + N(layers.Count, "layer", "works", "work") + " in the editor but never in game: " + Join(layers, 6) + "." +
+                    (nothingElse ? " The descriptor has no custom playable layers, so none of this avatar's own animation is uploaded." : ""),
+                Fix = "In the avatar descriptor, tick Customize under Playable Layers and put this controller in the layer it belongs to (usually FX). " +
+                    "If it is only there for previewing in the editor, it's fine as it is.",
+                Identity = string.Join("\n", layers)
+            });
         }
 
         // Check 1: parameters a controller reads but does not declare. Unity then reads nothing it can rely on.
@@ -364,7 +435,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
 
         // "1 layer" / "3 layers", with a verb that agrees: N(1, "layer", "never does", "never do").
         internal static string N(int n, string noun, string one = null, string many = null) =>
-            n + " " + (n == 1 ? noun : noun.EndsWith("s") ? noun + "es" : noun + "s") + (one == null ? "" : " " + (n == 1 ? one : many));
+            n + " " + (n == 1 ? noun : noun.EndsWith("s") || noun.EndsWith("sh") || noun.EndsWith("ch") || noun.EndsWith("x") || noun.EndsWith("z") ? noun + "es" : noun + "s") + (one == null ? "" : " " + (n == 1 ? one : many));
 
         // A transform path shortened to its last three parts, for lists.
         internal static string Short(string path)

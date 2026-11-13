@@ -8,7 +8,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 {
     // Removes keyframes that change nothing about playback, in build-owned clips only:
     //  - a float key strictly inside a flat run: it, the kept key before it and the key after it hold the same value
-    //    with zero tangents (no weighted tangents), so the merged segment is the same constant;
+    //    with zero or stepped tangents (no weighted tangents; a stepped tangent holds the key's value until the next key,
+    //    which is the same value), so the merged segment is the same constant;
     //  - an object-reference key that repeats the previous kept key's object (keys hold until the next one).
     // The first and last keys always stay, so clip length, looping and normalized time are unchanged. Rotation
     // curves are skipped, because Unity rebuilds quaternions from their components at shared key times. After a
@@ -78,7 +79,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var key = keys[i];
                 var next = keys[i + 1];
                 bool flat = key.value == previous.value && key.value == next.value &&
-                    previous.outTangent == 0 && key.inTangent == 0 && key.outTangent == 0 && next.inTangent == 0 &&
+                    AnimatorLayerMerger.Flat(previous.outTangent) && AnimatorLayerMerger.Flat(key.inTangent) && AnimatorLayerMerger.Flat(key.outTangent) && AnimatorLayerMerger.Flat(next.inTangent) &&
                     previous.weightedMode == WeightedMode.None && key.weightedMode == WeightedMode.None && next.weightedMode == WeightedMode.None;
                 if (!flat) kept.Add(key);
             }

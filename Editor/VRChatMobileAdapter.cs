@@ -20,6 +20,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    Masks, _MainTex and _BumpMap read UV0; emission and detail maps read UV0 or UV1 by selector;
     //    _AudioLinkMask reads UV0-UV3 through two selectors with _MainTex's sampler; the outline pass
     //    reads _OutlineMask at raw UV0 in the vertex stage. _Ramp and _Matcap are lookups.
+    // Texture cropping (a rewritten _MainTex tiling/offset) is allowed only for the Main and MainBump entries: their sources
+    // read _MainTex_ST in TRANSFORM_TEX / the surface shader's uv_MainTex and use the result for nothing but tex2D lookups with
+    // implicit derivatives. Standard Lite passes a scalar ddx/ddy of the transformed UV to SAMPLE_TEXTURE2D_GRAD (one gradient
+    // for both axes), and Toon Standard reads _HueShiftMask with the gradients of the untransformed UV, so in both a crop
+    // that changes the texture's size or aspect would change the mip level read: they are never cropped.
     // Particle shaders only draw on particle systems, which are not scanned; world shaders are not listed.
     internal sealed class VRChatMobileAdapter : ITextureSamplingAdapter
     {
@@ -123,13 +128,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var stale = ShaderAdapterRegistry.StaleProperty(Id, material, property);
             if (stale != null) return stale;
             var (kind, _, _) = Audited[file];
-            if (property == "_MainTex") return UvPath(TextureSemantics.Color, 0, material, property);
+            if (property == "_MainTex") return UvPath(TextureSemantics.Color, 0, material, property, croppable: kind == Kind.Main || kind == Kind.MainBump);
             switch (kind)
             {
                 case Kind.Main:
                     break;
                 case Kind.MainBump:
-                    if (property == "_BumpMap") return UvPath(TextureSemantics.Normal, 0, material, "_MainTex");
+                    if (property == "_BumpMap") return UvPath(TextureSemantics.Normal, 0, material, "_MainTex", croppable: true);
                     break;
                 case Kind.StandardLite:
                     if (property == "_MetallicGlossMap" || property == "_OcclusionMap" || property == "_DetailMask")
@@ -256,8 +261,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static string SourceFailure(string file) => ShaderAdapterRegistry.PinnedSourceFailure(Folder + file, Audited[file].Item3,
             () => SourceHash(file), "This VRChat SDK's " + Path.GetFileNameWithoutExtension(file) + " shader differs from the audited SDK 3.10.5 source; original retained.");
 
-        private static SamplingDescription UvPath(TextureSemantics semantics, int uv, Material material, string stProperty) =>
-            ShaderAdapterRegistry.UvPath(Id, semantics, uv, material, stProperty);
+        // croppable: see the class comment; only the entries whose _ST use was audited as lookup-only pass true.
+        private static SamplingDescription UvPath(TextureSemantics semantics, int uv, Material material, string stProperty, bool croppable = false) =>
+            ShaderAdapterRegistry.UvPath(Id, semantics, uv, material, stProperty, croppable);
 
         private static SamplingDescription Supported(TextureSemantics semantics, SamplingPath path) => new SamplingDescription
         {

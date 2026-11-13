@@ -19,7 +19,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    bone's frame. Shaders only see the same distances when the bone's world scale is exactly 1 and cannot change
     //    (no scale animation or constraint above it). Shader effects that read absolute object-space positions must
     //    be off, so only audited lilToon 2.3.4 standard entries qualify, with Position dissolve, AudioLink position
-    //    UVs and position-based layer dissolve off.
+    //    UVs and position-based layer dissolve off, and without the Flat or SDF shadow mask types, which read the
+    //    object's own orientation.
     //  - Probes and sorting: light and reflection probes are sampled at the anchor, or else the bounds centre. With
     //    the renderer's bounds updated every frame the centre is the same mesh box either way; with fixed bounds an
     //    anchor object at the old centre (under the root bone) keeps the sample point, and transparent materials,
@@ -92,7 +93,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return true;
         }
 
-        // lilToon reads absolute object-space positions only for these features (lil_common_frag.hlsl, 2.3.4).
+        // lilToon reads absolute object-space positions only for these features (lil_common_frag.hlsl, 2.3.4), and the object's
+        // own axes (its orientation, through the object-to-world matrix) only for the Flat and SDF shadow mask types
+        // (lil_common_frag.hlsl 953-960 and 1053-1055 in 2.4.1, both inside if(_UseShadow)): the shading there follows which way
+        // the object itself faces, so drawing the same vertices from another object's frame (a merge host, a bone, a new root
+        // bone) changes it even when every vertex lands in the same place.
         // animated: for callers whose renderer may carry material curves, the values animation can write into a
         // material property ("_AudioLinkUVMode", or "_DissolveParams.x" for a vector's component), or null when no
         // curve binds it. A switch is then judged over everything between its stored value and those values (states
@@ -112,6 +117,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (Reaches("_DissolveParams.x", Vec("_DissolveParams").x, 3)) return false;
             if (Reaches("_Main2ndDissolveParams.x", Vec("_Main2ndDissolveParams").x, 3) ||
                 Reaches("_Main3rdDissolveParams.x", Vec("_Main3rdDissolveParams").x, 3)) return false;
+            // Shadow mask type 1 (Flat) or 2 (SDF) while shadows are on, or while an animation can make them so.
+            var shadow = Range("_UseShadow", Get("_UseShadow"));
+            var maskType = Range("_ShadowMaskType", Get("_ShadowMaskType"));
+            if ((shadow.Min != 0 || shadow.Max != 0) && maskType.Min <= 2 && maskType.Max >= 1) return false;
             var audioLink = Range("_UseAudioLink", Get("_UseAudioLink"));
             if ((audioLink.Min != 0 || audioLink.Max != 0) && Reaches("_AudioLinkUVMode", Get("_AudioLinkUVMode"), 5)) return false;
             return true;

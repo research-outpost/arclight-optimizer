@@ -128,6 +128,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         : "Preparation/generation time (this run)"
                 };
                 if (mapping != null) ApplyMapping(row, mapping);
+                // A kept readable source whose byte-identical Read/Write-off copy is what the avatar uploads.
+                if (state != null && group.Source && state.ReadableDropped.Contains(group.Source))
+                    row.Reason = ((row.Reason ?? "") + " Kept pixels, Read/Write dropped: a byte-identical build copy without the CPU copy is uploaded.").Trim();
 
                 if (mapping != null && result != null &&
                     (result.Outcome == TextureResultKind.Generated || result.Outcome == TextureResultKind.Reused))
@@ -327,10 +330,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (savings.Count == 0) { output.AppendLine("nothing measurable (no assets were replaced or merged)."); output.AppendLine(); return; }
             // Two kinds of figure that do not add up: compressed download estimates (textures, audio) and uncompressed mesh data.
             long download = savings.Where(s => s.Category != "Meshes").Sum(s => s.Bytes), mesh = savings.Where(s => s.Category == "Meshes").Sum(s => s.Bytes);
-            output.AppendLine((download > 0 || mesh == 0 ? "about " + Size(download) + " estimated download" : "") + (download > 0 && mesh > 0 ? ", and " : "") +
+            // Only structure counts (see AnimatorCategory): there is no byte figure to lead with.
+            if (download == 0 && mesh == 0 && savings.All(s => s.Category == AnimatorCategory)) output.AppendLine("no measurable bytes; the animator was simplified:");
+            else output.AppendLine((download > 0 || mesh == 0 ? "about " + Size(download) + " estimated download" : "") + (download > 0 && mesh > 0 ? ", and " : "") +
                 (mesh > 0 ? Size(mesh) + " of uncompressed mesh data" : "") + ".");
             foreach (var entry in savings)
             {
+                // Animator cleanup saves structure, not measurable bytes: it is listed as counts.
+                if (entry.Category == AnimatorCategory) { output.Append("  ").Append(entry.Category).Append(": ").AppendLine(entry.Detail.TrimEnd(',', ' ')); continue; }
                 output.Append("  ").Append(entry.Category).Append(": ").Append(Size(entry.Bytes)).Append(" (").Append(entry.Detail.TrimEnd(',', ' ')).Append(')');
                 if (entry.Unmeasured > 0) output.Append("; ").Append(Number(entry.Unmeasured)).Append(" item(s) could not be estimated");
                 output.AppendLine();
@@ -340,6 +347,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         internal static string Count(int count, string what) => count > 0 ? Number(count) + " " + what + ", " : "";
+
+        // The savings category for animator structure (layers, parameters, drivers, menu icons): counts with no byte figure.
+        internal const string AnimatorCategory = "Animator";
 
         private void AppendSavings(StringBuilder output)
         {

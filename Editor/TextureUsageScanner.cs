@@ -338,6 +338,34 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return signature;
         }
 
+        // For passes outside the scan (expression menu icons): whether two PNG files that differ in their bytes decode to the
+        // same image by the rules duplicate textures merge under: 8-bit, same size, same alpha kind and colour metadata, same
+        // pixels (the memoized signature first, then every pixel). The caller compares the import settings. False when either
+        // file cannot be read or decoded (fail closed: the icons stay separate).
+        internal static bool SameDecodedPng(string first, string second)
+        {
+            var candidates = new List<DuplicateCandidate>();
+            foreach (string path in new[] { first, second })
+            {
+                if (!path.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) return false;
+                long size = TryFileLength(path);
+                if (size < 0 || size > 128L * 1024 * 1024) return false;
+                try
+                {
+                    var header = PngPixels.InspectHeader(path);
+                    if (header.BitDepth == 16) return false;
+                    candidates.Add(new DuplicateCandidate { Path = path, Width = header.Width, Height = header.Height });
+                }
+                catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is InvalidOperationException ||
+                    error is OverflowException || error is ArgumentException) { return false; }
+            }
+            if (candidates[0].Width != candidates[1].Width || candidates[0].Height != candidates[1].Height) return false;
+            string a = PixelSignature(candidates[0], null), b = PixelSignature(candidates[1], null);
+            if (a == null || a != b) return false;
+            return TryDecode(candidates[0], out var pixels, out var info) && TryDecode(candidates[1], out var otherPixels, out var otherInfo) &&
+                info.Alpha == otherInfo.Alpha && SameColourMetadata(info, otherInfo) && pixels.SequenceEqual(otherPixels);
+        }
+
         private static bool TryDecode(DuplicateCandidate candidate, out Color32[] pixels, out PngInfo info)
         {
             try

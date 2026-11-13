@@ -67,8 +67,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Runs on committed controllers after the other optimizers (d4rkAvatarOptimizer rewrites clips and can
     // make different clips identical). The caller must pass only controllers generated for this build, never
     // source assets. VRChat proxy, legacy, humanoid/root-motion and additive-reference-pose clips are left
-    // alone. A controller with a synced layer merges too, except that the source layer's own states keep their
-    // motions (the override table is not rewritten). BlendTree children are rewritten only inside build-owned trees:
+    // alone. A controller with a synced layer merges too: the source layer's own states keep their motions, and each
+    // motion the synced layer's override table gives one of those states is deduplicated in the table itself (the entry
+    // stays on the same state, so only the clip object changes). BlendTree children are rewritten only inside build-owned trees:
     // an otherwise unmodified controller can still reference the creator's original .blendtree assets, and those are
     // never written to. Clips also held outside the controllers keep their own reference: that only forgoes a saving.
     internal static class AnimationClipDeduplicator
@@ -87,23 +88,37 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var states = new List<AnimatorState>();
             var trees = new List<BlendTree>();
             var syncedSourceStates = new HashSet<AnimatorState>();
+            // Override-table entries of synced layers: (controller, synced layer index, source state) with a motion set.
+            var overrides = new List<(AnimatorController Controller, int Layer, AnimatorState State)>();
+            var overrideMotions = new List<Motion>();
             foreach (var controller in usable)
             {
                 var layers = controller.layers;
-                foreach (var layer in layers)
+                for (int index = 0; index < layers.Length; index++)
                 {
+                    var layer = layers[index];
                     Collect(layer.stateMachine, states, trees, new HashSet<UnityEngine.Object>());
-                    // The source layer of a synced pair has its state motions overridden per state in the synced
-                    // layer's table, which this pass does not rewrite: those states keep their motions.
+                    // The source layer of a synced pair keeps its own state motions; the synced layer's per-state
+                    // overrides are collected here and rewritten in its table below.
                     if (layer.syncedLayerIndex >= 0 && layer.syncedLayerIndex < layers.Length)
                     {
                         var sourceStates = new List<AnimatorState>();
                         Collect(layers[layer.syncedLayerIndex].stateMachine, sourceStates, new List<BlendTree>(), new HashSet<UnityEngine.Object>());
                         syncedSourceStates.UnionWith(sourceStates);
+                        foreach (var state in sourceStates)
+                        {
+                            var overridden = layer.GetOverrideMotion(state);
+                            if (!overridden) continue;
+                            overrides.Add((controller, index, state));
+                            overrideMotions.Add(overridden);
+                            // Trees reached only through the table: their children merge like any other tree's (build-owned only).
+                            CollectTrees(overridden, trees, new HashSet<UnityEngine.Object>());
+                        }
                     }
                 }
             }
-            var clips = states.Select(state => state.motion).Concat(trees.SelectMany(tree => tree.children.Select(c => c.motion)))
+            trees = trees.Distinct().ToList();
+            var clips = states.Select(state => state.motion).Concat(overrideMotions).Concat(trees.SelectMany(tree => tree.children.Select(c => c.motion)))
                 .OfType<AnimationClip>().Distinct().ToArray();
 
             // Clips map to the first clip with an equal full signature. The hash only buckets.
@@ -132,6 +147,24 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (mapped == state.motion) continue;
                 if (state.motion is AnimationClip source) mergedClips.Add(source);
                 state.motion = mapped;
+            }
+            // Override entries: the same state keeps its entry, now naming the kept clip. Only build-owned controllers are
+            // written (the caller's contract; checked again here, since assigning layers rewrites the controller).
+            foreach (var group in overrides.GroupBy(o => o.Controller))
+            {
+                if (!isBuildOwned(group.Key)) continue;
+                var layers = group.Key.layers;
+                bool changed = false;
+                foreach (var entry in group)
+                {
+                    var current = layers[entry.Layer].GetOverrideMotion(entry.State);
+                    var mapped = Map(current);
+                    if (mapped == current) continue;
+                    if (current is AnimationClip source) mergedClips.Add(source);
+                    layers[entry.Layer].SetOverrideMotion(entry.State, mapped);
+                    changed = true;
+                }
+                if (changed) group.Key.layers = layers;
             }
             foreach (var tree in trees)
             {

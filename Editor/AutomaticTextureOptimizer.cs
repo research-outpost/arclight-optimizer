@@ -67,11 +67,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (TextureUsageScanner.RepairMipmapPadding)
                     log.Add(config, "Mipmap padding repair enabled for colour textures. Existing padding is rebuilt; larger replacement PNGs are allowed. Final download size and mip appearance require a build/visual comparison.");
                 selected = Prepare(scan, folder, state.Summary, log.Add, progress, state.Coverage ??= new UvCoverageCache());
+                // Kept readable sources get a byte-identical Read/Write-off build copy (see ReadableTextureCopies).
+                state.ReadableDrops = ReadableTextureCopies.Prepare(buildRoot, scan, selected, folder);
 
                 // Last cancellable checkpoint (a forced dialog poll); applying replacements cannot be cancelled.
                 progress?.Overall("Ready to apply replacements", .95f);
                 progress?.Overall("Applying replacements", .95f, false);
                 TemporaryMaterialSubstituter.Apply(buildRoot, state, register, selected, log.Add, animationContext, scan);
+                if (state.ReadableDropped.Count > 0)
+                    log.Add(null, "Kept pixels, Read/Write dropped: " + state.ReadableDropped.Count + " kept texture(s) with Read/Write on are uploaded as byte-identical build copies with it off, so the avatar holds no second copy of them in memory (" +
+                        string.Join(", ", state.ReadableDropped.Select(t => t.name).OrderBy(n => n, StringComparer.Ordinal).Take(10)) + (state.ReadableDropped.Count > 10 ? ", ..." : "") + ").");
                 log.Capture(scan, selected, state.Summary, state, optimizeTextures);
             }
             catch (OperationCanceledException)
@@ -120,6 +125,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 try
                 {
+                    PrewarmSourceEstimates(scan, folder);
                     int textureIndex = 0;
                     foreach (var group in scan.Groups)
                     {
@@ -341,6 +347,33 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             catch { UnityEngine.Object.DestroyImmediate(selected); throw; }
         }
+        // The sources this run will have to generate for (eligible, and with no cached mapping or verdict under their recipe)
+        // are measured in one bundle build before the loop, instead of one build each inside it. Best effort and read-only:
+        // it never creates or edits the cache, and a texture it leaves out or cannot measure is measured by the loop as before.
+        private static void PrewarmSourceEstimates(ScanResult scan, string folder)
+        {
+            try
+            {
+                if (!BundleSizeEstimator.CanEstimate || BundleSizeEstimator.MeasureOverride != null) return;
+                var cache = AssetDatabase.LoadAssetAtPath<TextureOptimizationManifest>(folder + "/" + CacheFileName);
+                if (cache && cache.cacheOwner != CacheOwner) return;
+                var paths = new System.Collections.Generic.List<string>();
+                foreach (var group in scan.Groups)
+                {
+                    if (group.Warning != null || !(group.Source is Texture2D) || !group.ActiveUses.Any()) continue;
+                    string id, recipe;
+                    try { recipe = FingerprintService.Recipe(group); id = FingerprintService.Id(group.Source); }
+                    catch (Exception e) when (e is InvalidOperationException || e is IOException || e is UnauthorizedAccessException) { continue; }
+                    if (cache && (cache.mappings.Any(m => m.sourceId == id && m.recipeHash == recipe) ||
+                        cache.unchangedTextures.Any(m => m.sourceId == id && m.recipeHash == recipe) ||
+                        TextureFileSizePolicy.Find(cache, id, recipe) != null)) continue;
+                    paths.Add(AssetDatabase.GetAssetPath(group.Source));
+                }
+                BundleSizeEstimator.MeasureBatch(paths);
+            }
+            catch (Exception e) when (!(e is OperationCanceledException)) { }
+        }
+
         // Day granularity keeps the cache asset from being rewritten on every build.
         private static void MarkUsed(TextureOptimizationManifest cache, ref int lastUsedDay)
         {
@@ -369,6 +402,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     cache.mappings = new System.Collections.Generic.List<GeneratedTextureMapping>();
                     cache.unchangedTextures = new System.Collections.Generic.List<UnchangedTextureAnalysis>();
                     cache.nonBeneficialTextures = new System.Collections.Generic.List<NonBeneficialTextureAnalysis>();
+                    cache.readableDrops = new System.Collections.Generic.List<ReadableDropCopy>();
                     cache.schemaVersion = 1;
                     EditorUtility.SetDirty(cache);
                 }

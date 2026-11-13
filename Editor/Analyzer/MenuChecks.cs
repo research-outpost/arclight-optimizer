@@ -107,6 +107,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     (different.Count > 8 ? "\n• and " + (different.Count - 8) + " more" : "") +
                     (avatar.Expressions.Any(e => e.Saved) ? "\nToggles set to Saved start from your last choice instead, so for those this only applies the first time." : ""),
                 Fix = "Decide which is right. To match the game, turn the object on or off in the scene. To match the scene, change the parameter's default in Expression Parameters.",
+                Data = new Fixes.StartStates { Objects = different.Select(s => (s.Key, s.Value.On)).ToList() },
                 Identity = string.Join("\n", different.Select(s => AnimationUtility.CalculateTransformPath(s.Key.transform, avatar.Root.transform) + " " + s.Value.On))
             });
         }

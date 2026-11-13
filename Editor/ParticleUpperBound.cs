@@ -12,7 +12,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // ever emits. Curve maxima are exact (cubic segments solved), including tangent overshoot.
     // Left alone: emission over distance (depends on movement), ring-buffer mode (particles outlive their lifetime),
     // lifetime by emitter speed, sub-emitter targets (other systems emit into them), weighted curve keys, and any
-    // system an animation changes.
+    // system an animation changes, unless every animated property belongs to a module that only moves, sizes, turns or
+    // colours particles already alive (LookOnlyModules): those cannot change how many are emitted or how long they live.
     internal static class ParticleUpperBound
     {
         // The longest step the simulation takes in one frame is Time.maximumDeltaTime (1/3 s by default); the margin
@@ -43,7 +44,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var renderer = system.GetComponent<ParticleSystemRenderer>();
                 // Renderer animation (typically material curves) no longer stands the pass down: it cannot change
                 // particle counts, so removal, maxParticles bounding and inert-module cleanup keep their safety argument.
-                if (subEmitterTargets.Contains(system) || analysis.IsAnimated(system) || Exclusions.Excluded(system)) continue;
+                if (subEmitterTargets.Contains(system) || analysis.IsAnimated(system, property => !LookOnly(property)) || Exclusions.Excluded(system)) continue;
                 long bound = Bound(system);
                 var main = system.main;
                 // A Stop Action (Disable, Destroy, Callback) still acts when the system ends, even with nothing emitted.
@@ -66,6 +67,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             return result;
         }
+
+        // Serialized ParticleSystem modules that never add, remove or re-time particles: they shape where a particle is born
+        // and how it moves, turns, scales and is tinted or lit. Everything this pass reads or changes lives elsewhere (the main
+        // "InitialModule" with lifetime and Max Particles, emission, lifetime by emitter speed, collision, triggers, which can
+        // kill particles, sub-emitters, trails, and the system's own duration, looping, speed and stop action), so a curve on
+        // any property outside this list still stands the pass down (fail closed, by name).
+        private static readonly string[] LookOnlyModules =
+        {
+            "ShapeModule.", "VelocityModule.", "InheritVelocityModule.", "ForceModule.", "ExternalForcesModule.", "ClampVelocityModule.", "NoiseModule.",
+            "SizeModule.", "SizeBySpeedModule.", "RotationModule.", "RotationBySpeedModule.", "ColorModule.", "ColorBySpeedModule.", "UVModule.",
+            "LightsModule.", "CustomDataModule."
+        };
+
+        internal static bool LookOnly(string property) =>
+            !string.IsNullOrEmpty(property) && LookOnlyModules.Any(module => property.StartsWith(module, StringComparison.Ordinal));
 
         internal static bool TrailsInert(ParticleSystem system)
         {

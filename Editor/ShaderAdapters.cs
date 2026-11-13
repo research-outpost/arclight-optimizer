@@ -38,6 +38,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Only a verified shader adapter may assert that an assigned property is never sampled.
         public bool NotSampled;
         public string Reason;
+        // Set only by an adapter that has audited an unsupported field's lookup: its coordinates never pass through any
+        // texture's _ST other than the field's own, nor through a value read at one (a matcap: view, normal and raw UV1).
+        // The field's texture is still kept as it is, but it does not stop the material's other textures from being
+        // cropped (TextureCropper), because rewriting their tiling/offset cannot move this lookup.
+        public bool ReadsNoOtherTransform;
         public TextureSemantics Semantics = TextureSemantics.Unknown;
         public TextureChannels Channels = TextureChannels.All;
         public List<SamplingPath> Paths;

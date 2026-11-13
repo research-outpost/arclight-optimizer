@@ -10,7 +10,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Bones and PhysBones that change nothing anyone can see.
     //  - Zero-weight bones: a skinned renderer's bone that no vertex weights above zero contributes nothing to any
     //    vertex, so it leaves the renderer's bone list (and its bind pose); zero weight entries are dropped and the
-    //    rest renumbered. Only for meshes no other component shares.
+    //    rest renumbered. A mesh several skinned renderers share is pruned once and every one of them takes the same
+    //    copy (which bones are weighted is a fact of the mesh alone, so each drops the same slots of its own bone
+    //    list); never when anything but skinned renderers refers to the mesh.
     //  - Neither step runs with d4rk Avatar Optimizer, whose merge runs after Arclight: a pruned bone list or a removed
     //    PhysBone changes which bones it merges and so its rounding (measured on Chocofuyu Medium: up to 102/255 on a few
     //    silhouette pixels). d4rk removes unweighted bones itself.
@@ -40,10 +42,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var group in users)
             {
                 var mesh = group.Key;
-                if (group.Count() != 1 || !mesh.isReadable || swaps.Contains(mesh) || analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer))) continue;
-                var renderer = group.First();
-                if (analysis.IsAnimated(renderer, p => p == "m_Mesh") || renderer.GetComponent<Cloth>()) continue;
-                int removed = Prune(renderer, register);
+                if (!mesh.isReadable || swaps.Contains(mesh) || analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer))) continue;
+                var sharing = group.ToList();
+                if (sharing.Any(renderer => analysis.IsAnimated(renderer, p => p == "m_Mesh") || renderer.GetComponent<Cloth>())) continue;
+                int removed = Prune(sharing, register);
                 result.Bones += removed;
             }
             if (result.Bones > 0) analysis.RescanReferences();
@@ -114,12 +116,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Removes bones no vertex weights above zero; returns how many.
-        internal static int Prune(SkinnedMeshRenderer renderer, Action<Object, Object> register)
+        internal static int Prune(SkinnedMeshRenderer renderer, Action<Object, Object> register) => Prune(new[] { renderer }, register);
+
+        // The same for every skinned renderer sharing one mesh (all of its users): one pruned copy, and each renderer drops
+        // the same slots from its own bone list. Nothing changes unless every renderer's bone list matches the bind poses.
+        internal static int Prune(IReadOnlyList<SkinnedMeshRenderer> renderers, Action<Object, Object> register)
         {
-            var mesh = renderer.sharedMesh;
-            var bones = renderer.bones;
+            if (renderers.Count == 0) return 0;
+            var mesh = renderers[0].sharedMesh;
             var bindposes = mesh.bindposes;
-            if (bones.Length == 0 || bindposes.Length != bones.Length) return 0;
+            if (renderers.Any(r => r.sharedMesh != mesh || r.bones.Length == 0 || r.bones.Length != bindposes.Length)) return 0;
+            var bones = renderers[0].bones;
             var perVertex = mesh.GetBonesPerVertex().ToArray();
             var weights = mesh.GetAllBoneWeights().ToArray();
             var used = new bool[bones.Length];
@@ -149,11 +156,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             copy.bindposes = Enumerable.Range(0, bones.Length).Where(i => used[i]).Select(i => bindposes[i]).ToArray();
             copy.bounds = mesh.bounds;
             register(mesh, copy);
-            SkinnedMeshMerger.Rebind(renderer, () =>
+            foreach (var renderer in renderers)
             {
-                renderer.bones = Enumerable.Range(0, bones.Length).Where(i => used[i]).Select(i => bones[i]).ToArray();
-                renderer.sharedMesh = copy;
-            });
+                var own = renderer.bones;
+                SkinnedMeshMerger.Rebind(renderer, () =>
+                {
+                    renderer.bones = Enumerable.Range(0, own.Length).Where(i => used[i]).Select(i => own[i]).ToArray();
+                    renderer.sharedMesh = copy;
+                });
+            }
             return used.Count(u => !u);
         }
 

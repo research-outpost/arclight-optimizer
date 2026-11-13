@@ -12,7 +12,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // through one replacement map. A reference this does not rewrite (an animation curve, an animator behaviour)
     // keeps its own identical original, so the avatar never looks or sounds different; it only saves less.
     //  - Duplicate meshes: identical vertex and index buffers, vertex layout, submeshes, bounds, bind poses,
-    //    bone weights and blend shapes. The first mesh found keeps every use.
+    //    bone weights and blend shapes. The first mesh found keeps every use. A mesh with Read/Write off (the norm on
+    //    VRChat avatars) cannot be compared that way, so it merges only with the same sub-asset of a byte-identical
+    //    source file with identical import settings (see MeshFileSignature), like duplicate audio.
     //  - Duplicate audio clips: byte-identical source files with identical import settings (the .meta file
     //    without its GUID, user data and asset-bundle lines), which import to identical audio.
     //  - Index compaction: a mesh whose 32-bit indices all fit in 16 bits is replaced by a copy with a 16-bit
@@ -51,6 +53,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // Signatures read vertex data: a non-readable mesh's reads come back empty, which would let two
                 // different-shaped meshes signature-merge as identical.
                 result.Meshes = MergeIdentical(references.OfType<Mesh>().Where(m => m.isReadable), MeshSignature, replace, MeshShape);
+                // Read/Write-off meshes: by source file identity, never by reading a vertex stream. Kept apart from the
+                // readable set, so a readable mesh and a non-readable one never replace each other.
+                var fileHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+                result.Meshes += MergeIdentical(references.OfType<Mesh>().Where(m => !m.isReadable), m => MeshFileSignature(m, fileHashes), replace, MeshFileShape);
                 BuildTimings.Step("Duplicate audio");
                 result.AudioClips = MergeIdentical(references.OfType<AudioClip>(), AudioSignature, replace, AudioShape);
                 foreach (var dropped in replace.Keys)
@@ -271,6 +277,57 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         foreach (var set in deltas) foreach (var v in set) { writer.Write(v.x); writer.Write(v.y); writer.Write(v.z); }
                     }
                 }
+                writer.Flush();
+                return stream.ToArray();
+            }
+        }
+
+        // For a mesh with Read/Write off: the source file's length, its import settings and the mesh's identity inside the
+        // file. Null (compared in full, which then returns no signature) for meshes that are not imported files.
+        internal static string MeshFileShape(Mesh mesh)
+        {
+            string path = AssetDatabase.GetAssetPath(mesh);
+            if (string.IsNullOrEmpty(path) || !AssetDatabase.TryGetGUIDAndLocalFileIdentifier(mesh, out string guid, out long localId) || string.IsNullOrEmpty(guid)) return null;
+            return new FileInfo(LongPath.For(path)).Length + "|" + localId + "|" + FingerprintService.Hash(System.Text.Encoding.UTF8.GetBytes(AudioSettingsLines(path)));
+        }
+
+        // A byte-identical model (or mesh asset) file with identical import settings (the .meta without its GUID, user data and
+        // asset-bundle lines) imports to identical meshes, and the same local file ID names the same mesh in each copy. So two
+        // Read/Write-off meshes that agree on all three are the same mesh, proven without reading a vertex (their getters come
+        // back empty). The counts, layout, bounds, bind poses and blend shape names Unity keeps for every mesh are compared
+        // too. Null (never merged) for generated and scene meshes, built-in meshes and anything that is not a model or mesh
+        // asset file; fileHashes holds each file's hash for the run.
+        internal static byte[] MeshFileSignature(Mesh mesh, Dictionary<string, string> fileHashes = null)
+        {
+            string path = AssetDatabase.GetAssetPath(mesh);
+            if (mesh.isReadable || string.IsNullOrEmpty(path) || !File.Exists(LongPath.For(path)) || !File.Exists(LongPath.For(path + ".meta"))) return null;
+            if (!(AssetImporter.GetAtPath(path) is ModelImporter) && !path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase) &&
+                !path.EndsWith(".mesh", StringComparison.OrdinalIgnoreCase)) return null;
+            if (!AssetDatabase.TryGetGUIDAndLocalFileIdentifier(mesh, out string guid, out long localId) || string.IsNullOrEmpty(guid)) return null;
+            string hash = null;
+            if (fileHashes == null || !fileHashes.TryGetValue(path, out hash))
+            {
+                hash = FingerprintService.FileHash(path);
+                if (fileHashes != null) fileHashes[path] = hash;
+            }
+            using (var stream = new MemoryStream())
+            using (var writer = new BinaryWriter(stream))
+            {
+                writer.Write("file-v1"); writer.Write(localId); writer.Write(hash); writer.Write(AudioSettingsLines(path));
+                writer.Write(mesh.name); writer.Write(MeshShape(mesh));
+                for (int i = 0; i < mesh.subMeshCount; i++)
+                {
+                    var d = mesh.GetSubMesh(i);
+                    writer.Write((int)d.topology); writer.Write(d.indexStart); writer.Write(d.indexCount); writer.Write(d.baseVertex);
+                    writer.Write(d.firstVertex); writer.Write(d.vertexCount); Write(writer, d.bounds);
+                }
+                Write(writer, mesh.bounds);
+                var bindposes = mesh.bindposes;
+                writer.Write(bindposes.Length);
+                foreach (var pose in bindposes) for (int k = 0; k < 16; k++) writer.Write(pose[k]);
+                for (int shape = 0; shape < mesh.blendShapeCount; shape++) writer.Write(mesh.GetBlendShapeName(shape));
+                using (var serialized = new SerializedObject(mesh))
+                    for (int channel = 0; channel < 2; channel++) writer.Write(serialized.FindProperty("m_MeshMetrics[" + channel + "]")?.floatValue ?? -1);
                 writer.Flush();
                 return stream.ToArray();
             }

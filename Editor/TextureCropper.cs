@@ -19,10 +19,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //  - Every lookup of every texture involved goes through an adapter-audited tiling/offset ("basis") that the shader
     //    reads for nothing but texture lookups (lilToon, Standard, Unlit/Texture), unanimated, with UVs inside the crop
     //    (no wrapping); every texture read through a rewritten basis is cropped the same way, and no lookup also reads
-    //    another rewritten basis.
-    //  - PNG power-of-two sources with box-filtered mipmaps and without crunch, coverage-preserving or border mipmaps,
+    //    another rewritten basis. The one exception keeps its texture uncropped: a field whose adapter has audited that
+    //    its lookup passes through no other texture's tiling/offset (SamplingDescription.ReadsNoOtherTransform).
+    //  - Power-of-two sources with box-filtered mipmaps and without crunch, coverage-preserving or border mipmaps,
     //    height-to-normal conversion or alpha-is-transparency dilation, all of which read beyond the crop; the crop's import
-    //    gets a max size that keeps the original's import scale, and is checked after import.
+    //    gets a max size that keeps the original's import scale, and is checked after import. A source other than PNG (PSD,
+    //    TGA, TIFF, BMP, JPEG; never a normal map) is read as the pixels Unity flattens it to (SourceImages.Flatten, as
+    //    texture generation does) and its crop is a PNG with the source's import settings, held to the same GPU check.
     // Textures and materials linked through shared textures or bases are decided together. Materials an animation swaps
     // in keep their original textures. Generated crops are cached by source content and crop.
     internal static class TextureCropper
@@ -92,7 +95,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var texture = material.GetTexture(property);
                     if (!texture) continue;
                     if (!groups.TryGetValue(texture, out var group)) { bad.Add(bases.First(b => b.Item1 == material)); continue; }
-                    if (group.ActiveUses.Any()) Union(texture, bases.First(b => b.Item1 == material)); // Never-sampled textures stay as they are.
+                    if (!group.ActiveUses.Any()) continue; // Never-sampled textures stay as they are.
+                    // A texture this material reads only through an audited lookup that no rewritten tiling/offset can move
+                    // (lilToon matcaps) stays as it is without holding back the material's other textures.
+                    var here = group.Uses.Where(u => u.Material == material && !u.Sampling.NotSampled).ToList();
+                    if (here.Count > 0 && here.All(u => u.Sampling.ReadsNoOtherTransform && !u.Sampling.Supported)) continue;
+                    Union(texture, bases.First(b => b.Item1 == material));
                 }
             // Coverage only knows mesh and skinned mesh renderers: a particle or line renderer's UVs are invisible
             // to the rasterizer, so its materials are never cropped. Meshes need no Read/Write check here — the
@@ -200,17 +208,37 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (android && (!ProbedAstcBlocks.Contains((int)UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockWidth(texture.graphicsFormat)) ||
                         UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockWidth(texture.graphicsFormat) != UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockHeight(texture.graphicsFormat))) continue;
                 string path = AssetDatabase.GetAssetPath(texture);
-                if (!SourceImages.IsPng(path) || !(AssetImporter.GetAtPath(path) is TextureImporter importer)) continue;
+                if (!SourceImages.IsSupported(path) || !(AssetImporter.GetAtPath(path) is TextureImporter importer)) continue;
+                // A source Unity flattens (PSD, TGA...) is read as its flattened pixels; normal maps must be authored PNGs.
+                bool flattened = !SourceImages.IsPng(path);
+                if (flattened && importer.textureType != TextureImporterType.Default) continue;
                 // Each of these makes mip levels differ from a plain average, or reads something other than the pixels.
                 if (importer.mipMapsPreserveCoverage || importer.borderMipmap || importer.fadeout || importer.crunchedCompression ||
                     importer.convertToNormalmap || importer.alphaIsTransparency || importer.mipmapFilter != TextureImporterMipFilter.BoxFilter) continue;
                 if (new[] { "Standalone", "Android" }.Select(importer.GetPlatformTextureSettings).Any(s => s.overridden && s.crunchedCompression)) continue;
-                var header = PngPixels.InspectHeader(path);
-                if (header.BitDepth > 8 || header.Width * header.Height <= 16) continue;
                 var bytes = File.ReadAllBytes(LongPath.For(path));
-                string hash = NotUniform.Key(bytes);
-                if (NotUniform.Known(hash)) continue; // Decoded before with this decoder: more than one colour.
-                var pixels = PngPixels.Decode(bytes, out var info);
+                string hash;
+                Color32[] pixels;
+                PngInfo info;
+                if (flattened)
+                {
+                    SourceImages.Size(importer, out int flatWidth, out int flatHeight);
+                    if (flatWidth * flatHeight <= 16) continue;
+                    // What Unity flattens depends on the importer too (matte removal, alpha source), so the memo covers the .meta.
+                    hash = NotUniform.Key(bytes.Concat(File.ReadAllBytes(LongPath.For(path + ".meta"))).ToArray(), "flat-v1:");
+                    if (NotUniform.Known(hash)) continue;
+                    try { pixels = SourceImages.Flatten(path, folder, out info); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception) { continue; } // Cannot be flattened here: kept as it is.
+                }
+                else
+                {
+                    var header = PngPixels.InspectHeader(path);
+                    if (header.BitDepth > 8 || header.Width * header.Height <= 16) continue;
+                    hash = NotUniform.Key(bytes);
+                    if (NotUniform.Known(hash)) continue; // Decoded before with this decoder: more than one colour.
+                    pixels = PngPixels.Decode(bytes, out info);
+                }
                 if (pixels.Any(p => !p.Equals(pixels[0]))) { NotUniform.Add(hash); continue; }
                 try { collapsed[texture] = GenerateUniform(texture, bytes, pixels[0], info, folder); }
                 catch (OperationCanceledException) { throw; } // Cancel is not a reason to keep one more texture.
@@ -403,12 +431,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var texture in textures)
             {
                 string path = AssetDatabase.GetAssetPath(texture);
-                if (!SourceImages.IsPng(path) || !(AssetImporter.GetAtPath(path) is TextureImporter importer)) return null;
+                if (!SourceImages.IsSupported(path) || !(AssetImporter.GetAtPath(path) is TextureImporter importer)) return null;
+                // A source Unity flattens (PSD, TGA...) is cropped from its flattened pixels; normal maps must be authored PNGs.
+                bool flattened = !SourceImages.IsPng(path);
+                if (flattened && importer.textureType != TextureImporterType.Default) return null;
                 // Each step here reads texels beyond the crop's edge (wider mip kernels, height-to-normal, alpha dilation).
                 if (importer.mipMapsPreserveCoverage || importer.borderMipmap || importer.crunchedCompression || importer.mipmapFilter != TextureImporterMipFilter.BoxFilter ||
                     importer.convertToNormalmap || importer.alphaIsTransparency) return null;
                 if (new[] { "Standalone", "Android" }.Select(importer.GetPlatformTextureSettings).Any(s => s.overridden && s.crunchedCompression)) return null;
-                var info = PngPixels.InspectHeader(path);
+                PngInfo info;
+                if (flattened)
+                {
+                    SourceImages.Size(importer, out int flatWidth, out int flatHeight);
+                    info = new PngInfo { Width = flatWidth, Height = flatHeight, BitDepth = 8 };
+                }
+                else info = PngPixels.InspectHeader(path);
                 if (info.BitDepth > 8) return null; // 16-bit sources are only proven equal once rounded for whole images (see PngPixels.RoundedImportMatches).
                 if (!Mathf.IsPowerOfTwo(info.Width) || !Mathf.IsPowerOfTwo(info.Height) || !Mathf.IsPowerOfTwo(texture.width) || !Mathf.IsPowerOfTwo(texture.height)) return null;
                 // Crops keep 4 x 4 compression blocks whole. ASTC's other block sizes (5 to 12 texels, on Android) do not divide
@@ -452,6 +489,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 File.ReadAllText(LongPath.For(sourcePath + ".meta")) + "|" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + "|crop-v2")).ToArray());
             string userData = "ArclightCrop:" + recipe;
             int importedW = texture.width >> crop.Kx, importedH = texture.height >> crop.Ky;
+            string cacheFolder = folder; // Flattening's temporary copy lives here, where the cache cleanup knows its name.
             folder += "/Crops";
             AutomaticTextureOptimizer.EnsureFolder(folder);
             string outPath = GenerationCoordinator.OutputPath(folder, texture.name, recipe);
@@ -460,12 +498,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // A cached crop passes the same import and GPU checks as a new one (it may have been edited, or imported for
                 // another platform); otherwise it is made again.
                 var cached = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
-                if (cached && SameImport(cached, texture, importedW, importedH) && SameRegion(texture, cached, crop)) { TextureSafety.DropReadable(cachedImporter); AudioMonoConverter.MarkUsed(outPath); return cached; } // Copies made before 1.1.13 lose Read/Write.
+                // The GPU comparison (a blit and readback of every kept level) is remembered for the session once it passes:
+                // the key pins the source bytes, its importer and the crop (the recipe), the cached file and its importer as
+                // they are now, and the build target, so an edited or re-imported crop is compared again. The cheap import
+                // check still runs on every hit. A failed comparison is never remembered.
+                string verifiedKey = "Arclight.Optimizer.CropVerified." + FingerprintService.Version + "." + EditorUserBuildSettings.activeBuildTarget + "." + recipe + "." +
+                    FingerprintService.FileHash(outPath) + "." + FingerprintService.FileHash(outPath + ".meta");
+                if (cached && SameImport(cached, texture, importedW, importedH) && (SessionState.GetBool(verifiedKey, false) || SameRegion(texture, cached, crop)))
+                {
+                    // Copies made before 1.1.13 lose Read/Write; that rewrites the .meta, so the memo is set under the key read above
+                    // only when the .meta is unchanged.
+                    if (!TextureSafety.DropReadable(cachedImporter)) SessionState.SetBool(verifiedKey, true);
+                    AudioMonoConverter.MarkUsed(outPath);
+                    return cached;
+                }
                 AssetDatabase.DeleteAsset(outPath);
             }
             if (File.Exists(outPath) || File.Exists(outPath + ".meta")) outPath = AssetDatabase.GenerateUniqueAssetPath(outPath);
 
-            var pixels = PngPixels.Decode(bytes, out var info);
+            PngInfo info;
+            var pixels = SourceImages.IsPng(sourcePath) ? PngPixels.Decode(bytes, out info) : SourceImages.Flatten(sourcePath, cacheFolder, out info);
             int w = info.Width >> crop.Kx, h = info.Height >> crop.Ky, ox = crop.Jx * w, oy = crop.Jy * h;
             var cut = new Color32[w * h];
             for (int y = 0; y < h; y++) Array.Copy(pixels, (oy + y) * info.Width + ox, cut, y * w, w);
@@ -517,10 +569,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private const string FileName = "Library/AvatarTextureOptimizer/not-uniform.txt";
         private static HashSet<string> known;
 
-        internal static string Key(byte[] bytes)
+        // png-v1: Arclight's PngPixels decoder. Other prefixes name other readers (flat-v1: Unity's flattening of a PSD, TGA...).
+        internal static string Key(byte[] bytes, string reader = "png-v1:")
         {
             using (var sha = System.Security.Cryptography.SHA256.Create())
-                return "png-v1:" + BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", ""); // png-v1: Arclight's PngPixels decoder.
+                return reader + BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "");
         }
 
         internal static bool Known(string key) => Load().Contains(key);

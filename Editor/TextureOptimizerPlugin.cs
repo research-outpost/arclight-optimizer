@@ -51,6 +51,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static void Prepare(BuildContext ctx)
         {
             BuildTimings.Current = null; // Never carry another avatar's timings.
+            AnalyzerBuildNotes.Reset();
             GenerationCoordinator.ImporterFallbacks = 0; // Diagnostics are per build, not per editor session.
             var config = ctx.AvatarRootObject.GetComponent<AvatarTextureOptimizer>();
             if (!config) return;
@@ -77,6 +78,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             state.VrcfuryPending = config.enabled && !vrcfuryBuilt && CarriesVrcfuryComponents(ctx.AvatarRootObject);
             if (state.VrcfuryPending)
             {
+                AnalyzerBuildNotes.VrcfuryStoodDown = true;
                 const string pending = "VRCFury did not build this avatar before Arclight ran, so its animation was incomplete: only exact mesh and audio de-duplication ran.";
                 BuildWarnings.Report(ctx.AvatarRootObject, "VRCFury had not built this avatar", pending,
                     "Build or upload with VRCFury enabled. A manual bake causes this, and so would a VRCFury update that changes how it marks a built avatar.");
@@ -335,10 +337,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     int icons = vrcfuryPending ? 0 : MenuIconMerger.Run(ctx.AvatarRootObject);
                     if (icons > 0)
                     {
-                        string summary = "Pointed the expressions menu at one copy of " + icons + " duplicate icon file(s) (identical bytes and import settings).";
+                        string summary = "Pointed the expressions menu at one copy of " + icons + " duplicate icon file(s) (identical image and import settings).";
                         Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, summary);
                     }
+                    // What the animator passes did, as counts next to the measured savings (each also has its own line below).
+                    state.Report?.AddSavings(OptimizationLog.AnimatorCategory, 0,
+                        OptimizationLog.Count(layerMerge.Merged, "layer(s) folded") + OptimizationLog.Count(layerMerge.Inert, "inert layer(s) removed or emptied") +
+                        OptimizationLog.Count(unusedParameters.Animator, "unread parameter(s) removed") + OptimizationLog.Count(deadDrivers, "dead driver write(s) removed") +
+                        OptimizationLog.Count(physics.Parameters, "PhysBone parameter(s) cleared") + OptimizationLog.Count(icons, "duplicate menu icon(s) merged"));
                     BuildTimings.Step("StaleTextureCleaner");
                     var stale = StaleTextureCleaner.Run(analysis, ReplacementRegistry.Register, AnimationRewriter.For(ctx));
                     if (stale.Materials > 0)
@@ -360,6 +367,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     : new SkinnedMeshMerger.Result();
                 if (mergedSkinned.Merged > 0) analysis = AvatarAnalysis.Build(ctx); // Renderers and their animation moved.
                 WhyNotLine(state, "skinned mesh(es) not merged", mergedSkinned.WhyNot);
+                AnalyzerBuildNotes.SkinnedWhyNot = mergedSkinned.WhyNot;
                 foreach (string hint in mergedSkinned.Hints) state.Report?.Add(null, "You could: " + hint);
                 // Unlocked Poiyomi: Arclight reads the full, unspecialized shader, which keeps data the locked one would not need.
                 var poiyomi = new PoiyomiAdapter();
@@ -711,6 +719,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
     }
 
+    // What the latest build said that the Arclight Analyzer shows as advice: whether Arclight stood down because VRCFury had
+    // not built the avatar, and why skinned meshes stayed apart. Written by the build passes, reset when a build starts and
+    // before the Analyzer's hidden build, and read by the Analyzer right after that build; it changes nothing in a build.
+    internal static class AnalyzerBuildNotes
+    {
+        internal static bool VrcfuryStoodDown;
+        internal static Dictionary<string, List<string>> SkinnedWhyNot;
+        internal static void Reset() { VrcfuryStoodDown = false; SkinnedWhyNot = null; }
+    }
+
     internal sealed class SubstitutionState
     {
         public readonly Dictionary<Material, Material> Clones = new Dictionary<Material, Material>();
@@ -731,6 +749,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal HashSet<Mesh> SourceMeshes;
         public int AppliedTextures;
         public readonly HashSet<Texture> MergedDuplicates = new HashSet<Texture>();
+        // Kept readable sources and their Read/Write-off copies (ReadableTextureCopies); ReadableDropped holds those applied.
+        internal Dictionary<Texture, Texture> ReadableDrops;
+        internal readonly HashSet<Texture> ReadableDropped = new HashSet<Texture>();
         internal AnimationSnapshot SerializedAnimation;
         // The UV raster cache from the texture pass, reused by the later crop pass (content-keyed and LRU-bounded).
         internal UvCoverageCache Coverage;
@@ -863,6 +884,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
                 // Copies use the texture they duplicate, or its optimized replacement.
                 int optimized = replacements.Count;
+                // A kept readable source uses its Read/Write-off copy: the same texture, so it counts as kept, not optimized.
+                var readableDropped = new List<Texture>();
+                if (state.ReadableDrops != null)
+                    foreach (var group in scan.Groups)
+                        if (!replacements.ContainsKey(group.Source) && state.ReadableDrops.TryGetValue(group.Source, out var copy) && copy)
+                        {
+                            replacements.Add(group.Source, copy);
+                            readableDropped.Add(group.Source);
+                        }
                 foreach (var pair in scan.Duplicates)
                 {
                     if (IsUnsafeStandaloneSwap(scan.Groups.First(g => g.Source == pair.Value), scan.Animation))
@@ -934,6 +964,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     foreach (var edit in curveEdits) edit.Clip.SetObjectCurve(edit.Binding, edit.Replacement);
                     foreach (var assignment in assignments) assignment.Renderer.sharedMaterials = assignment.Replacement;
                     state.AppliedTextures = optimized;
+                    state.ReadableDropped.UnionWith(readableDropped);
                     state.MergedDuplicates.UnionWith(replacements.Keys.Where(scan.Duplicates.ContainsKey));
                 }
                 catch

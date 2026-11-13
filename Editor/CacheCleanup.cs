@@ -76,6 +76,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (IsStale(plan, mapping.lastUsedDay)) plan.StaleEntries++;
                     else if (mapping.replacement) kept.Add(AssetDatabase.GetAssetPath(mapping.replacement));
                 }
+                // Read/Write-off copies have a file on disk, so they age on the file clock like generated mappings.
+                foreach (var drop in cache.readableDrops ?? new List<ReadableDropCopy>())
+                {
+                    if (IsStale(plan, drop.lastUsedDay)) plan.StaleEntries++;
+                    else if (drop.copy) kept.Add(AssetDatabase.GetAssetPath(drop.copy));
+                }
                 plan.StaleEntries += cache.unchangedTextures.Count(e => IsAnalysisStale(plan, e.lastUsedDay)) +
                     (cache.nonBeneficialTextures?.Count(e => IsAnalysisStale(plan, e.lastUsedDay)) ?? 0);
             }
@@ -92,7 +98,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     plan.StagingFiles.Add(file);
                     plan.Bytes += new FileInfo(file).Length;
                 }
-                else if (file.EndsWith(".png", StringComparison.OrdinalIgnoreCase) && !kept.Contains(file) && IsGeneratedOutput(file))
+                // Generated outputs are PNGs; a Read/Write-off copy keeps its source's file type (ReadableTextureCopies).
+                else if ((file.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || SourceImages.IsFlattened(file)) && !kept.Contains(file) && IsGeneratedOutput(file))
                 {
                     plan.Assets.Add(file);
                     plan.Bytes += new FileInfo(file).Length;
@@ -151,6 +158,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (cache)
             {
                 cache.mappings.RemoveAll(m => IsStale(plan, m.lastUsedDay) && !SurvivedDeletion(m.replacement, failed));
+                cache.readableDrops?.RemoveAll(d => IsStale(plan, d.lastUsedDay) && !SurvivedDeletion(d.copy, failed));
                 cache.unchangedTextures.RemoveAll(e => IsAnalysisStale(plan, e.lastUsedDay));
                 cache.nonBeneficialTextures?.RemoveAll(e => IsAnalysisStale(plan, e.lastUsedDay));
                 EditorUtility.SetDirty(cache);

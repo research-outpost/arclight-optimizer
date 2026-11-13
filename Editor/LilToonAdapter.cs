@@ -202,7 +202,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (field.Coordinates == Coordinates.Alias)
                 return new SamplingDescription { AdapterId = compatibilityId, Supported = true, NotSampled = true,
                     Reason = inference + "Compatibility alias; treated as unused by the standard lilToon 2.x Built-in sampling model." };
-            if (field.Coordinates == Coordinates.Unsupported) return Unsupported(field.Reason);
+            if (field.Coordinates == Coordinates.Unsupported)
+            {
+                var unsupported = Unsupported(field.Reason);
+                // Audited in the 2.4.1 sources: both matcap images are read only at lilCalcMatCapUV(uv1, N, V, headV, own _ST, ...)
+                // (lil_common_functions.hlsl 550-565; lil_common_frag.hlsl 1537-1542, 1605-1610; Lite computes the same value per
+                // vertex, lil_common_vert.hlsl 206, read at 1571). N can come from a matcap normal map read at fd.uvMain, which
+                // returns the same texel after a crop, so no mesh-UV tiling/offset reaches the matcap lookup.
+                unsupported.ReadsNoOtherTransform = property == "_MatCapTex" || property == "_MatCap2ndTex";
+                return unsupported;
+            }
             // lil_common_frag.hlsl 1073-1085: LUT mode samples the shadow colour textures by surface colour.
             if (property.StartsWith("_Shadow", StringComparison.Ordinal) && property.EndsWith("ColorTex", StringComparison.Ordinal) &&
                 Enabled(material, "_ShadowColorType"))
@@ -221,7 +230,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // UV picked by their own UV mode (fd.uv0-fd.uv3 with their own transform: _Bump2ndMap 586-592, _Main2ndTex 742-746, ...)
             // never see it.
             bool rawUv = field.Coordinates == Coordinates.SelectedRawOwn || field.Coordinates == Coordinates.SelectedRawFixed;
-            if (!rawUv && Enabled(material, "_ShiftBackfaceUV")) return Unsupported("Backface UV shifting requires an additional sampling model; retained.");
+            // Backface shifting is modeled below as a second path for every lookup that goes through the main transform.
+            bool shiftBackface = !rawUv && Enabled(material, "_ShiftBackfaceUV");
             // FakeShadow has no scroll/rotate properties.
             if (!rawUv && material.HasProperty("_MainTex_ScrollRotate") && NonZero(MaterialInputs.Vector(material, "_MainTex_ScrollRotate")))
                 return Unsupported("Main UV scrolling/rotation is outside this static lilToon subset.");
@@ -361,6 +371,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (source != mainSampler) AddComposed(result, material, "_OutlineTex", own, extra, source, "Outline legacy sampler fallback");
                 }
             }
+            // Backface UV shift (lil_common_functions.hlsl 467-470, applied in lil_common_frag.hlsl 256-268 before the main
+            // transform): back faces read fd.uvMain = (uv0 + (1, 0)) * _MainTex_ST.xy + _MainTex_ST.zw, so every lookup made
+            // through the main transform also exists one main tile to the right: its offset plus its own x scale (the main x
+            // scale times any further x tiling). Paths that never pass through _MainTex_ST (raw UVs, the outline transform,
+            // whose passes do not shift) are unaffected; the vertex-stage and fur lookups do not shift either, and get the
+            // extra path anyway, which only protects more texels.
+            if (shiftBackface)
+                foreach (var p in result.Paths.Where(q => q.Dependencies != null && q.Dependencies.Contains("_MainTex")).ToList())
+                    result.Paths.Add(new SamplingPath { UvChannel = p.UvChannel, Scale = p.Scale, Offset = p.Offset + new Vector2(p.Scale.x, 0),
+                        SamplerTexture = p.SamplerTexture, FixedRepeat = p.FixedRepeat, Label = p.Label + " / backface shift",
+                        Basis = p.Basis, Dependencies = p.Dependencies });
             // With no main texture, lilToon's main sampler is the default texture's, which repeats (as the other adapters
             // assume). Paths that would read through it keep the source's own wrap mode too, so coverage is the union.
             if (!mainSampler)

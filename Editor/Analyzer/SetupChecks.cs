@@ -173,7 +173,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             var audio = new List<string>();
             var adds = new List<string>();
             var baseLayer = new List<string>();
-            Playable first = null, firstAdd = null, firstBase = null;
+            var silent = new List<string>();
+            Playable first = null, firstAdd = null, firstBase = null, firstSilent = null;
             string EnumName(SerializedProperty p) => p != null && p.propertyType == SerializedPropertyType.Enum && p.enumValueIndex >= 0 ? p.enumNames[p.enumValueIndex] : "";
             foreach (var playable in avatar.Playables)
             {
@@ -185,6 +186,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     string kind = behaviour.GetType().Name;
                     using (var serialized = new SerializedObject(behaviour))
                     {
+                        // A Play Audio behaviour acts on the Audio Source its Source Path names (from the avatar root). With no
+                        // object there, or no Audio Source on it, it can play, stop and set nothing. Fails closed: a behaviour
+                        // without a readable SourcePath field (another SDK layout) is not reported.
+                        if (kind == "VRCAnimatorPlayAudio" && serialized.FindProperty("SourcePath") is SerializedProperty sourcePath && sourcePath.propertyType == SerializedPropertyType.String)
+                        {
+                            var target = string.IsNullOrEmpty(sourcePath.stringValue) ? null : avatar.Root.transform.Find(sourcePath.stringValue);
+                            if (!target || !target.GetComponent<AudioSource>())
+                            {
+                                silent.Add(place + (string.IsNullOrEmpty(sourcePath.stringValue) ? " (no Source Path)" : " (\"" + sourcePath.stringValue + "\": " + (target ? "no Audio Source on it" : "no such object") + ")"));
+                                firstSilent = firstSilent ?? playable;
+                            }
+                        }
                         if (kind == "VRCAnimatorPlayAudio" && EnumName(serialized.FindProperty("PlaybackOrder")) == "Parameter" &&
                             EnumName(serialized.FindProperty("ClipsApplySettings")) != "NeverApply")
                         {
@@ -225,6 +238,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Detail = "With Playback Order set to Parameter, VRChat reads the clip number from an Expression Parameter. Without one it always plays the first clip:\n" + Bullets(audio),
                     Fix = "Add the parameter (Int) to Expression Parameters, or set Playback Order to Random, Unique Random or Roundabout.",
                     Identity = string.Join("\n", audio)
+                });
+            if (silent.Count > 0)
+                findings.Add(new Finding
+                {
+                    Severity = Severity.TidyUp, Key = "playdead|" + firstSilent.Name, Playable = firstSilent.Name, Target = firstSilent.Controller,
+                    Title = N(silent.Count, "Play Audio behaviour") + " " + (silent.Count == 1 ? "has" : "have") + " no Audio Source to play on",
+                    Detail = "A Play Audio behaviour plays, stops and adjusts the Audio Source at its Source Path. " + (silent.Count == 1 ? "This one finds none, so it does nothing:\n" : "These find none, so they do nothing:\n") + Bullets(silent),
+                    Fix = "Set Source Path to the object that holds the Audio Source (the path from the avatar root), or remove the behaviour from the state.",
+                    Identity = string.Join("\n", silent)
                 });
             if (adds.Count > 0)
                 findings.Add(new Finding

@@ -17,7 +17,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //  - nothing moves it locally or changes its scale (animation, constraints, physics, PhysBones, Head Chop) and nothing
     //    animates its activeness, and no animation curve takes it or its object as a value;
     //  - only skinned renderers refer to it, each through its bone list (not as root bone or probe anchor), and each such
-    //    renderer is the only user of its mesh, has no Cloth, and no animation swaps its mesh.
+    //    renderer has no Cloth, no animation swaps its mesh, and it is the only user of its mesh or every user of that mesh
+    //    has the very same bone list (the mesh is then edited once and stays shared; renderers with different bone lists
+    //    would each need their own copy of the mesh, which costs more than the bone saves).
     internal static class BoneMerger
     {
         internal sealed class Result { public int Bones; }
@@ -33,12 +35,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             while (true)
             {
                 var renderers = root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh).ToList();
-                var meshUsers = renderers.GroupBy(r => r.sharedMesh).ToDictionary(g => g.Key, g => g.Count());
-                bool RendererOk(SkinnedMeshRenderer r) => r && r.sharedMesh && meshUsers[r.sharedMesh] == 1 && !swaps.Contains(r.sharedMesh) &&
+                // Whether every user of the mesh holds the same bones in the same slots (true for a single user).
+                var alike = renderers.GroupBy(r => r.sharedMesh).ToDictionary(g => g.Key, g => { var first = g.First().bones; return g.All(r => r.bones.SequenceEqual(first)); });
+                bool RendererOk(SkinnedMeshRenderer r) => r && r.sharedMesh && alike[r.sharedMesh] && !swaps.Contains(r.sharedMesh) &&
                     !r.GetComponent<Cloth>() && !analysis.IsAnimated(r, p => p == "m_Mesh") && !Exclusions.Excluded(r) &&
                     r.sharedMesh.bindposes.Length == r.bones.Length && !analysis.ReferencesTo(r.sharedMesh).Any(c => !(c is SkinnedMeshRenderer));
                 var merged = new List<Transform>();
-                var copies = new Dictionary<SkinnedMeshRenderer, Mesh>();
+                var copies = new HashSet<Mesh>(); // This round's build copies: a second bone merged this round edits the same copy.
                 foreach (var bone in renderers.SelectMany(r => r.bones).Where(b => b).Distinct().ToList())
                 {
                     if (!Mergeable(bone, root.transform, humanoid, analysis)) continue;
@@ -46,28 +49,35 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (users.Count == 0 || users.Any(c => !(c is SkinnedMeshRenderer r) || !RendererOk(r) || r.rootBone == bone || r.probeAnchor == bone)) continue;
                     if (analysis.ReferencesTo(bone.gameObject).Any(c => c.gameObject != bone.gameObject)) continue;
                     var local = Matrix4x4.TRS(bone.localPosition, bone.localRotation, bone.localScale);
-                    foreach (SkinnedMeshRenderer renderer in users)
+                    // Every user of a mesh holds the bone in the same slots (alike), so each mesh is edited once for all of them.
+                    foreach (var sharing in users.Cast<SkinnedMeshRenderer>().GroupBy(r => r.sharedMesh).ToList())
                     {
-                        var bones = renderer.bones;
-                        // One build copy per renderer per round: a second bone merged this round edits the same copy.
-                        if (!copies.TryGetValue(renderer, out var copy))
+                        var mesh = sharing.Key;
+                        var copy = mesh;
+                        if (!copies.Contains(mesh))
                         {
-                            var mesh = renderer.sharedMesh;
                             copy = Object.Instantiate(mesh);
                             copy.name = mesh.name;
                             register(mesh, copy);
-                            meshUsers[copy] = 1;
-                            copies[renderer] = copy;
+                            alike[copy] = true;
+                            copies.Add(copy);
                         }
+                        var slots = sharing.First().bones;
                         var bindposes = copy.bindposes;
-                        for (int i = 0; i < bones.Length; i++)
-                            if (bones[i] == bone) { bones[i] = bone.parent; bindposes[i] = local * bindposes[i]; }
+                        for (int i = 0; i < slots.Length; i++)
+                            if (slots[i] == bone) bindposes[i] = local * bindposes[i];
                         copy.bindposes = bindposes;
-                        SkinnedMeshMerger.Rebind(renderer, () =>
+                        foreach (var renderer in sharing.ToList())
                         {
-                            renderer.bones = bones;
-                            renderer.sharedMesh = copy;
-                        });
+                            var bones = renderer.bones;
+                            for (int i = 0; i < bones.Length; i++)
+                                if (bones[i] == bone) bones[i] = bone.parent;
+                            SkinnedMeshMerger.Rebind(renderer, () =>
+                            {
+                                renderer.bones = bones;
+                                renderer.sharedMesh = copy;
+                            });
+                        }
                     }
                     merged.Add(bone);
                 }
