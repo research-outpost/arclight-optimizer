@@ -12,22 +12,24 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // move (typically tangents, after the vertex stream stripper removed a channel no material reads). Such deltas
     // change nothing; the frame is stored without them (less blend shape memory, and vertices whose only delta was one
     // of them drop out of Unity's sparse blend shape data). Unity already drops all-zero deltas when a frame is added.
-    // Skipped on avatars using d4rk Avatar Optimizer, whose merge fills missing tangents with zeros.
+    // Skipped on avatars using d4rk Avatar Optimizer, whose merge fills missing tangents with zeros, until after its merge
+    // (afterD4rk, on its final meshes; PostOptimizerMerge).
     internal static class BlendShapeDeltaStripper
     {
         internal sealed class Result { public int Meshes, Frames; }
 
-        internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register)
+        // afterD4rk: d4rk's merge has run (see VertexStreamStripper.Run); eligible: when given, only meshes it accepts are rebuilt.
+        internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register, bool afterD4rk = false, Func<Mesh, bool> eligible = null)
         {
             var result = new Result();
             if (!analysis.Complete) return result;
             var root = analysis.Root;
-            if (D4rkOrdering.MayRun(root)) return result;
+            if (!afterD4rk && D4rkOrdering.MayRun(root)) return result;
             var swaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
             foreach (var group in root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh).GroupBy(r => r.sharedMesh))
             {
                 var mesh = group.Key;
-                if (mesh.blendShapeCount == 0 || !mesh.isReadable || swaps.Contains(mesh) || group.Any(Exclusions.Excluded) ||
+                if (mesh.blendShapeCount == 0 || !mesh.isReadable || eligible != null && !eligible(mesh) || swaps.Contains(mesh) || group.Any(Exclusions.Excluded) ||
                     root.GetComponentsInChildren<MeshFilter>(true).Any(f => f.sharedMesh == mesh && Exclusions.Excluded(f))) continue;
                 if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer) && !(c is MeshFilter))) continue;
                 var copy = Strip(mesh, out int frames);

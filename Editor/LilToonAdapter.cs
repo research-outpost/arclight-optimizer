@@ -209,7 +209,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // (lil_common_functions.hlsl 550-565; lil_common_frag.hlsl 1537-1542, 1605-1610; Lite computes the same value per
                 // vertex, lil_common_vert.hlsl 206, read at 1571). N can come from a matcap normal map read at fd.uvMain, which
                 // returns the same texel after a crop, so no mesh-UV tiling/offset reaches the matcap lookup.
-                unsupported.ReadsNoOtherTransform = property == "_MatCapTex" || property == "_MatCap2ndTex";
+                // Same audit (2.4.1): the emission gradients read time + fd.audioLinkValue * k (lil_common_frag.hlsl 1845-1853,
+                // 1929-1937), and audioLinkValue comes from raw uv0, nv, positionOS or an _AudioLinkMask texel (640-663); the
+                // reflection cube reads view and normal directions (lil_common_macro.hlsl 969); the glitter shape reads raw fd.uv0/uv1
+                // times its params, then its own _ST and atlas (lil_common_frag.hlsl 1781-1783, lil_common_functions.hlsl 1222-1265);
+                // _Ramp is declared but never sampled. Kept off: the gradation map (looked up by colour), dither (screen
+                // position), the AudioLink local map (also read in the vertex stage), parallax and the vertex-stage vector fields.
+                unsupported.ReadsNoOtherTransform = property == "_MatCapTex" || property == "_MatCap2ndTex" || property == "_EmissionGradTex" ||
+                    property == "_Emission2ndGradTex" || property == "_ReflectionCubeTex" || property == "_GlitterShapeTex" || property == "_Ramp";
                 return unsupported;
             }
             // lil_common_frag.hlsl 1073-1085: LUT mode samples the shadow colour textures by surface colour.

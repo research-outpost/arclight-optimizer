@@ -13,6 +13,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //  - _EmissionMap and _EmissionMap2 read MixingTransformTex(uv0, _MainTex_ST, own ST), own samplers; emission
     //    animation and scrolling must be off.
     // Decals, parallax emission and matcaps move sampling off the mesh UVs and are retained.
+    // Crop basis (TextureCropper), audited on the 1.6.2 Cginc sources: the main UV (uv0 * _MainTex_ST) feeds only texture
+    // lookups, except decal placement (SS_Decal.cginc reads IN.uv while _DecalEnable is on), so with the decal off every
+    // fragment path that is exactly uv0 * _MainTex_ST names _MainTex. No _TexelSize of these fields is read. The normal map
+    // applies the main transform twice and the outline mask is read in vertex stages, so neither gets a basis; the emission
+    // maps get one only while their own ST is identity.
     internal sealed class SunaoAdapter : ITextureSamplingAdapter
     {
         private const string Id = "sunao-1.6-static-v1";
@@ -32,15 +37,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return Unsupported("Sunao UV animation or scrolling moves sampling over time; original retained.");
 
             Vector2 mainScale = MaterialInputs.Scale(material, "_MainTex"), mainOffset = MaterialInputs.Offset(material, "_MainTex");
+            bool croppable = Value(material, "_DecalEnable") == 0;
             switch (property)
             {
-                case "_MainTex": return Path(material, TextureSemantics.Color, mainScale, mainOffset, false, TextureChannels.All);
-                case "_SubTex": return Path(material, TextureSemantics.Color, mainScale, mainOffset, true, TextureChannels.All);
-                case "_OutLineTexture": return Path(material, TextureSemantics.Color, mainScale, mainOffset, true, TextureChannels.All);
-                case "_MetallicGlossMap": return Path(material, TextureSemantics.Data, mainScale, mainOffset, false, TextureChannels.All);
-                case "_MatCapMask": return Path(material, TextureSemantics.Data, mainScale, mainOffset, true, TextureChannels.All);
+                case "_MainTex": return Path(material, TextureSemantics.Color, mainScale, mainOffset, false, TextureChannels.All, croppable);
+                case "_SubTex": return Path(material, TextureSemantics.Color, mainScale, mainOffset, true, TextureChannels.All, croppable);
+                case "_OutLineTexture": return Path(material, TextureSemantics.Color, mainScale, mainOffset, true, TextureChannels.All, croppable);
+                case "_MetallicGlossMap": return Path(material, TextureSemantics.Data, mainScale, mainOffset, false, TextureChannels.All, croppable);
+                case "_MatCapMask": return Path(material, TextureSemantics.Data, mainScale, mainOffset, true, TextureChannels.All, croppable);
                 case "_AlphaMask": case "_OcclusionMap": case "_ShadeMask": case "_LightMask": case "_RimLitMask":
-                    return Path(material, TextureSemantics.Data, mainScale, mainOffset, true, TextureChannels.RGB);
+                    return Path(material, TextureSemantics.Data, mainScale, mainOffset, true, TextureChannels.RGB, croppable);
                 case "_OutLineMask": return Path(material, TextureSemantics.Data, mainScale, mainOffset, false, TextureChannels.RGB);
                 case "_BumpMap":
                 {
@@ -56,7 +62,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         Value(material, "_EmissionScrX") != 0 || Value(material, "_EmissionScrY") != 0)
                         return Unsupported("Sunao emission animation or scrolling moves sampling over time; original retained.");
                     Vector2 scale = MaterialInputs.Scale(material, property), offset = MaterialInputs.Offset(material, property);
-                    return Path(material, TextureSemantics.Color, Vector2.Scale(mainScale, scale), mainOffset + offset, false, TextureChannels.All);
+                    return Path(material, TextureSemantics.Color, Vector2.Scale(mainScale, scale), mainOffset + offset, false, TextureChannels.All,
+                        croppable && scale == Vector2.one && offset == Vector2.zero, property);
                 }
             }
             return Unsupported(property.IndexOf("MatCap", StringComparison.Ordinal) >= 0
@@ -70,14 +77,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             material.HasProperty(property) ? MaterialInputs.Float(material, property) : 0;
 
         // borrowsMain: read through _MainTex's sampler; with no main texture assigned that is the default white (Repeat).
-        private static SamplingDescription Path(Material material, TextureSemantics semantics, Vector2 scale, Vector2 offset, bool borrowsMain, TextureChannels channels)
+        // croppable: the path is exactly uv0 * _MainTex_ST and the decal is off (class comment).
+        private static SamplingDescription Path(Material material, TextureSemantics semantics, Vector2 scale, Vector2 offset, bool borrowsMain, TextureChannels channels,
+            bool croppable = false, string ownTransform = null)
         {
             var main = borrowsMain ? material.GetTexture("_MainTex") : null;
+            // Cropping this family is proven on PC builds only (ShaderAdapterRegistry.CropBasisAllowed).
+            bool basis = croppable && ShaderAdapterRegistry.CropBasisAllowed;
             return new SamplingDescription
             {
                 AdapterId = Id, Supported = true, Semantics = semantics, Channels = channels,
                 Paths = new List<SamplingPath> { new SamplingPath { UvChannel = 0, Scale = scale, Offset = offset,
-                    SamplerTexture = main, FixedRepeat = borrowsMain && !main, Label = "Sunao uv0 * _MainTex_ST" } }
+                    SamplerTexture = main, FixedRepeat = borrowsMain && !main, Label = "Sunao uv0 * _MainTex_ST",
+                    Basis = basis ? "_MainTex" : null,
+                    Dependencies = !basis ? null : ownTransform == null ? new[] { "_MainTex" } : new[] { "_MainTex", ownTransform } } }
             };
         }
 

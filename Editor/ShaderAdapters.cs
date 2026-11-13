@@ -43,6 +43,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // The field's texture is still kept as it is, but it does not stop the material's other textures from being
         // cropped (TextureCropper), because rewriting their tiling/offset cannot move this lookup.
         public bool ReadsNoOtherTransform;
+        // Set by an adapter whose crop basis is withheld by a gate of its own (a version range, a locked shader) rather than by
+        // the lookup: the reason the build report gives for not cropping the texture. Null otherwise.
+        public string CropReason;
         public TextureSemantics Semantics = TextureSemantics.Unknown;
         public TextureChannels Channels = TextureChannels.All;
         public List<SamplingPath> Paths;
@@ -76,6 +79,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // Whether a shader adapter recognizes the material's shader (audited sampling model).
         internal static bool Recognizes(Material material) => material && material.shader && Adapters.Exists(a => a.Matches(material));
+
+        // Crop bases are proven on PC builds only: Quest keeps its 1.5.4 crop behaviour (the pinned mobile
+        // shaders, whose lookups were audited for it) until the newer families are tested on a device.
+        // Null asks the active build target; tests set it to prove both branches without switching targets,
+        // which would reimport the whole project.
+        internal static bool? CropBasisTargetOverride;
+
+        internal static bool CropBasisAllowed => CropBasisTargetOverride ?? GeneratedTargetValidator.IsStandalone;
 
         internal static void BeginScan() { LilToonSourceGuard.BeginScan(); pinnedSourceFailures.Clear(); }
 

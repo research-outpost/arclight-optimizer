@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
@@ -15,6 +16,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    2.13's shadow pass also reads the detail packed map at uv0.xy (2.14.1 reads uv0.zw), so that map unions both.
     // Audited on Standard 2.13 and 2.14.1 (Mochie Unity Shaders 1.77.1); the shader names do not tell them apart, so every rule
     // holds for both.
+    // Crop basis (TextureCropper): audited on Standard 2.14.2 (Mochie Unity Shaders 1.78.0); every 2.14.x release is accepted
+    // (owner decision, 2026-11-13: 2.14.0, 2.14.1 and other 2.14 patch releases are supported unaudited). The release is read from the shader's
+    // own inspector, Mochie.StandardEditor's versionLabel ("v2.14.2"), since neither the shader names nor _MochieMaterialVersion
+    // tell Standard releases apart; when that class or field is missing or renamed, no texture gets a basis (fails closed).
+    // Every path above is exactly uv * ST with
+    // rotation and scroll refused, and the ST is read elsewhere only by triplanar and parallax (refused above) and alpha mip
+    // rescaling, which reads _MainTex_TexelSize/_AlphaMask_TexelSize (CutoutAlpha, _ALPHATEST_ON only), so a cutout material
+    // with _MipMapRescaling on keeps every texture.
     internal sealed class MochieStandardAdapter : ITextureSamplingAdapter
     {
         private const string Id = "mochie-standard-v1";
@@ -130,10 +139,37 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var scroll = MaterialInputs.Vector(material, uv + "Scroll");
             if (scroll.x != 0 || scroll.y != 0) return Unsupported(uv + "Scroll moves sampling over time; original retained.");
             var sampler = material.HasProperty(samplerProperty) ? material.GetTexture(samplerProperty) : null;
+            bool croppable = CropAudited() && (!material.IsKeywordEnabled("_ALPHATEST_ON") ||
+                material.HasProperty("_MipMapRescaling") && MaterialInputs.Float(material, "_MipMapRescaling") == 0);
+            // Cropping this family is proven on PC builds only (ShaderAdapterRegistry.CropBasisAllowed).
+            bool basis = croppable && ShaderAdapterRegistry.CropBasisAllowed;
             return new SamplingDescription { AdapterId = Id, Supported = true, Semantics = semantics, Channels = channels,
+                CropReason = !CropAudited() ? "Mochie Standard cropping covers 2.14 only, and Mochie's version label could not be read as a 2.14 release"
+                    : !ShaderAdapterRegistry.CropBasisAllowed ? "Mochie Standard cropping is proven on PC builds only; original retained on this target."
+                    : null,
                 Paths = new List<SamplingPath> { new SamplingPath { UvChannel = (int)set, Scale = MaterialInputs.Scale(material, stProperty),
                     Offset = MaterialInputs.Offset(material, stProperty), SamplerTexture = sampler, FixedRepeat = !sampler,
-                    Label = "Mochie " + uv + " UV" } } };
+                    Label = "Mochie " + uv + " UV", Basis = basis ? stProperty : null, Dependencies = basis ? new[] { stProperty } : null } } };
+        }
+
+        // A Standard 2.14.x release, the line the crop basis covers (class comment). Read once per domain from Mochie's inspector.
+        private static bool? cropAudited;
+        internal static bool CropAudited()
+        {
+            if (cropAudited == null)
+            {
+                bool accepted = false;
+                try
+                {
+                    var editor = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Mochie.StandardEditor")).FirstOrDefault(t => t != null);
+                    var field = editor?.GetField("versionLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+                    if (field != null && field.FieldType == typeof(string) && field.GetValue(Activator.CreateInstance(editor)) is string label)
+                        accepted = System.Text.RegularExpressions.Regex.IsMatch(label, @"\Av2\.14(\.\d+)?\z"); // 2.14.0 may label itself "v2.14".
+                }
+                catch (Exception) { accepted = false; } // Renamed or unconstructible inspector: no basis.
+                cropAudited = accepted;
+            }
+            return cropAudited.Value;
         }
 
         private static TextureChannels Channel(Material material, string property)

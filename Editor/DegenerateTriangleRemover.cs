@@ -21,7 +21,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     {
         internal sealed class Result { public int Meshes, Triangles; }
 
-        internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register)
+        // eligible: when given, only meshes it accepts are rebuilt (after d4rk's merge: meshes in this build's own containers).
+        internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register, Func<Mesh, bool> eligible = null)
         {
             var result = new Result();
             if (!analysis.Complete) return result;
@@ -32,7 +33,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var group in users)
             {
                 var mesh = group.Key;
-                if (swaps.Contains(mesh) || !mesh.isReadable) continue; // Plane tests and rebuilds read the vertex positions.
+                if (swaps.Contains(mesh) || !mesh.isReadable || eligible != null && !eligible(mesh)) continue; // Plane tests and rebuilds read the vertex positions.
                 if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer) && !(c is MeshFilter))) continue;
                 // Extra vertex streams override the mesh's own attributes, and a particle shape can emit from a renderer's vertices,
                 // edges or triangles.

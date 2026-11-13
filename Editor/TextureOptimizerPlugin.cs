@@ -269,7 +269,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             .Where(e => !(e.Key is UnityEngine.Object gone && !gone)) // Destroyed Animator: no readable owner to bind to.
                             .Select(e => (e.Key is Animator a && a ? a.transform : ctx.AvatarRootObject.transform, e.Value)),
                             vrcfuryPending ? null : AnimatorLayerMerger.WholeValues(ctx.AvatarRootObject), removeInert: !vrcfuryPending,
-                            playables: controllers.Controllers.Where(e => e.Value != null && e.Key is Enum).GroupBy(e => e.Value).ToDictionary(g => g.Key, g => g.First().Key.ToString()));
+                            playables: controllers.Controllers.Where(e => e.Value != null && e.Key is Enum).GroupBy(e => e.Value).ToDictionary(g => g.Key, g => g.First().Key.ToString()),
+                            unwritten: vrcfuryPending ? null : AnimatorLayerMerger.Unwritten(ctx.AvatarRootObject));
                         BuildTimings.Step("PhysicsCleaner");
                         // What the animators and menu read, not what they declare: a receiver's parameter that nothing tests is dead even
                         // though declared, and once the receiver goes, the parameter cleaner below removes the declaration too.
@@ -309,6 +310,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         string inertSummary = "Removed or emptied " + layerMerge.Inert + " animator layer(s) that can change nothing (weight 0 with nothing shared, or animating only objects the avatar does not have).";
                         Debug.Log("Arclight Optimizer: " + inertSummary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, inertSummary);
+                    }
+                    if (layerMerge.FrozenTime > 0)
+                    {
+                        string frozenSummary = "Gave " + layerMerge.FrozenTime + " motion-time state(s) whose time parameter nothing ever changes the one pose they always show (their clip's first frame).";
+                        Debug.Log("Arclight Optimizer: " + frozenSummary + " (" + ctx.AvatarRootObject.name + ")");
+                        state.Report?.Add(null, frozenSummary);
                     }
                     if (layerMerge.Merged > 0)
                     {
@@ -508,7 +515,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var result = MeshAndAudioOptimizer.Run(ctx.AvatarRootObject, state.MergeMeshesAndAudio, state.OptimizeMeshes,
                     ReplacementRegistry.Register, monoAudio, monoVetoed);
                 result.FrozenShapes = frozen.Frozen + frozen.Removed;
-                result.MergedSkinned = mergedSkinned.Merged;
+                result.MergedSkinned = mergedSkinned.Merged - mergedSkinned.Rigid;
+                result.MergedRigid = mergedSkinned.Rigid;
                 result.MergedInto = mergedSkinned.Into;
                 result.MeshBytes += frozen.Bytes;
                 if (state.OptimizeMeshes)
@@ -678,6 +686,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                     state.Report?.Add(null, summary);
                 }
+                WhyNotLine(state, "material(s) whose textures were not cropped", crops.WhyNot);
                 if (cancelled)
                 {
                     string stopped = cropped

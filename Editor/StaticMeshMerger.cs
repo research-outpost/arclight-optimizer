@@ -29,9 +29,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var result = new Result();
             if (!analysis.Complete) return result;
-            var root = analysis.Root;
+            foreach (var (host, members) in Plan(analysis))
+            {
+                Merge(host, members, register);
+                result.Merged += members.Count;
+                result.Into++;
+            }
+            if (result.Merged > 0) analysis.RescanReferences();
+            return result;
+        }
+
+        // The renderers Run would merge (hosts and members), without merging; SkinnedMeshMerger leaves them to this pass.
+        internal static HashSet<MeshRenderer> WouldMerge(AvatarAnalysis analysis) => !analysis.Complete ? new HashSet<MeshRenderer>()
+            : new HashSet<MeshRenderer>(Plan(analysis).SelectMany(p => p.Members.Append(p.Host)));
+
+        // Each host with the members it takes: same key, never moving relative to the host.
+        private static List<(MeshRenderer Host, List<MeshRenderer> Members)> Plan(AvatarAnalysis analysis)
+        {
+            var plan = new List<(MeshRenderer, List<MeshRenderer>)>();
             var swaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
-            var candidates = root.GetComponentsInChildren<MeshRenderer>(true).Where(r => !Exclusions.Excluded(r) && Eligible(r, analysis, swaps)).ToList();
+            var candidates = analysis.Root.GetComponentsInChildren<MeshRenderer>(true).Where(r => !Exclusions.Excluded(r) && Eligible(r, analysis, swaps)).ToList();
             foreach (var group in candidates.GroupBy(r => Key(r, analysis)))
             {
                 var remaining = group.ToList();
@@ -40,14 +57,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var host = remaining[0];
                     var members = remaining.Skip(1).Where(m => !analysis.MovesRelative(host.transform, m.transform)).ToList();
                     remaining = remaining.Skip(1).Except(members).ToList();
-                    if (members.Count == 0) continue;
-                    Merge(host, members, register);
-                    result.Merged += members.Count;
-                    result.Into++;
+                    if (members.Count > 0) plan.Add((host, members));
                 }
             }
-            if (result.Merged > 0) analysis.RescanReferences();
-            return result;
+            return plan;
         }
 
         private static bool Eligible(MeshRenderer renderer, AvatarAnalysis analysis, HashSet<Mesh> swaps)

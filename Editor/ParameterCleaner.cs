@@ -151,7 +151,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // VRChat's built-in parameters: VRChat or OSC may read them whatever the animators do, so drivers writing them stay.
-        private static readonly HashSet<string> BuiltIn = new HashSet<string>(StringComparer.Ordinal)
+        internal static readonly HashSet<string> BuiltIn = new HashSet<string>(StringComparer.Ordinal)
         {
             "IsLocal", "PreviewMode", "Viseme", "Voice", "GestureLeft", "GestureRight", "GestureLeftWeight", "GestureRightWeight",
             "AngularY", "VelocityX", "VelocityY", "VelocityZ", "VelocityMagnitude", "Upright", "Grounded", "Seated", "AFK",

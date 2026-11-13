@@ -17,7 +17,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    control behaviour anywhere names its index (so its weight never changes);
     //  - not the base layer (which always plays at weight 1 in Override mode);
     //  - a single default state, Write Defaults on, no transitions, behaviours, child state machines, time parameter
-    //    or mirroring;
+    //    or mirroring (a motion-time state whose time provably stays 0 is first given its frozen pose; FreezeMotionTime);
     //  - every clip under it holds each float value constant and has no object curves (so playback time and speed
     //    cannot matter); blend trees keep reading their own parameters;
     //  - no layer between it and its merged layer animates any of its properties, so moving it up changes no priority;
@@ -39,8 +39,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    Copy follow the animator type, which becomes Float), and that no condition tests with NotEqual or uses as a
     //    mirror parameter in its controller.
     // The parameter becomes Float in that controller (VRChat converts values between animator types) and its other
-    // conditions are rewritten to the matching Greater/Less tests. Emptied layers are only removed when no layer is synced and no layer
-    // control behaviour exists, as both refer to layers by index; otherwise they stay as empty weight-0 layers.
+    // conditions are rewritten to the matching Greater/Less tests. Emptied layers are removed only where no layer control's raw index
+    // would shift (RemoveOrEmpty); otherwise they stay as empty weight-0 layers.
+    // Synced layers: a synced layer and the layer it copies are never folded, emptied or removed, and a synced layer counts as
+    // writing its source's properties and its override motions' wherever it stands; the sweeps run over the other layers. NDMF
+    // keeps SyncedLayerIndex as a virtual layer index and maps it to the new position at commit, so removing other layers keeps
+    // the pairing. A synced layer whose source cannot be found leaves its whole controller alone.
     // Before folding, layers that can do nothing are removed (or emptied) the same way: no behaviours, no animated
     // animator parameters, not the base layer, not named by a layer control, and either
     //  - every curve names an object or component the avatar does not have, or
@@ -92,7 +96,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return name;
         }
 
-        internal sealed class Result { public int Merged, Removed, Inert, Toggles, MergedClips; public readonly Dictionary<string, List<string>> WhyNot = new Dictionary<string, List<string>>(); }
+        internal sealed class Result { public int Merged, Removed, Inert, Toggles, MergedClips, FrozenTime; public readonly Dictionary<string, List<string>> WhyNot = new Dictionary<string, List<string>>(); }
 
         internal static Result Run(IEnumerable<VirtualAnimatorController> controllers) => Run(controllers.Select(c => ((Transform)null, c)));
 
@@ -101,9 +105,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // component names (see WholeValues); null converts no toggles.
         // playables: each VRChat playable layer's controller and its playable name (FX, Action...), so layer controls from other
         // playables can be renumbered when a layer below them goes; null keeps the layers below them (emptied instead).
+        // unwritten: whether nothing outside the animators writes a parameter (see Unwritten); null freezes no motion-time state.
         internal static Result Run(IEnumerable<(Transform Owner, VirtualAnimatorController Controller)> controllers,
             Func<string, AnimatorControllerParameterType, bool> wholeValues = null, bool removeInert = true,
-            IReadOnlyDictionary<VirtualAnimatorController, string> playables = null)
+            IReadOnlyDictionary<VirtualAnimatorController, string> playables = null, Func<string, bool> unwritten = null)
         {
             var result = new Result();
             var owned = controllers.Where(c => c.Controller != null).ToList();
@@ -138,6 +143,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     controls.Add(behaviour);
                 }
             }
+
+            if (unwritten != null) result.FrozenTime = FreezeMotionTime(list, behaviourNamed, unwritten);
 
             // Removing a layer shifts the positions of the layers above it. A control on the same playable holds NDMF's
             // virtual index, which NDMF rewrites to the new position at commit; one from another playable holds a raw position,
@@ -196,12 +203,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return removable.Count;
             }
 
-            var allBindings = owned.SelectMany(c => c.Controller.Layers.Select(l => (c.Controller, Layer: l, Bindings: Bindings(l)))).ToList();
+            var allBindings = owned.SelectMany(c => c.Controller.Layers.Select(l => (c.Controller, Layer: l, Bindings: Bindings(l, c.Controller.Layers)))).ToList();
             foreach (var (owner, controller) in owned)
             {
                 var layers = controller.Layers.ToList();
-                if (layers.Any(l => l.SyncedLayerIndex >= 0)) continue;
-                var inert = layers.Where((l, i) => removeInert && i > 0 && !Controlled(l, i) && Inert(l, owner, allBindings.Where(o => o.Layer != l).SelectMany(o => o.Bindings), owned.All(o => o.Owner == owner))).ToList();
+                // Synced layers and the layers they copy stay as they are (class comment).
+                var synced = new HashSet<VirtualLayer>();
+                foreach (var l in layers.Where(l => l.SyncedLayerIndex >= 0))
+                {
+                    synced.Add(l);
+                    var source = layers.FirstOrDefault(s => s.VirtualLayerIndex == l.SyncedLayerIndex);
+                    if (source == null) { synced = null; break; }
+                    synced.Add(source);
+                }
+                if (synced == null) continue;
+                var inert = layers.Where((l, i) => removeInert && i > 0 && !synced.Contains(l) && !Controlled(l, i) && Inert(l, owner, allBindings.Where(o => o.Layer != l).SelectMany(o => o.Bindings), owned.All(o => o.Owner == owner))).ToList();
                 if (inert.Count > 0)
                 {
                     result.Inert += inert.Count;
@@ -252,9 +268,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 for (int i = layers.Count - 1; i >= 0; i--)
                 {
                     var layer = layers[i];
-                    var bindings = Bindings(layer);
+                    var bindings = Bindings(layer, layers);
+                    if (synced.Contains(layer)) { if (!result.WhyNot.TryGetValue("synced to or from another layer", out var pair)) result.WhyNot["synced to or from another layer"] = pair = new List<string>(); pair.Add(layer.Name); }
                     // The base layer always plays at weight 1 in Override mode; removing it would promote the next layer.
-                    if (i > 0 && !Controlled(layer, i))
+                    else if (i > 0 && !Controlled(layer, i))
                     {
                         var motion = Mergeable(layer);
                         string parameter = null;
@@ -316,6 +333,55 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return result;
         }
 
+        // Motion-time states whose time parameter never changes play one frozen pose: the parameter must be a Float that every
+        // controller declaring it starts at 0, that nothing outside the animators writes (unwritten), and that nothing in any
+        // controller names except as a state's time parameter (no condition, blend tree, speed/offset/mirror parameter, animator
+        // curve or behaviour). Only the case proven without Unity's time mapping: normalized time 0 is clip time 0 for any
+        // looping and state speed, but speed 1, no cycle offset and no Loop Pose are still required, and the clip must hold only
+        // float curves on objects (no Animator curves, object curves or events) each starting with a key at time 0. Such a state
+        // plays its clip's first keys; it is given a clip of exactly those keys and no time parameter, so it can fold like any
+        // constant state. Other motion-time states (other start values, looped or scaled time) are left alone.
+        private static int FreezeMotionTime(List<VirtualAnimatorController> controllers, HashSet<string> behaviourNamed, Func<string, bool> unwritten)
+        {
+            var named = new HashSet<string>(behaviourNamed, StringComparer.Ordinal);
+            // Every behaviour's strings, parameter drivers included (behaviourNamed holds only the fractions a driver writes).
+            foreach (var behaviour in controllers.SelectMany(c => c.AllReachableNodes()).SelectMany(Behaviours)
+                .Concat(controllers.SelectMany(c => c.Layers).SelectMany(l => l.SyncedLayerBehaviourOverrides.Values.SelectMany(v => v))))
+                if (behaviour) ParameterCleaner.Strings(behaviour, named);
+            var timed = new List<VirtualState>();
+            foreach (var node in controllers.SelectMany(c => c.AllReachableNodes()))
+                if (node is VirtualTransitionBase transition) named.UnionWith(transition.Conditions.Select(c => c.parameter));
+                else if (node is VirtualBlendTree tree)
+                {
+                    named.Add(tree.BlendParameter ?? ""); named.Add(tree.BlendParameterY ?? "");
+                    named.UnionWith(tree.Children.Select(c => c.DirectBlendParameter ?? ""));
+                }
+                else if (node is VirtualState state)
+                {
+                    named.UnionWith(new[] { state.SpeedParameter, state.CycleOffsetParameter, state.MirrorParameter }.Where(p => p != null));
+                    if (state.TimeParameter != null) timed.Add(state);
+                }
+                else if (node is VirtualClip clip) named.UnionWith(clip.GetFloatCurveBindings().Where(b => b.type == typeof(Animator)).Select(b => b.propertyName));
+            int frozen = 0;
+            foreach (var state in timed.Distinct())
+            {
+                string time = state.TimeParameter;
+                var declared = controllers.Where(c => c.Parameters.ContainsKey(time)).Select(c => c.Parameters[time]).ToList();
+                if (declared.Count == 0 || declared.Any(p => p.type != AnimatorControllerParameterType.Float || p.defaultFloat != 0) ||
+                    named.Contains(time) || !unwritten(time)) continue;
+                if (state.Speed != 1 || state.SpeedParameter != null || state.CycleOffset != 0 || state.CycleOffsetParameter != null || state.Mirror || state.MirrorParameter != null) continue;
+                if (!(state.Motion is VirtualClip clip) || clip.IsMarkerClip || clip.Settings.loopBlend || clip.GetObjectCurveBindings().Any()) continue;
+                var bindings = clip.GetFloatCurveBindings().ToList();
+                if (bindings.Count == 0 || bindings.Any(b => b.type == typeof(Animator) || clip.GetFloatCurve(b)?.keys is var keys && (keys == null || keys.Length == 0 || keys[0].time != 0))) continue;
+                var still = VirtualClip.Create(clip.Name);
+                foreach (var binding in bindings) still.SetFloatCurve(binding, new AnimationCurve(new Keyframe(0, clip.GetFloatCurve(binding).keys[0].value)));
+                state.Motion = still;
+                state.TimeParameter = null;
+                frozen++;
+            }
+            return frozen;
+        }
+
         private static void Empty(VirtualLayer layer)
         {
             layer.StateMachine.AnyStateTransitions = layer.StateMachine.AnyStateTransitions.Clear();
@@ -351,17 +417,35 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Expression parameters (name to animator type) that no component on the avatar names.
         internal static Func<string, AnimatorControllerParameterType, bool> WholeValues(GameObject root)
         {
+            if (!Externals(root, out var types, out var named, out var prefixes)) return null;
+            return (name, type) => types.TryGetValue(name, out var declared) && declared == type && !named.Contains(name) &&
+                !prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
+        }
+
+        // Parameters nothing outside the animators writes: not an expression parameter (menus, OSC and sync write those), not one of
+        // VRChat's built-ins, and named by no component (contacts, PhysBones and their prefixed parameters). Null when unknown.
+        internal static Func<string, bool> Unwritten(GameObject root)
+        {
+            if (!Externals(root, out var types, out var named, out var prefixes)) return null;
+            return name => !types.ContainsKey(name) && !ParameterCleaner.BuiltIn.Contains(name) && !named.Contains(name) &&
+                !prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
+        }
+
+        // The avatar's expression parameters (name to animator type), the strings its components name and its PhysBone parameter prefixes.
+        private static bool Externals(GameObject root, out Dictionary<string, AnimatorControllerParameterType> types, out HashSet<string> named, out List<string> prefixes)
+        {
+            types = null; named = null; prefixes = null;
             var descriptor = root.GetComponents<Component>().FirstOrDefault(c => c && c.GetType().Name == "VRCAvatarDescriptor");
-            if (!descriptor) return null;
+            if (!descriptor) return false;
             Object parameters;
             using (var serialized = new SerializedObject(descriptor))
                 parameters = serialized.FindProperty("expressionParameters")?.objectReferenceValue;
-            if (!parameters) return null;
-            var types = new Dictionary<string, AnimatorControllerParameterType>(StringComparer.Ordinal);
+            if (!parameters) return false;
+            types = new Dictionary<string, AnimatorControllerParameterType>(StringComparer.Ordinal);
             using (var serialized = new SerializedObject(parameters))
             {
                 var array = serialized.FindProperty("parameters");
-                if (array == null) return null;
+                if (array == null) return false;
                 for (int i = 0; i < array.arraySize; i++)
                 {
                     var entry = array.GetArrayElementAtIndex(i);
@@ -372,8 +456,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     types[name] = valueType == 0 ? AnimatorControllerParameterType.Int : valueType == 2 ? AnimatorControllerParameterType.Bool : AnimatorControllerParameterType.Float;
                 }
             }
-            var named = new HashSet<string>(StringComparer.Ordinal);
-            var prefixes = new List<string>();
+            named = new HashSet<string>(StringComparer.Ordinal);
+            prefixes = new List<string>();
             foreach (var component in root.GetComponentsInChildren<Component>(true))
             {
                 if (!component || component == descriptor || component is Transform) continue;
@@ -385,8 +469,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     }
                 ParameterCleaner.Strings(component, named);
             }
-            return (name, type) => types.TryGetValue(name, out var declared) && declared == type && !named.Contains(name) &&
-                !prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
+            return true;
         }
 
         // The toggle state machine as a 1D blend tree on its parameter when the layer qualifies (see above), else null.
@@ -666,6 +749,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         internal static bool Flat(float tangent) => tangent == 0 || float.IsPositiveInfinity(tangent); // Unity writes stepped keys as +Infinity.
+
+        // What a layer writes: a synced layer plays its source's states, each with its own motion where it overrides one.
+        private static HashSet<EditorCurveBinding> Bindings(VirtualLayer layer, IEnumerable<VirtualLayer> siblings)
+        {
+            var set = Bindings(layer);
+            if (layer.SyncedLayerIndex < 0) return set;
+            var source = siblings.FirstOrDefault(s => s.VirtualLayerIndex == layer.SyncedLayerIndex);
+            if (source != null) set.UnionWith(Bindings(source));
+            foreach (var clip in layer.SyncedLayerMotionOverrides.Values.Where(m => m != null).SelectMany(m => m.AllReachableNodes()).OfType<VirtualClip>())
+            {
+                set.UnionWith(clip.GetFloatCurveBindings().Select(Whole));
+                set.UnionWith(clip.GetObjectCurveBindings());
+            }
+            return set;
+        }
 
         private static HashSet<EditorCurveBinding> Bindings(VirtualLayer layer)
         {

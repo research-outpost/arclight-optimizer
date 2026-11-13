@@ -17,8 +17,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // on screen.
     // Requirements, all checked:
     //  - Every lookup of every texture involved goes through an adapter-audited tiling/offset ("basis") that the shader
-    //    reads for nothing but texture lookups (lilToon, Standard, Unlit/Texture), unanimated, with UVs inside the crop
-    //    (no wrapping); every texture read through a rewritten basis is cropped the same way, and no lookup also reads
+    //    reads for nothing but texture lookups (lilToon, Standard, Unlit/Texture, audited Poiyomi/Sunao/Mochie paths), unanimated, with UVs
+    //    inside the crop - or, on an axis where lookups wrap, every lookup samples with Repeat and every texture's authored PNG
+    //    (imported at its own size) repeats exactly every cell: that axis is cropped to cell 0, its tiling/offset multiplied by
+    //    2^k, and the first and last cells are both checked on the GPU; every texture read through a rewritten basis is cropped the same way, and no lookup also reads
     //    another rewritten basis. The one exception keeps its texture uncropped: a field whose adapter has audited that
     //    its lookup passes through no other texture's tiling/offset (SamplingDescription.ReadsNoOtherTransform).
     //  - Power-of-two sources with box-filtered mipmaps and without crunch, coverage-preserving or border mipmaps,
@@ -27,12 +29,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    TGA, TIFF, BMP, JPEG; never a normal map) is read as the pixels Unity flattens it to (SourceImages.Flatten, as
     //    texture generation does) and its crop is a PNG with the source's import settings, held to the same GPU check.
     // Textures and materials linked through shared textures or bases are decided together. Materials an animation swaps
-    // in keep their original textures. Generated crops are cached by source content and crop.
+    // in keep their original textures. Generated crops are cached by source content and crop. A part that is one colour
+    // becomes a 4 x 4 one-colour copy instead (counted as one-colour), under the one-colour collapse's shader and importer rules
+    // and checked on the GPU against the part at each of its levels.
     internal static class TextureCropper
     {
-        internal sealed class Result { public int Textures, Uniform, Materials; public long PixelsBefore, PixelsAfter; }
+        internal sealed class Result
+        {
+            public int Textures, Uniform, Materials; public long PixelsBefore, PixelsAfter;
+            // Materials whose textures an adapter's own gate kept from cropping (SamplingDescription.CropReason), by reason.
+            public readonly Dictionary<string, List<string>> WhyNot = new Dictionary<string, List<string>>();
+        }
 
-        private sealed class Crop { public int Kx, Ky, Jx, Jy; } // Size 2^-k of the texture per axis, cell index j.
+        // Size 2^-k of the texture per axis, cell index j. Px/Py: the axis repeats every cell, and lookups wrap across it.
+        private sealed class Crop { public int Kx, Ky, Jx, Jy; public bool Px, Py; }
 
         // The read-only MeshData API reads imported meshes in the Editor regardless of Read/Write (Unity docs:
         // "In the Editor, all meshes are readable, even when Mesh.isReadable is set to false"), so coverage needs
@@ -67,7 +77,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (!use.Sampling.Supported || use.Texture != group.Source || !use.Material) { bad.Add(group.Source); continue; }
                     foreach (var path in use.Sampling.GetPaths())
                     {
-                        if (path.Basis == null || path.AnimatedTransforms != null) { bad.Add(group.Source); continue; }
+                        if (path.Basis == null || path.AnimatedTransforms != null)
+                        {
+                            bad.Add(group.Source);
+                            if (path.Basis == null && use.Sampling.CropReason != null)
+                            {
+                                if (!result.WhyNot.TryGetValue(use.Sampling.CropReason, out var named)) result.WhyNot[use.Sampling.CropReason] = named = new List<string>();
+                                if (!named.Contains(use.Material.name)) named.Add(use.Material.name);
+                            }
+                            continue;
+                        }
                         var node = (use.Material, path.Basis);
                         bases.Add(node);
                         Union(group.Source, node);
@@ -114,7 +133,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // Textures of one material often share every sampling path (a main map and its normal map), so their coverage is built once.
             // The crop pass reuses the generation pass's cache when given one: the keys pin content, not the pass.
             var coverage = coverageCache ?? new UvCoverageCache();
-            var components = parent.Keys.ToList().GroupBy(Find).Where(c => !bad.Contains(c.Key)).ToList();
+            bool android = EditorUserBuildSettings.activeBuildTarget == BuildTarget.Android;
+            var components =parent.Keys.ToList().GroupBy(Find).Where(c => !bad.Contains(c.Key)).ToList();
             foreach (var component in components)
             {
                 progress?.CheckCancelled(); // A cancel must not wait for the next rasterize/PNG decode.
@@ -133,9 +153,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (crop == null) continue;
 
                 var cropped = new Dictionary<Texture, Texture2D>();
+                var uniform = new HashSet<Texture>();
                 try
                 {
-                    foreach (var texture in textures) cropped[texture] = Generate(texture, crop, folder);
+                    foreach (var texture in textures)
+                    {
+                        // A part that is one colour inside the crop becomes the collapse's 4 x 4 copy, under the collapse's own rules.
+                        var importer = AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(texture)) as TextureImporter;
+                        bool collapsible = (GeneratedTargetValidator.IsStandalone || android) && importer && !importer.fadeout &&
+                            AuditedForCollapse(groups[texture], texture, android);
+                        cropped[texture] = Generate(texture, crop, folder, collapsible, out bool flat);
+                        if (flat) uniform.Add(texture);
+                    }
                 }
                 catch (OperationCanceledException) { throw; } // Once cancel is wired, an abort must not downgrade to a skipped component.
                 catch (Exception e)
@@ -171,7 +200,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     register(pair.Key, pair.Value);
                     croppedSources.Add(pair.Key);
-                    result.Textures++;
+                    if (uniform.Contains(pair.Key)) result.Uniform++;
+                    else result.Textures++;
                     result.PixelsBefore += (long)pair.Key.width * pair.Key.height;
                     result.PixelsAfter += (long)pair.Value.width * pair.Value.height;
                 }
@@ -202,11 +232,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 progress?.CheckCancelled(); // PNG decodes and GPU checks here can run long; cancel must not wait for them.
                 if (!(group.Source is Texture2D texture) || cropped.Contains(texture) || unaudited.Contains(texture) || group.Warning != null || scan.Duplicates.ContainsValue(texture)) continue;
-                if (group.Uses.Count == 0 || group.Uses.Any(u => !u.Material || !u.Sampling.Supported || (android
-                        ? u.Sampling.AdapterId != VRChatMobileAdapter.Id
-                        : !(u.Sampling.AdapterId ?? "").StartsWith(LilToonAdapter.Id + "/", StringComparison.Ordinal) || u.Sampling.AdapterId.Contains("/lilssao")))) continue;
-                if (android && (!ProbedAstcBlocks.Contains((int)UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockWidth(texture.graphicsFormat)) ||
-                        UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockWidth(texture.graphicsFormat) != UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockHeight(texture.graphicsFormat))) continue;
+                if (!AuditedForCollapse(group, texture, android)) continue;
                 string path = AssetDatabase.GetAssetPath(texture);
                 if (!SourceImages.IsSupported(path) || !(AssetImporter.GetAtPath(path) is TextureImporter importer)) continue;
                 // A source Unity flattens (PSD, TGA...) is read as its flattened pixels; normal maps must be authored PNGs.
@@ -277,12 +303,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
         }
 
-        // The 4 x 4 one-colour copy (cached), imported with the source's settings.
-        private static Texture2D GenerateUniform(Texture2D texture, byte[] bytes, Color32 colour, PngInfo info, string folder)
+        // The shader half of the collapse rule above: every use is an audited lilToon (PC, lilSSAO excluded) or VRChat mobile
+        // (Android) lookup, and on Android the format's blocks are a probed square ASTC size.
+        private static bool AuditedForCollapse(TextureGroup group, Texture2D texture, bool android)
+        {
+            if (group.Uses.Count == 0 || group.Uses.Any(u => !u.Material || !u.Sampling.Supported || (android
+                    ? u.Sampling.AdapterId != VRChatMobileAdapter.Id
+                    : !(u.Sampling.AdapterId ?? "").StartsWith(LilToonAdapter.Id + "/", StringComparison.Ordinal) || u.Sampling.AdapterId.Contains("/lilssao")))) return false;
+            return !android || ProbedAstcBlocks.Contains((int)UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockWidth(texture.graphicsFormat)) &&
+                UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockWidth(texture.graphicsFormat) == UnityEngine.Experimental.Rendering.GraphicsFormatUtility.GetBlockHeight(texture.graphicsFormat);
+        }
+
+        // The 4 x 4 one-colour copy (cached), imported with the source's settings. crop: the copy stands for that part of the
+        // texture (one colour inside it, not outside); it is keyed and checked by the part. cachedOnly: return the cached copy
+        // or null, without decoding anything.
+        private static Texture2D GenerateUniform(Texture2D texture, byte[] bytes, Color32 colour, PngInfo info, string folder, Crop crop = null, bool cachedOnly = false)
         {
             string sourcePath = AssetDatabase.GetAssetPath(texture);
             string recipe = FingerprintService.Hash(bytes.Concat(System.Text.Encoding.UTF8.GetBytes(
-                File.ReadAllText(LongPath.For(sourcePath + ".meta")) + "|uniform-v2")).ToArray());
+                File.ReadAllText(LongPath.For(sourcePath + ".meta")) +
+                (crop == null ? "|uniform-v2" : "|" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + "|uniform-crop-v1"))).ToArray());
             string userData = "ArclightCrop:" + recipe;
             folder += "/Crops";
             AutomaticTextureOptimizer.EnsureFolder(folder);
@@ -290,8 +330,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (File.Exists(outPath) && AssetImporter.GetAtPath(outPath) is TextureImporter cachedImporter && cachedImporter.userData == userData)
             {
                 var cached = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
-                if (cached && cached.width == 4 && cached.height == 4 && Checked(texture, cached, outPath)) { TextureSafety.DropReadable(cachedImporter); AudioMonoConverter.MarkUsed(outPath); return cached; } // Copies made before 1.1.13 lose Read/Write.
+                if (cached && cached.width == 4 && cached.height == 4 && Checked(texture, cached, outPath, crop)) { TextureSafety.DropReadable(cachedImporter); AudioMonoConverter.MarkUsed(outPath); return cached; } // Copies made before 1.1.13 lose Read/Write.
             }
+            if (cachedOnly) return null;
             if (File.Exists(outPath) || File.Exists(outPath + ".meta")) outPath = AssetDatabase.GenerateUniqueAssetPath(outPath);
 
             var small = Enumerable.Repeat(colour, 16).ToArray();
@@ -312,31 +353,35 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 AssetDatabase.DeleteAsset(outPath);
                 throw new InvalidOperationException("The one-colour copy did not import with the original's settings.");
             }
-            if (!Checked(texture, imported, outPath)) throw new InvalidOperationException("The one-colour copy decodes to a different value.");
+            if (!Checked(texture, imported, outPath, crop)) throw new InvalidOperationException("The one-colour copy decodes to a different value.");
             TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(outPath));
             AudioMonoConverter.MarkUsed(outPath);
             return imported;
         }
 
-        // Whether the copy reads the same as the original on the GPU; a copy that does not (or cannot be checked) is deleted.
-        private static bool Checked(Texture original, Texture copy, string path)
+        // Whether the copy reads the same as the original (or, for a crop, as the crop's part of it) on the GPU; a copy that
+        // does not (or cannot be checked) is deleted.
+        private static bool Checked(Texture2D original, Texture2D copy, string path, Crop crop = null)
         {
             bool same = false;
-            try { same = SameDecoded(original, copy); }
+            try { same = crop == null ? SameDecoded(original, copy) : SameRegion(original, copy, crop, original.width >> crop.Kx, original.height >> crop.Ky); }
             finally { if (!same) AssetDatabase.DeleteAsset(path); }
             return same;
         }
 
         // The GPU's decode of the crop against the same part of the original, texel for texel at level 0 and at each level whose
         // part is still at least 4 texels on both axes (the levels a crop keeps exact). Each target pixel lands on a texel centre,
-        // so the read is that texel at that level.
-        private static bool SameRegion(Texture2D original, Texture2D cropped, Crop crop)
+        // so the read is that texel at that level. width/height: the part's imported size, when the copy is not the crop
+        // itself (a 4 x 4 one-colour copy of a one-colour part, read magnified at each of the part's levels).
+        private static bool SameRegion(Texture2D original, Texture2D cropped, Crop crop, int width = 0, int height = 0)
         {
             var scale = new Vector2(1f / (1 << crop.Kx), 1f / (1 << crop.Ky));
             var offset = new Vector2(crop.Jx * scale.x, crop.Jy * scale.y);
-            for (int level = 0; level < cropped.mipmapCount; level++)
+            int levels = width > 0 ? original.mipmapCount : cropped.mipmapCount;
+            if (width <= 0) { width = cropped.width; height = cropped.height; }
+            for (int level = 0; level < levels; level++)
             {
-                int w = cropped.width >> level, h = cropped.height >> level;
+                int w = width >> level, h = height >> level;
                 if (w < 4 || h < 4) break;
                 if (!Read(original, w, h, scale, offset).SequenceEqual(Read(cropped, w, h, Vector2.one, Vector2.zero))) return false;
             }
@@ -411,6 +456,31 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
         }
 
+        // The largest k per axis for which the decoded PNG repeats every width >> k columns (height >> k rows). Remembered for
+        // the session by file content (SessionState under FingerprintService.Version, like PixelSignature).
+        private static (int X, int Y) Periodicity(string path, Action cancel)
+        {
+            var bytes = File.ReadAllBytes(LongPath.For(path));
+            string key = "Arclight.Optimizer.Periodic." + FingerprintService.Version + "." + NotUniform.Key(bytes);
+            string known = SessionState.GetString(key, "");
+            if (known.Length > 0) { var parts = known.Split(','); return (int.Parse(parts[0]), int.Parse(parts[1])); }
+            cancel?.Invoke();
+            var pixels = PngPixels.Decode(bytes, out var info);
+            int w = info.Width, h = info.Height;
+            bool RepeatsX(int p) { for (int y = 0; y < h; y++) for (int x = p; x < w; x++) if (!pixels[y * w + x].Equals(pixels[y * w + x - p])) return false; return true; }
+            bool RepeatsY(int p) { for (int i = p * w; i < w * h; i++) if (!pixels[i].Equals(pixels[i - p * w])) return false; return true; }
+            int kx = 0, ky = 0;
+            while (w >> (kx + 1) >= 1 && RepeatsX(w >> (kx + 1))) kx++;
+            while (h >> (ky + 1) >= 1 && RepeatsY(h >> (ky + 1))) ky++;
+            SessionState.SetString(key, kx + "," + ky);
+            return (kx, ky);
+        }
+
+        // The GPU check of a crop; a crop of a repeating axis stands for every cell along it, so the last cell is compared too.
+        private static bool SameCells(Texture2D original, Texture2D cropped, Crop crop) =>
+            SameRegion(original, cropped, crop) && (!crop.Px && !crop.Py || SameRegion(original, cropped, new Crop { Kx = crop.Kx, Ky = crop.Ky,
+                Jx = crop.Px ? (1 << crop.Kx) - 1 : crop.Jx, Jy = crop.Py ? (1 << crop.Ky) - 1 : crop.Jy }));
+
         // The deepest aligned crop holding every texture's protected texels and every lookup's UVs, or null.
         private static Crop Plan(List<Texture2D> textures, Dictionary<Texture, TextureGroup> groups, List<(TextureUsageRecord Use, SamplingPath Path)> paths,
             UvCoverageCache coverage, Action cancel = null)
@@ -426,7 +496,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     Include(uv.x, uv.y, uv.x, uv.y);
                 }
             }
-            if (x0 < 0 || y0 < 0 || x1 > 1 || y1 > 1) return null; // Lookups that wrap cannot move.
+            // Lookups that wrap move only on an axis every lookup samples with Repeat and every texture repeats along exactly at
+            // the crop's cell (probed below): cropping to cell 0 and multiplying the tiling/offset by 2^k then reads the same
+            // texel, and box-filtered mip levels of a periodic image are periodic too.
+            bool wrapX = x0 < 0 || x1 > 1, wrapY = y0 < 0 || y1 > 1;
+            if (paths.Any(p => wrapX && p.Path.WrapU(p.Use.Texture) != TextureWrapMode.Repeat || wrapY && p.Path.WrapV(p.Use.Texture) != TextureWrapMode.Repeat))
+                return null;
+            int periodX = 12, periodY = 12;
             var sizes = new List<(int W, int H)>();
             foreach (var texture in textures)
             {
@@ -455,13 +531,22 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (blockW != 1 && blockW != 4 || blockH != 1 && blockH != 4) return null;
                 // PVRTC also uses 4-texel blocks but blends neighbouring blocks, so a crop is never exact there.
                 if (UnityEngine.Experimental.Rendering.GraphicsFormatUtility.IsPVRTCFormat(texture.graphicsFormat)) return null;
+                if (wrapX || wrapY)
+                {
+                    // Periodicity is probed on the authored PNG at its imported size: a resampled import need not stay periodic.
+                    if (flattened || texture.width != info.Width || texture.height != info.Height) return null;
+                    var period = Periodicity(path, cancel);
+                    periodX = Math.Min(periodX, period.X); periodY = Math.Min(periodY, period.Y);
+                }
                 var mask = UvCoverageRasterizer.Build(groups[texture], info.Width, info.Height, out _, coverage, cancel);
                 int mx0 = int.MaxValue, my0 = int.MaxValue, mx1 = -1, my1 = -1;
                 for (int y = 0; y < info.Height; y++)
                     for (int x = 0; x < info.Width; x++)
                         if (mask[y * info.Width + x]) { mx0 = Math.Min(mx0, x); mx1 = Math.Max(mx1, x); my0 = Math.Min(my0, y); my1 = Math.Max(my1, y); }
                 if (mx1 < 0) return null;
-                Include((double)mx0 / info.Width, (double)my0 / info.Height, (double)(mx1 + 1) / info.Width, (double)(my1 + 1) / info.Height);
+                // A repeating axis holds every texel in each cell, so its coverage box does not narrow the crop.
+                Include(wrapX ? x0 : (double)mx0 / info.Width, wrapY ? y0 : (double)my0 / info.Height,
+                    wrapX ? x1 : (double)(mx1 + 1) / info.Width, wrapY ? y1 : (double)(my1 + 1) / info.Height);
                 sizes.Add((info.Width, info.Height));
                 sizes.Add((texture.width, texture.height)); // The imported size must also divide.
             }
@@ -473,23 +558,59 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                        sizes.All(s => size(s) >> (k + 1) >= 4)) k++;
                 return k;
             }
-            var crop = new Crop { Kx = Depth(x0, x1, s => s.W), Ky = Depth(y0, y1, s => s.H) };
-            if (crop.Kx == 0 && crop.Ky == 0) return null;
-            crop.Jx = (int)Math.Floor(x0 * (1 << crop.Kx));
-            crop.Jy = (int)Math.Floor(y0 * (1 << crop.Ky));
+            // A repeating axis: as deep as every texture repeats and keeps 4-texel blocks; cell 0.
+            int Periodic(int period, Func<(int W, int H), int> size)
+            {
+                int k = 0;
+                while (k < period && sizes.All(s => size(s) >> (k + 1) >= 4)) k++;
+                return k;
+            }
+            var crop = new Crop { Kx = wrapX ? Periodic(periodX, s => s.W) : Depth(x0, x1, s => s.W), Ky = wrapY ? Periodic(periodY, s => s.H) : Depth(y0, y1, s => s.H),
+                Px = wrapX, Py = wrapY };
+            // A wrapping axis that does not repeat keeps the whole texture (no crop of the other axis alone).
+            if (crop.Kx == 0 && crop.Ky == 0 || wrapX && crop.Kx == 0 || wrapY && crop.Ky == 0) return null;
+            crop.Jx = wrapX ? 0 : (int)Math.Floor(x0 * (1 << crop.Kx));
+            crop.Jy = wrapY ? 0 : (int)Math.Floor(y0 * (1 << crop.Ky));
             return crop;
         }
 
         // The cropped copy of the texture (cached), imported with its settings and a max size keeping its import scale.
-        private static Texture2D Generate(Texture2D texture, Crop crop, string folder)
+        // collapsible: a part that is one colour becomes a 4 x 4 one-colour copy instead (uniform).
+        private static Texture2D Generate(Texture2D texture, Crop crop, string folder, bool collapsible, out bool uniform)
         {
             string sourcePath = AssetDatabase.GetAssetPath(texture);
             var bytes = File.ReadAllBytes(LongPath.For(sourcePath));
+            uniform = false;
+            if (collapsible && GenerateUniform(texture, bytes, default, null, folder, crop, cachedOnly: true) is Texture2D flat) { uniform = true; return flat; }
+            string cacheFolder = folder; // Flattening's temporary copy lives here, where the cache cleanup knows its name.
+            PngInfo info = null;
+            Color32[] cut = null;
+            void Cut()
+            {
+                var pixels = SourceImages.IsPng(sourcePath) ? PngPixels.Decode(bytes, out info) : SourceImages.Flatten(sourcePath, cacheFolder, out info);
+                int cw = info.Width >> crop.Kx, ch = info.Height >> crop.Ky, ox = crop.Jx * cw, oy = crop.Jy * ch;
+                cut = new Color32[cw * ch];
+                for (int y = 0; y < ch; y++) Array.Copy(pixels, (oy + y) * info.Width + ox, cut, y * cw, cw);
+            }
+            // Whether the part is one colour is decided before any cached plain crop is used, and remembered when it is not
+            // (NotUniform, keyed by the source, its importer and the part), so a later build reuses the plain crop undecoded.
+            string partKey = collapsible ? NotUniform.Key(bytes.Concat(File.ReadAllBytes(LongPath.For(sourcePath + ".meta"))).ToArray(),
+                "part-v1:" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + ":") : null;
+            if (collapsible && !NotUniform.Known(partKey))
+            {
+                Cut();
+                if (!cut.All(p => p.Equals(cut[0]))) NotUniform.Add(partKey);
+                else
+                {
+                    try { var small = GenerateUniform(texture, bytes, cut[0], info, cacheFolder, crop); uniform = true; return small; }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception e) { Debug.Log("Arclight Optimizer: one-colour crop kept as a crop for " + texture.name + ": " + e.Message); }
+                }
+            }
             string recipe = FingerprintService.Hash(bytes.Concat(System.Text.Encoding.UTF8.GetBytes(
                 File.ReadAllText(LongPath.For(sourcePath + ".meta")) + "|" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + "|crop-v2")).ToArray());
             string userData = "ArclightCrop:" + recipe;
             int importedW = texture.width >> crop.Kx, importedH = texture.height >> crop.Ky;
-            string cacheFolder = folder; // Flattening's temporary copy lives here, where the cache cleanup knows its name.
             folder += "/Crops";
             AutomaticTextureOptimizer.EnsureFolder(folder);
             string outPath = GenerationCoordinator.OutputPath(folder, texture.name, recipe);
@@ -503,8 +624,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // they are now, and the build target, so an edited or re-imported crop is compared again. The cheap import
                 // check still runs on every hit. A failed comparison is never remembered.
                 string verifiedKey = "Arclight.Optimizer.CropVerified." + FingerprintService.Version + "." + EditorUserBuildSettings.activeBuildTarget + "." + recipe + "." +
-                    FingerprintService.FileHash(outPath) + "." + FingerprintService.FileHash(outPath + ".meta");
-                if (cached && SameImport(cached, texture, importedW, importedH) && (SessionState.GetBool(verifiedKey, false) || SameRegion(texture, cached, crop)))
+                    FingerprintService.FileHash(outPath) + "." + FingerprintService.FileHash(outPath + ".meta") + (crop.Px || crop.Py ? ".periodic" + crop.Px + crop.Py : "");
+                if (cached && SameImport(cached, texture, importedW, importedH) && (SessionState.GetBool(verifiedKey, false) || SameCells(texture, cached, crop)))
                 {
                     // Copies made before 1.1.13 lose Read/Write; that rewrites the .meta, so the memo is set under the key read above
                     // only when the .meta is unchanged.
@@ -516,11 +637,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             if (File.Exists(outPath) || File.Exists(outPath + ".meta")) outPath = AssetDatabase.GenerateUniqueAssetPath(outPath);
 
-            PngInfo info;
-            var pixels = SourceImages.IsPng(sourcePath) ? PngPixels.Decode(bytes, out info) : SourceImages.Flatten(sourcePath, cacheFolder, out info);
-            int w = info.Width >> crop.Kx, h = info.Height >> crop.Ky, ox = crop.Jx * w, oy = crop.Jy * h;
-            var cut = new Color32[w * h];
-            for (int y = 0; y < h; y++) Array.Copy(pixels, (oy + y) * info.Width + ox, cut, y * w, w);
+            if (cut == null) Cut();
+            int w = info.Width >> crop.Kx, h = info.Height >> crop.Ky;
             var cutInfo = new PngInfo { Width = w, Height = h, BitDepth = info.BitDepth, ColorType = info.ColorType, Alpha = info.Alpha };
             cutInfo.ColourMetadata.AddRange(info.ColourMetadata);
             var png = PngPixels.Encode(cut, cutInfo);
@@ -543,7 +661,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             // The size and format checks cover the known causes of a mismatch (block alignment, import scale); this covers the rest.
             bool same = false;
-            try { same = SameRegion(texture, imported, crop); }
+            try { same = SameCells(texture, imported, crop); }
             finally { if (!same) AssetDatabase.DeleteAsset(outPath); }
             if (!same) throw new InvalidOperationException("The cropped texture decodes differently from that part of the original.");
             TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(outPath));

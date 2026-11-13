@@ -24,8 +24,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    centre when there is none, so without a shared anchor the bounds centres must already coincide.
     //  - Opaque only: every material in a queue up to 2500, where draw order between renderers does not change
     //    the image. Transparent materials sort by renderer, and merging would fix their order.
-    //  - Same vertex layout: every source has the same attributes with the same dimensions, so no shader reads a
-    //    filled-in value. Blend shape names must not collide.
+    //  - Joinable vertex layouts: an attribute two members both have is stored in the same format and dimension. One some
+    //    members lack is filled for them (zeros; tangent (0,0,0,1), in a 16- or 32-bit float format only) when no material
+    //    that can render those members reads it (VertexStreamStripper.Needs, which fails closed for unknown shaders), so no
+    //    shader reads a filled-in value. Blend shape names must not collide.
     //  - Vertex IDs: merging renumbers vertices of every source after the first, so at most one source may use a
     //    material that reads SV_VertexID, and it goes first. lilToon reads it only for an active ID Mask.
     //  - Same material contacts: the VRChat receivers that drive material properties through contact events name the
@@ -33,11 +35,22 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    every aimed receiver's target list is repointed at the host (see MaterialContacts).
     // Bones and bind poses are concatenated per source (a bone may repeat with a different bind pose), so every
     // vertex is skinned by exactly the same matrices as before; identical (bone, bind pose) pairs are shared.
+    // Rigid members: a plain MeshRenderer joins as a skinned piece whose one bone is its own object (bind pose identity, every
+    // vertex weight 1), so skinning puts each vertex where its object's transform put it and its vertex bytes are copied
+    // unchanged. Only when that is the same picture: its object's scale is 1 up to the root forever
+    // (RigidAccessoryConverter.UnitScaleForever) and every material is order-independent and reads no object-space position
+    // or axis (ObjectSpaceSafe: audited lilToon only), because a skinned mesh is drawn in its root bone's frame; probes are off
+    // or sampled at an anchor; nothing animates or references the renderer, its filter or its mesh. It takes the root bone
+    // and skinned-only settings of the skinned candidate it matches; one that ends up merged with nothing is put back as it was
+    // (its serialized settings, materials, enabled flag, probe usage and anchors). Plain meshes the static merger, which runs later,
+    // would join with each other are left to it (StaticMeshMerger.WouldMerge), as are renderers with extra vertex streams.
     internal static class SkinnedMeshMerger
     {
         internal sealed class Result
         {
             public int Merged, Into, Contacts;
+            // Of Merged, plain MeshRenderers that joined as rigid members.
+            public int Rigid;
             // Why a renderer stayed apart: the reason and the renderers it applies to.
             public readonly Dictionary<string, List<string>> WhyNot = new Dictionary<string, List<string>>();
             public readonly List<string> Hints = new List<string>();
@@ -52,6 +65,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var meshSwaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
             var all = root.GetComponentsInChildren<SkinnedMeshRenderer>(true).ToList();
             var candidates = all.Where(r => Eligible(r, analysis, meshSwaps, rewriter != null, contacts)).ToList();
+            var rigid = AdmitRigid(analysis, candidates, meshSwaps, contacts, rewriter != null);
+            candidates.AddRange(rigid.Keys);
             var moves = new Dictionary<GameObject, Move>();
             var mergedAway = new HashSet<SkinnedMeshRenderer>();
             void Why(string reason, SkinnedMeshRenderer r) { if (!result.WhyNot.TryGetValue(reason, out var names)) result.WhyNot[reason] = names = new List<string>(); names.Add(r.name); }
@@ -85,7 +100,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var seed = remaining[0];
                     var members = new List<SkinnedMeshRenderer> { seed };
                     foreach (var r in remaining.Skip(1))
-                        if (Compatible(seed, r) && PropertiesDisjoint(members, r, analysis)) members.Add(r);
+                        if (Compatible(members, r, analysis) && PropertiesDisjoint(members, r, analysis)) members.Add(r);
                     remaining.RemoveAll(members.Contains);
                     if (members.Count < 2) continue;
                     // MMD worlds animate shapes on the root "Body" by name, so it hosts the merge and keeps its names.
@@ -104,10 +119,106 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             finally
             {
                 if (moves.Count > 0) rewriter?.Rewrite((owner, binding) => Retarget(owner, binding, root, moves));
+                foreach (var pair in rigid.Where(p => !mergedAway.Contains(p.Key))) Restore(pair.Key, pair.Value);
             }
-            foreach (var r in candidates.Except(singles).Where(r => !mergedAway.Contains(r)))
+            foreach (var r in candidates.Except(singles).Where(r => !mergedAway.Contains(r) && !rigid.ContainsKey(r)))
                 Why("a different vertex layout, probe sampling, animated material property or vertex-ID use than its matches", r);
+            result.Rigid = rigid.Keys.Count(mergedAway.Contains);
             return result;
+        }
+
+        // What a rigid member was before it became skinned, to put it back when it merged with nothing.
+        // The serialized settings, plus every object reference (EditorJsonUtility does not bring back in-memory materials) and
+        // the switches the merge key and probe sampling read, set again explicitly.
+        private sealed class RigidSource
+        {
+            public Mesh Mesh; public string Renderer; public Material[] Materials; public bool Enabled;
+            public LightProbeUsage LightProbes; public ReflectionProbeUsage ReflectionProbes; public Transform ProbeAnchor; public GameObject ProxyVolume;
+        }
+
+        // Plain MeshRenderers that may join a skinned group (class comment), converted in place, each matching some skinned
+        // candidate's merge key; any other is left as it was.
+        private static Dictionary<SkinnedMeshRenderer, RigidSource> AdmitRigid(AvatarAnalysis analysis, List<SkinnedMeshRenderer> candidates,
+            HashSet<Mesh> meshSwaps, MaterialContacts contacts, bool canMoveAnimation)
+        {
+            var admitted = new Dictionary<SkinnedMeshRenderer, RigidSource>();
+            if (candidates.Count == 0) return admitted;
+            var root = analysis.Root;
+            // Plain meshes the static merger (which runs later) would join with each other stay for it.
+            var staticMerges = StaticMeshMerger.WouldMerge(analysis);
+            foreach (var renderer in root.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                if (staticMerges.Contains(renderer) || renderer.additionalVertexStreams || renderer.enlightenVertexStream) continue;
+                var filter = renderer.GetComponent<MeshFilter>();
+                var mesh = filter ? filter.sharedMesh : null;
+                if (!mesh || !mesh.isReadable || !renderer.enabled || Exclusions.Excluded(renderer) || TextureUsageScanner.HasPropertyBlock(renderer)) continue;
+                if (mesh.blendShapeCount > 0 || mesh.bindposes.Length > 0 || mesh.HasVertexAttribute(VertexAttribute.BlendWeight) || meshSwaps.Contains(mesh)) continue;
+                if (analysis.BindingsOn(renderer).Any() || analysis.BindingsOn(filter).Any() || analysis.ReferencesTo(renderer).Any() ||
+                    analysis.ReferencesTo(mesh).Any(c => c != filter)) continue;
+                if ((renderer.lightProbeUsage != LightProbeUsage.Off || renderer.reflectionProbeUsage != ReflectionProbeUsage.Off) && !renderer.probeAnchor) continue;
+                if (!RigidAccessoryConverter.UnitScaleForever(renderer.transform, analysis)) continue;
+                if (renderer.sharedMaterials.Any(m => !OrderIndependent(m) || !RigidAccessoryConverter.ObjectSpaceSafe(m))) continue;
+                // A skinned candidate whose root bone and skinned-only settings it takes; the key decides the rest.
+                var like = candidates.FirstOrDefault(c => c.probeAnchor == renderer.probeAnchor);
+                if (!like) continue;
+                var source = new RigidSource { Mesh = mesh, Renderer = EditorJsonUtility.ToJson(renderer), Materials = renderer.sharedMaterials, Enabled = renderer.enabled,
+                    LightProbes = renderer.lightProbeUsage, ReflectionProbes = renderer.reflectionProbeUsage, ProbeAnchor = renderer.probeAnchor,
+                    ProxyVolume = renderer.lightProbeProxyVolumeOverride };
+                var skinned = ToSkinned(renderer, filter, like);
+                string key = Key(skinned, analysis, contacts);
+                if (Eligible(skinned, analysis, meshSwaps, canMoveAnimation, contacts) && candidates.Any(c => Key(c, analysis, contacts) == key))
+                    admitted[skinned] = source;
+                else Restore(skinned, source);
+            }
+            return admitted;
+        }
+
+        private static SkinnedMeshRenderer ToSkinned(MeshRenderer renderer, MeshFilter filter, SkinnedMeshRenderer like)
+        {
+            var go = renderer.gameObject;
+            var mesh = Object.Instantiate(filter.sharedMesh);
+            mesh.name = filter.sharedMesh.name;
+            using (var perVertex = new Unity.Collections.NativeArray<byte>(Enumerable.Repeat((byte)1, mesh.vertexCount).ToArray(), Unity.Collections.Allocator.Temp))
+            using (var weights = new Unity.Collections.NativeArray<BoneWeight1>(Enumerable.Repeat(new BoneWeight1 { boneIndex = 0, weight = 1 }, mesh.vertexCount).ToArray(), Unity.Collections.Allocator.Temp))
+                mesh.SetBoneWeights(perVertex, weights);
+            mesh.bindposes = new[] { Matrix4x4.identity };
+            var settings = (renderer.sharedMaterials, renderer.shadowCastingMode, renderer.receiveShadows, renderer.lightProbeUsage, renderer.reflectionProbeUsage,
+                renderer.probeAnchor, renderer.lightProbeProxyVolumeOverride, renderer.motionVectorGenerationMode, renderer.allowOcclusionWhenDynamic,
+                renderer.renderingLayerMask, renderer.sortingLayerID, renderer.sortingOrder, renderer.rendererPriority);
+            Object.DestroyImmediate(renderer);
+            Object.DestroyImmediate(filter);
+            var skinned = go.AddComponent<SkinnedMeshRenderer>();
+            skinned.sharedMesh = mesh; skinned.bones = new[] { go.transform }; skinned.rootBone = like.rootBone;
+            (skinned.sharedMaterials, skinned.shadowCastingMode, skinned.receiveShadows, skinned.lightProbeUsage, skinned.reflectionProbeUsage,
+                skinned.probeAnchor, skinned.lightProbeProxyVolumeOverride, skinned.motionVectorGenerationMode, skinned.allowOcclusionWhenDynamic,
+                skinned.renderingLayerMask, skinned.sortingLayerID, skinned.sortingOrder, skinned.rendererPriority) = settings;
+            skinned.quality = like.quality; skinned.updateWhenOffscreen = like.updateWhenOffscreen; skinned.skinnedMotionVectors = like.skinnedMotionVectors;
+            // The mesh box in the root bone's frame, as a skinned renderer's local bounds are.
+            var rootBone = skinned.rootBone ? skinned.rootBone : go.transform;
+            var toRoot = rootBone.worldToLocalMatrix * go.transform.localToWorldMatrix;
+            var b = mesh.bounds;
+            var box = new Bounds(toRoot.MultiplyPoint3x4(b.min), Vector3.zero);
+            for (int i = 0; i < 8; i++)
+                box.Encapsulate(toRoot.MultiplyPoint3x4(new Vector3((i & 1) == 0 ? b.min.x : b.max.x, (i & 2) == 0 ? b.min.y : b.max.y, (i & 4) == 0 ? b.min.z : b.max.z)));
+            skinned.localBounds = box;
+            return skinned;
+        }
+
+        private static void Restore(SkinnedMeshRenderer skinned, RigidSource source)
+        {
+            var go = skinned.gameObject;
+            var copy = skinned.sharedMesh;
+            Object.DestroyImmediate(skinned);
+            if (copy) Object.DestroyImmediate(copy);
+            go.AddComponent<MeshFilter>().sharedMesh = source.Mesh;
+            var renderer = go.AddComponent<MeshRenderer>();
+            EditorJsonUtility.FromJsonOverwrite(source.Renderer, renderer);
+            renderer.sharedMaterials = source.Materials;
+            renderer.enabled = source.Enabled;
+            renderer.lightProbeUsage = source.LightProbes;
+            renderer.reflectionProbeUsage = source.ReflectionProbes;
+            renderer.probeAnchor = source.ProbeAnchor;
+            renderer.lightProbeProxyVolumeOverride = source.ProxyVolume;
         }
 
         // Where one merged renderer's animation goes: the host's path, renamed blend shapes, shifted material slots.
@@ -244,9 +355,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             };
         }
 
-        private static bool Compatible(SkinnedMeshRenderer a, SkinnedMeshRenderer b)
+        private static bool Compatible(List<SkinnedMeshRenderer> members, SkinnedMeshRenderer b, AvatarAnalysis analysis)
         {
-            if (Layout(a.sharedMesh) != Layout(b.sharedMesh)) return false;
+            var a = members[0];
+            if (!LayoutsJoin(members, b, analysis)) return false;
             bool probesSampled = a.lightProbeUsage != LightProbeUsage.Off || a.reflectionProbeUsage != ReflectionProbeUsage.Off;
             // Without an anchor, probes are sampled at the bounds centre; the merged bounds must keep it. With Update When
             // Offscreen the centre is recomputed from the skinned vertices every frame, so no two renderers share it.
@@ -254,12 +366,42 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return true;
         }
 
+        // The non-skin attributes of these meshes, one descriptor per attribute (the first mesh's that has it), in attribute order.
+        private static VertexAttributeDescriptor[] Attributes(IEnumerable<Mesh> meshes) =>
+            meshes.SelectMany(m => m.GetVertexAttributes()).Where(d => d.attribute != VertexAttribute.BlendWeight && d.attribute != VertexAttribute.BlendIndices)
+                .GroupBy(d => d.attribute).Select(g => g.First()).OrderBy(d => (int)d.attribute).ToArray();
+
+        // Whether b's layout joins the members' (class comment): shared attributes match, and a channel only one side has is
+        // read by no material that can render the other side.
+        private static bool LayoutsJoin(List<SkinnedMeshRenderer> members, SkinnedMeshRenderer b, AvatarAnalysis analysis)
+        {
+            var union = Attributes(members.Select(m => m.sharedMesh)).ToDictionary(d => d.attribute);
+            var own = Attributes(new[] { b.sharedMesh }).ToDictionary(d => d.attribute);
+            bool Reads(SkinnedMeshRenderer r, VertexAttribute attribute)
+            {
+                var animated = new HashSet<string>(analysis.AnimatedMaterialProperties(r), StringComparer.Ordinal);
+                return r.sharedMaterials.Concat(analysis.SwappedMaterials(r)).Any(m => VertexStreamStripper.Needs(m, attribute, animated.Contains));
+            }
+            bool Fillable(VertexAttributeDescriptor d) => d.attribute != VertexAttribute.Tangent ||
+                d.format == VertexAttributeFormat.Float32 || d.format == VertexAttributeFormat.Float16;
+            foreach (var d in union.Values)
+            {
+                if (own.TryGetValue(d.attribute, out var o)) { if (o.format != d.format || o.dimension != d.dimension) return false; }
+                else if (!Fillable(d) || Reads(b, d.attribute)) return false;
+            }
+            foreach (var o in own.Values.Where(o => !union.ContainsKey(o.attribute)))
+                if (!Fillable(o) || members.Any(m => Reads(m, o.attribute))) return false;
+            // Every member that already lacks a channel of the union must keep lacking reads of it (checked when it joined).
+            return true;
+        }
+
         // Unity rebuilds a skinned renderer's skinning buffers for a new mesh layout only when the renderer is enabled
         // again after the change. The renderer's own enabled state is restored afterwards (a disabled renderer stays off).
-        // Sets dst's layout to the first source's non-skin attributes and fills it with every source's vertices in turn.
+        // Sets dst's layout to the union of the sources' non-skin attributes and fills it with every source's vertices in
+        // turn; a source without an attribute gets the fill (zeros, tangent w = 1; see LayoutsJoin).
         private static void CopyVertexData(Mesh dst, List<Mesh> sources)
         {
-            var attributes = sources[0].GetVertexAttributes().Where(d => d.attribute != VertexAttribute.BlendWeight && d.attribute != VertexAttribute.BlendIndices).ToArray();
+            var attributes = Attributes(sources);
             int total = sources.Sum(s => s.vertexCount);
             dst.SetVertexBufferParams(total, attributes);
             var buffers = attributes.Select(d => d.stream).Distinct().ToDictionary(s => s, s => new byte[dst.GetVertexBufferStride(s) * total]);
@@ -271,8 +413,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var data = array[0];
                     foreach (var d in attributes)
                     {
-                        int size = (d.format == VertexAttributeFormat.Float32 || d.format == VertexAttributeFormat.UInt32 || d.format == VertexAttributeFormat.SInt32 ? 4
-                            : d.format == VertexAttributeFormat.UNorm8 || d.format == VertexAttributeFormat.SNorm8 || d.format == VertexAttributeFormat.UInt8 || d.format == VertexAttributeFormat.SInt8 ? 1 : 2) * d.dimension;
+                        int component = d.format == VertexAttributeFormat.Float32 || d.format == VertexAttributeFormat.UInt32 || d.format == VertexAttributeFormat.SInt32 ? 4
+                            : d.format == VertexAttributeFormat.UNorm8 || d.format == VertexAttributeFormat.SNorm8 || d.format == VertexAttributeFormat.UInt8 || d.format == VertexAttributeFormat.SInt8 ? 1 : 2;
+                        int size = component * d.dimension;
+                        if (!data.HasVertexAttribute(d.attribute))
+                        {
+                            // The buffer starts zeroed; a tangent's w is 1 (LayoutsJoin admits only float formats for it).
+                            if (d.attribute != VertexAttribute.Tangent) continue;
+                            var one = component == 4 ? BitConverter.GetBytes(1f) : new byte[] { 0x00, 0x3C };
+                            int at = dst.GetVertexAttributeOffset(d.attribute) + 3 * component, fillStride = dst.GetVertexBufferStride(d.stream);
+                            for (int v = 0; v < source.vertexCount; v++) Array.Copy(one, 0, buffers[d.stream], (first + v) * fillStride + at, component);
+                            continue;
+                        }
                         int stream = data.GetVertexAttributeStream(d.attribute), from = data.GetVertexAttributeOffset(d.attribute), stride = data.GetVertexBufferStride(stream);
                         var src = data.GetVertexData<byte>(stream);
                         int to = dst.GetVertexAttributeOffset(d.attribute), dstStride = dst.GetVertexBufferStride(d.stream);
@@ -328,10 +480,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             renderer.enabled = true;
             renderer.enabled = enabled;
         }
-
-        private static string Layout(Mesh mesh) =>
-            string.Join(",", mesh.GetVertexAttributes().Where(d => d.attribute != VertexAttribute.BlendWeight && d.attribute != VertexAttribute.BlendIndices)
-                .Select(d => d.attribute + ":" + d.format + ":" + d.dimension).OrderBy(s => s, StringComparer.Ordinal));
 
         internal static readonly Dictionary<string, bool> VertexIdReaders = new Dictionary<string, bool>();
         private static readonly ShaderType[] VertexIdStages = { ShaderType.Vertex, ShaderType.Hull, ShaderType.Domain, ShaderType.Geometry };
@@ -453,8 +601,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var positions = new List<Vector3>(); var normals = new List<Vector3>();
             var bonesPerVertex = new List<byte>(); var weights = new List<BoneWeight1>();
             var submeshes = new List<int[]>(); var materials = new List<Material>();
-            var layout = members[0].sharedMesh;
-            bool hasNormals = layout.HasVertexAttribute(VertexAttribute.Normal);
+            bool hasNormals = members.Any(m => m.sharedMesh.HasVertexAttribute(VertexAttribute.Normal));
             var shapeSources = new List<(SkinnedMeshRenderer Renderer, int Offset)>();
             Bounds? bounds = null;
 
@@ -472,7 +619,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     remap[b] = slot;
                 }
                 positions.AddRange(source.vertices);
-                if (hasNormals) normals.AddRange(source.normals);
+                if (hasNormals) normals.AddRange(source.HasVertexAttribute(VertexAttribute.Normal) ? source.normals : new Vector3[source.vertexCount]);
                 var perVertex = source.GetBonesPerVertex(); var sourceWeights = source.GetAllBoneWeights();
                 bonesPerVertex.AddRange(perVertex);
                 foreach (var w in sourceWeights) weights.Add(new BoneWeight1 { boneIndex = remap[w.boneIndex], weight = w.weight });
@@ -485,8 +632,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 bounds = bounds == null ? b0 : Encapsulated(bounds.Value, b0);
             }
 
-            // Vertex data is copied byte for byte in the members' own formats (every member has the same layout), so
-            // compressed channels such as half-precision UVs stay compressed.
+            // Vertex data is copied byte for byte in the members' own formats (shared attributes have one format), so
+            // compressed channels such as half-precision UVs stay compressed; channels a member lacks get the fill.
             CopyVertexData(mesh, members.Select(m => m.sharedMesh).ToList());
             if (!mesh.vertices.SequenceEqual(positions) || hasNormals && !mesh.normals.SequenceEqual(normals))
                 throw new InvalidOperationException("Merged vertex data differs from its sources.");

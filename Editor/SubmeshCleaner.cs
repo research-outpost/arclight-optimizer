@@ -21,7 +21,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     {
         internal sealed class Result { public int Removed, Merged; }
 
-        internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register, AnimationRewriter rewriter)
+        // eligible: when given, only meshes it accepts are rebuilt (after d4rk's merge: meshes in this build's own containers).
+        internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register, AnimationRewriter rewriter, Func<Mesh, bool> eligible = null)
         {
             var result = new Result();
             if (!analysis.Complete) return result;
@@ -39,7 +40,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var mesh = MeshOf(renderer);
                 // A property block can hold values per material slot, which renumbering slots would move.
-                if (!mesh || !mesh.isReadable || meshUsers[mesh] != 1 || swaps.Contains(mesh) || Exclusions.Excluded(renderer) || TextureUsageScanner.HasPropertyBlock(renderer)) continue;
+                if (!mesh || !mesh.isReadable || eligible != null && !eligible(mesh) || meshUsers[mesh] != 1 || swaps.Contains(mesh) || Exclusions.Excluded(renderer) || TextureUsageScanner.HasPropertyBlock(renderer)) continue;
                 // A mesh swap whose idle state writes nothing leaves the current mesh out of the swapped values.
                 if (analysis.IsAnimated(renderer, p => p == "m_Mesh") ||
                     (renderer is MeshRenderer && renderer.GetComponent<MeshFilter>() is MeshFilter filter && analysis.IsAnimated(filter, p => p == "m_Mesh"))) continue;

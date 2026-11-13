@@ -25,13 +25,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal sealed class Result
         {
             public int Meshes, AudioClips, Compacted, MonoAudio, Stripped, FrozenShapes, MergedSkinned, MergedInto;
+            // Plain MeshRenderers merged into skinned meshes (SkinnedMeshMerger rigid members); not counted in MergedSkinned.
+            public int MergedRigid;
             // Mesh bytes are uncompressed vertex and index data; audio bytes are estimated bundle sizes.
             public long MeshBytes, AudioBytes;
             public int AudioUnmeasured;
-            public bool Changed => Meshes + AudioClips + Compacted + MonoAudio + Stripped + FrozenShapes + MergedSkinned > 0;
+            public bool Changed => Meshes + AudioClips + Compacted + MonoAudio + Stripped + FrozenShapes + MergedSkinned + MergedRigid > 0;
             public override string ToString() =>
                 $"merged {Meshes} duplicate mesh(es) and {AudioClips} duplicate audio clip(s), gave {Compacted} mesh(es) a 16-bit index buffer, " +
-                $"made {MonoAudio} identical-channel stereo clip(s) mono (+3 dB), removed unused vertex channels from {Stripped} mesh(es), baked or removed {FrozenShapes} blend shape(s), merged {MergedSkinned} skinned mesh(es) into {MergedInto}";
+                $"made {MonoAudio} identical-channel stereo clip(s) mono (+3 dB), removed unused vertex channels from {Stripped} mesh(es), baked or removed {FrozenShapes} blend shape(s), merged {MergedSkinned} skinned mesh(es)" + (MergedRigid > 0 ? $" and {MergedRigid} static mesh(es)" : "") + $" into {MergedInto}";
         }
 
         // monoAudio: convert qualifying identical-channel stereo clips. Callers pass false when animation can change

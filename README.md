@@ -59,6 +59,7 @@ Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by defau
 - **Folded animator layers**: a rotation can differ by one float step.
 - **Unified Bounds** (off by default): meshes may draw when just off screen.
 - **One anchor override**: every mesh is lit from the Chest bone (Exclude keeps a mesh's own), so lighting shifts slightly on meshes that had another anchor or none.
+- **Cropping on Poiyomi, Sunao and Mochie Standard** (PC builds only; Quest keeps the previous behaviour): Poiyomi accepts 10.0.x and 9.3.x, audited on 10.0.29 and 9.3.67 only; Mochie Standard accepts every 2.14 release, audited on 2.14.2 only; Sunao is audited on 1.6.2. A patch release that changes a lookup would crop unsafely. Mochie turns cropping off when its own version label cannot be read, and locked Poiyomi materials are never cropped.
 
 ## Other optimizers
 

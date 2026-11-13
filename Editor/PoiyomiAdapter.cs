@@ -15,6 +15,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Lil Fur (10.0.22): UVs are interpolated inside each triangle, _FurMask is read at raw UV0 in the geometry
     // stage, and the fur fragment resets poiMesh.uv to raw mesh UVs after lighting setup, so later lookups skip
     // the global UV tiling/offset and the backface shift.
+    // Crop basis (TextureCropper): audited on the installed Toon 10.0.29 and 9.3.67 sources, every entry. Each CropAudited
+    // field's <field>_ST and <field>_TexelSize appear only in poiUV(poiMesh.uv[<field>UV], <field>_ST) feeding that field's
+    // own lookup. _MainTex_ST is also read by Video Effects screen UVs (_VideoEffectsEnable) and _MainTex_TexelSize by
+    // pixel mode (already refused) and sharpened alpha-to-coverage, so those keep the main texture uncropped. Only 10.0.x
+    // and 9.3.x labels, fragment mesh-UV paths with the field's own ST, an identity global UV stage, no backface shift
+    // and no fur get a basis; locked shaders never do (Thry may bake the _ST into the code).
     internal sealed class PoiyomiAdapter : ITextureSamplingAdapter
     {
         private const string Id = "poiyomi-toon-static-v2";
@@ -40,6 +46,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // through the main sampler, like the other mesh-UV normal maps; only the matcap lookup after it is view-dependent.
             "_Matcap0NormalMap _Matcap1NormalMap _Matcap2NormalMap _Matcap3NormalMap");
         internal static readonly HashSet<string> ProModeledFields = BuildProModeledFields();
+        // Fields whose own _ST is read for nothing but their own mesh-UV lookup (see the class comment for the audit).
+        internal static readonly HashSet<string> CropAudited = Set(
+            "_MainTex _1st_ShadeMap _2nd_ShadeMap _ALDecalColorMask _AlphaMask _AnisoColorMap _AnisotropyMap _BackFaceMask _BackFaceTexture " +
+            "_BacklightColorTex _Bump2ndMap _Bump2ndScaleMask _BumpMap _ClearCoatMaps _ClothMetallicSmoothnessMap _CubeMapMask _DecalMask _DepthMask " +
+            "_DepthRimMask _DetailMask _DetailNormalMap _DetailTex _DissolveMask _DissolveNoiseTexture _DissolveToTexture _DistortionFlowTexture " +
+            "_DistortionFlowTexture1 _FlipbookMask _GlitterColorMap _GlitterMask _GlobalMaskTexture0 _GlobalMaskTexture1 _GlobalMaskTexture2 " +
+            "_GlobalMaskTexture3 _GrabPassBlendMap _HighColor_Tex _LightDataSDFMap _LightingAOMaps _LightingDetailShadowMaps _LightingShadowMasks " +
+            "_MainColorAdjustTexture _MainTintTexture _Matcap2Mask _Matcap3Mask _Matcap4Mask _MatcapMask _MetallicGlossMap _MirrorTexture " +
+            "_MochieMetallicMaps _MultilayerMathBlurMap _OutlineTexture _PPMask _ParallaxInternalMapMask _PathingColorMap _PathingMap " +
+            "_RGBAMetallicMaps _RGBASmoothnessMaps _RGBMask _ReflectionColorTex _Rim2ColorTex _Rim2Mask _Rim2Tex _RimColorTex _RimMask _RimTex " +
+            "_SSSThicknessMap _Set_HighColorMask _Set_Rim2LightMask _Set_RimLightMask _Shadow2ndColorTex _Shadow3rdColorTex _ShadowColorTex " +
+            "_ShadowStrengthMask _SkinThicknessMap _SmoothnessTex _VideoMaskTexture _VoronoiMask _VoronoiNoise");
         private static readonly HashSet<string> Normals = Set("_BumpMap _Bump2ndMap _BentNormalMap _DetailNormalMap _RgbNormalR _RgbNormalG _RgbNormalB _RgbNormalA " +
             "_Matcap0NormalMap _Matcap1NormalMap _Matcap2NormalMap _Matcap3NormalMap");
         private static readonly HashSet<string> Repeat = Set("_LightDataSDFMap _ShadowBorderMask _SmoothnessTex _MetallicGlossMap _ReflectionColorTex _OutlineMask _DepthBulgeMask _DissolveDetailNoise _PathingMap _VertexManipulationHeightMask _LookAtMask _VertexGlitchingMask _UzumoreMask _VertexBasicsMask _Heightmask _FurMask _FurNoiseMask");
@@ -297,7 +315,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 string layer = Layer(property);
                 if (layer != null) st = Merge(st, Vector(material, "_RGBA" + layer + "ScaleOffset"));
                 var paths = new List<SamplingPath>();
-                AddPath(material, layout, property, paths, uv, pan, property + "Stochastic", st, VertexOnly.Contains(property), layout.Repeat.Contains(property), fur);
+                AddPath(material, layout, property, paths, uv, pan, property + "Stochastic", st, VertexOnly.Contains(property), layout.Repeat.Contains(property), fur,
+                    layer == null && !Raw.Contains(property) ? CropBasis(material, version, property, fur) : null);
                 if (layout.VertexAndFragment.Contains(property))
                     AddPath(material, layout, property, paths, uv, pan, null, st, true, true, fur);
                 if (fur && property == "_FurMask")
@@ -357,6 +376,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (keywords != null) copy.shaderKeywords = keywords.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                 var result = Describe(copy, property);
                 result.AdapterId += "/locked";
+                // The locker may bake <field>_ST into the generated code, where a rewritten material value is never read.
+                foreach (var path in result.GetPaths()) { path.Basis = null; path.Dependencies = null; }
+                if (result.Supported) result.CropReason = "a locked Poiyomi material, never cropped (the lock can bake tiling and offset into the shader)";
                 if (MaterialInputs.Current.Any(input => IsRenamedAnimated(material, input)))
                     result.MaterialInputsUnknown = true;
                 return result;
@@ -383,10 +405,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return material.GetTag(name + "Animated", false, "") == "2";
         }
 
+        // The field whose own _ST the main lookup reads, when the class comment's crop audit covers it; else null.
+        private static string CropBasis(Material m, string version, string property, bool fur)
+        {
+            if (fur || !CropAudited.Contains(property) || !(version.StartsWith("10.0.", StringComparison.Ordinal) || version.StartsWith("9.3.", StringComparison.Ordinal)) ||
+                !ShaderAdapterRegistry.CropBasisAllowed)
+                return null;
+            if (property == "_MainTex" && (On(m, "_VideoEffectsEnable") || On(m, "_AlphaSharpenedA2C") && On(m, "_AlphaToCoverage"))) return null;
+            return property;
+        }
+
         // One selected mesh-UV lookup. 10.x layouts then apply the global per-channel tiling/offset to
         // fragment lookups; 9.x layouts read their raw-UV0 fields at UV0 with a Repeat sampler.
+        // basis: set on the fragment path only while it is exactly raw UV * basis_ST (identity global stage, no backface shift).
         private static void AddPath(Material m, Layout layout, string property, List<SamplingPath> paths, string uvProperty, string pan,
-            string stochastic, Vector4 st, bool vertex, bool repeat, bool fur)
+            string stochastic, Vector4 st, bool vertex, bool repeat, bool fur, string basis = null)
         {
             if (layout.RawUv0.Contains(property))
             {
@@ -414,12 +447,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     Vector4 tiling = Vector(m, "_UVSettingsTiling" + uv), shift = Vector(m, "_UVSettingsOffset" + uv);
                     offset += Vector2.Scale(new Vector2(shift.x, shift.y), scale);
                     scale = Vector2.Scale(scale, new Vector2(tiling.x, tiling.y));
+                    if (tiling.x != 1 || tiling.y != 1 || shift.x != 0 || shift.y != 0 || On(m, "_UVSettingsShiftBackfaceUV")) basis = null;
                 }
             }
+            else basis = null;
             // Most fields borrow MainTex's sampler; the shader's unassigned default white texture repeats.
             Texture sampler = repeat ? null : m.GetTexture("_MainTex");
             var path = new SamplingPath { UvChannel = uv, Scale = scale, Offset = offset,
-                FixedRepeat = repeat || !sampler, SamplerTexture = sampler, Label = vertex ? "Poiyomi vertex UV" : "Poiyomi mesh UV" };
+                FixedRepeat = repeat || !sampler, SamplerTexture = sampler, Label = vertex ? "Poiyomi vertex UV" : "Poiyomi mesh UV",
+                Basis = basis, Dependencies = basis == null ? null : new[] { basis } };
             paths.Add(path);
             if (!vertex && layout.GlobalUv && On(m, "_UVSettingsShiftBackfaceUV"))
                 paths.Add(new SamplingPath { UvChannel = uv, Scale = scale, Offset = offset + new Vector2(st.x, 0),
