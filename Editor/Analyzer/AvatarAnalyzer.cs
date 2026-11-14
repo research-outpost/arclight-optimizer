@@ -298,7 +298,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             if (avatar.Playables.Count > 0) LayerControls(avatar, findings);
             SetupChecks(avatar, findings);
             MenuStructure(avatar, findings);
-            if (!built) { StartStates(avatar, findings); Components(avatar, findings, laterNames); MaterialChecks(avatar, findings); RootController(avatar, findings); }
+            if (!built) { StartStates(avatar, findings); Components(avatar, findings, laterNames); MaterialChecks(avatar, findings); CapChecks(avatar, findings); RootController(avatar, findings); }
             ExpressionsAndMenu(avatar, findings, built, laterNames);
             return findings;
         }

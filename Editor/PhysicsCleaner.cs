@@ -30,7 +30,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // constraints do with no weighted source is not proven here.
     internal static class PhysicsCleaner
     {
-        internal sealed class Result { public int Parameters, Receivers, Colliders, NotAnimated, MergedColliders; }
+        internal sealed class Result { public int Parameters, Receivers, EmptyShapes, Colliders, NotAnimated, MergedColliders; }
 
         internal static Result Run(AvatarAnalysis analysis, IEnumerable<string> animatorParameters, IEnumerable<string> expressionParameters)
         {
@@ -94,6 +94,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     serialized.ApplyModifiedPropertiesWithoutUndo();
                 }
 
+            // A receiver whose shape encloses no volume can never be touched, so neither its parameter nor its material
+            // writes ever happen. radius and height are both read: a shape that uses only one of them keeps the other at 0,
+            // so requiring both to be non-positive stays conservative for every shape type.
+            foreach (var receiver in components.Where(c => c.GetType().Name == "VRCContactReceiver" && !Exclusions.Excluded(c)))
+            {
+                if (analysis.IsAnimated(receiver) || !ProximityWithNoVolume(receiver) || analysis.ReferencesTo(receiver).Any(c => c != receiver)) continue;
+                Object.DestroyImmediate(receiver);
+                result.EmptyShapes++;
+            }
+            if (result.EmptyShapes > 0) components = components.Where(c => c).ToList();
+
             foreach (var receiver in components.Where(c => !udonReader && c.GetType().Name == "VRCContactReceiver" && !Exclusions.Excluded(c)))
             {
                 string name; bool drivesMaterials;
@@ -111,6 +122,25 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             if (result.Receivers + result.Parameters + result.MergedColliders + result.Colliders > 0) analysis.RescanReferences();
             return result;
+        }
+
+        // Whether a Proximity receiver's shape encloses nothing: both radius and height non-positive. Proximity is the only
+        // receiver type whose firing depends on that volume — Constant and OnEnter receivers test overlap, so a zero-radius
+        // one can still fire inside a sender's volume and is kept. The type is matched by its serialized name, and any field
+        // that cannot be read answers false (keep).
+        private static bool ProximityWithNoVolume(Component receiver)
+        {
+            using (var serialized = new SerializedObject(receiver))
+            {
+                var type = serialized.FindProperty("receiverType");
+                if (type == null || type.propertyType != SerializedPropertyType.Enum || type.enumValueIndex < 0 ||
+                    type.enumValueIndex >= type.enumNames.Length || type.enumNames[type.enumValueIndex] != "Proximity") return false;
+                var radius = serialized.FindProperty("radius");
+                var height = serialized.FindProperty("height");
+                if (radius == null || radius.propertyType != SerializedPropertyType.Float ||
+                    height == null || height.propertyType != SerializedPropertyType.Float) return false;
+                return radius.floatValue <= 0f && height.floatValue <= 0f;
+            }
         }
 
         // Two PhysBone colliders with the same settings on the same effective root (shape, size, offset, inside/bounds flags and

@@ -301,7 +301,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer))) return "another component uses its mesh";
             if (renderer.sharedMaterials.Length != mesh.subMeshCount) return "its material slots do not match its submeshes";
             if (renderer.sharedMaterials.Concat(analysis.SwappedMaterials(renderer)).Any(m => !OrderIndependent(m))) return "a transparent material (render queue above 2500), whose draw order would change";
-            if (Enumerable.Range(0, 8).Any(i => mesh.HasVertexAttribute(VertexAttribute.TexCoord0 + i) && mesh.GetVertexAttributeDimension(VertexAttribute.TexCoord0 + i) == 1)) return "a one-component UV channel";
+            // A one-component UV channel used to be refused outright; layouts join by format AND dimension, so such a mesh
+            // merges with others of the same shape, and one that differs in dimension is refused by LayoutsJoin.
             if (Enumerable.Range(0, mesh.subMeshCount).Any(i => mesh.GetTopology(i) != MeshTopology.Triangles)) return "a submesh that is not triangles";
             if (mesh.bindposes.Length != renderer.bones.Length || renderer.bones.Any(b => !b)) return "missing bones";
             // Hidden for good is step 2's job; here every object on the path is visible or animated.

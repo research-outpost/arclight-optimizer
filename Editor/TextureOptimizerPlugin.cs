@@ -98,7 +98,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             state.OptimizeAudio = config.enabled && config.optimizeAudio;
             state.CompressAudio = config.enabled && config.optimizeAudio && config.compressAudio;
             state.AudioQuality = config.audioQuality;
-            state.MenuIconMaxSize = config.enabled ? config.menuIconMaxSize : 0;
+            state.MenuIconMaxSize = config.enabled ? (int)config.menuIconCap : 0;
+            // Quest keeps every authored size: the cap is a new route and Android device testing is unavailable.
+            state.TextureSizeCap = config.enabled && GeneratedTargetValidator.IsStandalone ? (int)config.textureSizeCap : 0;
+            // Opt-in, PC only: BC7 -> BC1 halves opaque colour textures, and the banding it can show is the avatar's call.
+            ChannelFormats.NarrowBc7 = config.enabled && config.narrowOpaqueTextures && GeneratedTargetValidator.IsStandalone;
+
             state.KeepMmdShapes = config.keepMmdShapes;
             state.UnifiedBounds = config.unifiedBounds;
         }
@@ -260,15 +265,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         unusedParameters = vrcfuryPending ? new ParameterCleaner.Result() : ParameterCleaner.Run(ctx.AvatarRootObject, controllers.Controllers.Values, analysis, ReplacementRegistry.Register);
                     }
                     finally { ControllerCommit.Preserving(ctx.AvatarRootObject, () => ctx.DeactivateExtensionContext<VirtualControllerContext>()); }
-                    if (physics.Parameters + physics.Receivers + physics.Colliders + physics.NotAnimated + physics.MergedColliders > 0)
+                    if (physics.Parameters + physics.Receivers + physics.EmptyShapes + physics.Colliders + physics.NotAnimated + physics.MergedColliders > 0)
                     {
                         string physicsSummary = "Cleared " + physics.Parameters + " PhysBone parameter(s) no animator reads, removed " + physics.Receivers +
-                            " contact receiver(s) whose parameter nothing reads, merged " + physics.MergedColliders + " PhysBone collider(s) identical to another and removed " + physics.Colliders + " empty or repeated PhysBone collider entr(ies), and turned off Is Animated on " +
+                            " contact receiver(s) whose parameter nothing reads, removed " + physics.EmptyShapes +
+                            " contact receiver(s) whose shape encloses no volume, merged " + physics.MergedColliders + " PhysBone collider(s) identical to another and removed " + physics.Colliders + " empty or repeated PhysBone collider entr(ies), and turned off Is Animated on " +
                             physics.NotAnimated + " PhysBone(s) whose bones nothing else moves.";
                         Debug.Log("Arclight Optimizer: " + physicsSummary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, physicsSummary);
                     }
-                    if (physics.Receivers + physics.Colliders + physics.MergedColliders > 0)
+                    if (physics.Receivers + physics.EmptyShapes + physics.Colliders + physics.MergedColliders > 0)
                     {
                         // Objects kept only for a removed receiver or collider entry can go now (Fable final review).
                         BuildTimings.Step("UnusedObjectRemover");
@@ -319,10 +325,24 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         state.Report?.Add(null, summary);
                     }
                     BuildTimings.Step("MenuIconMerger");
-                    int icons = vrcfuryPending ? 0 : MenuIconMerger.Run(ctx.AvatarRootObject, state.MenuIconMaxSize);
-                    if (icons > 0)
+                    var icons = vrcfuryPending ? new MenuIconMerger.Result() : MenuIconMerger.Run(ctx.AvatarRootObject, state.MenuIconMaxSize);
+                    if (icons.Total > 0)
                     {
-                        string summary = "Pointed the expressions menu at " + icons + " merged or size-capped icon copy/copies (identical image and import settings, or the Menu Icon Size cap).";
+                        // Say which of the three things actually happened to the menu's icons.
+                        var parts = new System.Collections.Generic.List<string>();
+                        if (icons.Merged > 0) parts.Add(icons.Merged + " merged onto an identical icon or texture");
+                        if (icons.Capped > 0) parts.Add(icons.Capped + " capped at " + state.MenuIconMaxSize + " px");
+                        if (icons.Optimized - icons.Capped > 0)
+                            parts.Add((icons.Optimized - icons.Capped) + " optimized without resizing (mips dropped, DXT1 when opaque)");
+                        string summary = "Pointed the expressions menu at " + icons.Total + " build copy/copies: " + string.Join("; ", parts) + ".";
+                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+                        state.Report?.Add(null, summary);
+                    }
+                    BuildTimings.Step("CookieMerger");
+                    int cookies = vrcfuryPending ? 0 : CookieMerger.Run(ctx.AvatarRootObject);
+                    if (cookies > 0)
+                    {
+                        string summary = "Pointed " + cookies + " light cookie(s) at an identical copy already on the avatar (same file and import settings).";
                         Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, summary);
                     }
@@ -330,7 +350,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     state.Report?.AddSavings(OptimizationLog.AnimatorCategory, 0,
                         OptimizationLog.Count(layerMerge.Merged, "layer(s) folded") + OptimizationLog.Count(layerMerge.Inert, "inert layer(s) removed or emptied") +
                         OptimizationLog.Count(unusedParameters.Animator, "unread parameter(s) removed") + OptimizationLog.Count(deadDrivers, "dead driver write(s) removed") +
-                        OptimizationLog.Count(physics.Parameters, "PhysBone parameter(s) cleared") + OptimizationLog.Count(icons, "duplicate menu icon(s) merged"));
+                        OptimizationLog.Count(physics.Parameters, "PhysBone parameter(s) cleared") +                        OptimizationLog.Count(icons.Merged + icons.Optimized, "menu icon copy/copies pointed at"));
                     BuildTimings.Step("StaleTextureCleaner");
                     var stale = StaleTextureCleaner.Run(analysis, ReplacementRegistry.Register, AnimationRewriter.For(ctx));
                     if (stale.Materials > 0)
@@ -511,7 +531,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (deltas.Meshes > 0)
                     {
                         analysis.RescanReferences();
-                        string summary = "Dropped normal or tangent deltas that move nothing from " + deltas.Frames + " blend shape frame(s) on " + deltas.Meshes + " mesh(es).";
+                        var parts = new List<string>();
+                        if (deltas.Frames > 0) parts.Add("dropped normal or tangent deltas that move nothing from " + deltas.Frames + " frame(s)");
+                        if (deltas.DroppedFrames > 0) parts.Add("dropped " + deltas.DroppedFrames + " frame(s) that only repeated their neighbours' interpolation");
+                        string summary = "Blend shapes on " + deltas.Meshes + " mesh(es): " + string.Join("; ", parts) + ".";
                         Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, summary);
                     }
@@ -588,6 +611,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             try
             {
                 CropTextures(ctx);
+                // Last, so the crop cuts full-resolution pixels and can bring a texture under the cap by itself.
+                CapTextures(ctx);
                 BuildTimings.Step("MeshReadWrite");
                 // Like every other pass: not when Arclight is off, removed, or declined (Avatar Optimizer, Play Mode without scene reload).
                 int unreadable = ctx.GetState<SubstitutionState>().Enabled
@@ -621,6 +646,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     state.Report?.Refresh(ctx.AvatarRootObject, state);
                 }
             }
+        }
+
+        // The opt-in texture size cap: every texture the build's materials use, after generation and cropping.
+        private static void CapTextures(BuildContext ctx)
+        {
+            var state = ctx.GetState<SubstitutionState>();
+            if (!state.Enabled || state.TextureSizeCap <= 0 || state.VrcfuryPending) return;
+            BuildTimings.Step("TextureSizeCap");
+            TextureSizeCapPass.Result result;
+            try { result = TextureSizeCapPass.Run(ctx.AvatarRootObject, AvatarAnalysis.Build(ctx), state.TextureSizeCap, ReplacementRegistry.Register, state.FinalTextures); }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+                state.Report?.Add(null, "Texture size cap stopped (" + e.GetType().Name + "); textures kept their authored size.");
+                return;
+            }
+            if (result.Textures == 0) return;
+            string summary = "Downscaled " + result.Textures + " texture(s) to at most " + state.TextureSizeCap +
+                " px in build copies (" + result.Materials + " material(s)" +
+                (result.MenuIcons > 0 ? ", " + result.MenuIcons + " menu icon(s)" : "") + " repointed); source files unchanged.";
+            Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
+            state.Report?.AddSavings("Textures", result.Bytes, "downscaled " + result.Textures + " texture(s) to " + state.TextureSizeCap + " px", result.Unmeasured);
+            state.Report?.Add(null, summary);
         }
 
         private static void CropTextures(BuildContext ctx)
@@ -725,6 +773,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public bool MergeMeshesAndAudio, OptimizeMeshes, OptimizeAudio;
         // Opt-in size cap for expression-menu icon build copies (0 = authored size).
         internal int MenuIconMaxSize;
+        // Opt-in resolution cap for build copies of the avatar's textures (0 = authored size); PC only.
+        internal int TextureSizeCap;
         // Opt-in Vorbis re-encode of uncompressed clips (see AudioCompressor).
         internal bool CompressAudio;
         internal float AudioQuality = .7f;
@@ -742,6 +792,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal HashSet<Mesh> SourceMeshes;
         public int AppliedTextures;
         public readonly HashSet<Texture> MergedDuplicates = new HashSet<Texture>();
+        // The texture pass's source -> final map, for passes that must follow a reference through a replacement.
+        internal Dictionary<Texture, Texture> FinalTextures;
         // Kept readable sources and their Read/Write-off copies (ReadableTextureCopies); ReadableDropped holds those applied.
         internal Dictionary<Texture, Texture> ReadableDrops;
         internal readonly HashSet<Texture> ReadableDropped = new HashSet<Texture>();
@@ -886,6 +938,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             replacements.Add(group.Source, copy);
                             readableDropped.Add(group.Source);
                         }
+                state.FinalTextures = replacements;
                 foreach (var pair in scan.Duplicates)
                 {
                     if (IsUnsafeStandaloneSwap(scan.Groups.First(g => g.Source == pair.Value), scan.Animation))

@@ -23,13 +23,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 "Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.unifiedBounds)), new GUIContent("Unified Bounds",
                 "Give every skinned mesh the Hips as root bone and one bounding box sized to everything the avatar can reach, so meshes never vanish in close-ups and meshes that differed only by bounds can merge. Meshes in the Exclude list, and meshes whose reach is not fixed (constrained, stretching or scaled bones), keep their own."));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.menuIconMaxSize)), new GUIContent("Menu Icon Size",
-                "Maximum size for expression-menu icon build copies (0 keeps the authored size). Icons are drawn small in VRChat's menu; 256 usually looks the same and cuts their bundle cost several-fold. Source files are never changed."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.compressAudio)), new GUIContent("Compress Audio",
                 "Re-encode uncompressed (PCM) audio clips as Vorbis in the built avatar. Cuts music and voice lines by roughly an order of magnitude; the sound changes by the codec's loss. Only a copy whose measured bundle is smaller is used, and the source files are never changed."));
             using (new EditorGUI.DisabledScope(!serializedObject.FindProperty(nameof(AvatarTextureOptimizer.compressAudio)).boolValue))
                 EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.audioQuality)), new GUIContent("Vorbis Quality",
                     "0.7 is a good size/quality trade; 1 is transparent for most material."));
+            // Hand-built popups instead of enum PropertyFields only for the "1024 px" style labels; the widget is the same control.
+            var textureSizeCap = serializedObject.FindProperty(nameof(AvatarTextureOptimizer.textureSizeCap));
+            EditorGUI.BeginChangeCheck();
+            int sizeIndex = EditorGUILayout.Popup(new GUIContent("Texture Size Cap",
+                    "Cap build copies of the avatar's textures at 1024, 2048 or 4096 pixels, or keep the authored size (Off). Textures above the cap are resampled by Unity's importer in a build copy, so they look softer when displayed large; the source files are never changed and a copy is used only when its measured bundle is smaller."),
+                textureSizeCap.hasMultipleDifferentValues ? -1 : textureSizeCap.enumValueIndex, TextureSizeCapLabels);
+            if (EditorGUI.EndChangeCheck()) textureSizeCap.enumValueIndex = sizeIndex;
+
+            var menuIconCap = serializedObject.FindProperty(nameof(AvatarTextureOptimizer.menuIconCap));
+            EditorGUI.BeginChangeCheck();
+            int capIndex = EditorGUILayout.Popup(new GUIContent("Menu Icon Cap",
+                    "Cap expression-menu icon build copies at 64, 128 or 256 pixels, or keep the authored size (Off). Icons are drawn small in VRChat's menu, so a cap usually looks the same and cuts their bundle cost several-fold. A copy is used only when its measured bundle is smaller, and source files are never changed."),
+                menuIconCap.hasMultipleDifferentValues ? -1 : menuIconCap.enumValueIndex, MenuIconCapLabels);
+            if (EditorGUI.EndChangeCheck()) menuIconCap.enumValueIndex = capIndex;
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.narrowOpaqueTextures)), new GUIContent("Narrow Opaque Textures",
+                "Ship opaque colour textures that Unity imports as BC7 (\"Compressed (High Quality)\") as BC1, at half their size. Very smooth gradients can band; check the built avatar close up before uploading. Normal maps, textures whose alpha is read, and every other format are left exactly as authored. Source files are never changed."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.exclude)), new GUIContent("Exclude",
                 "Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object."), true);
             serializedObject.ApplyModifiedProperties();
@@ -48,6 +62,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     ClearCache();
             }
         }
+
+        // Dropdown labels for TextureSizeCap, in the enum's declaration order (Off, Size1024, Size2048, Size4096).
+        private static readonly GUIContent[] TextureSizeCapLabels = { new GUIContent("Off"), new GUIContent("1024 px"), new GUIContent("2048 px"), new GUIContent("4096 px") };
+
+        // Dropdown labels for MenuIconCap, in the enum's declaration order (Off, Size64, Size128, Size256).
+        private static readonly GUIContent[] MenuIconCapLabels = { new GUIContent("Off"), new GUIContent("64 px"), new GUIContent("128 px"), new GUIContent("256 px") };
 
         // The newest of this avatar's own reports. The file names are rebuilt exactly as the report writer makes them (they end with
         // a hash of the full name), for the avatar itself and its build copy, in and out of Play Mode, so a similarly named avatar

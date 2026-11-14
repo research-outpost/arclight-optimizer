@@ -430,9 +430,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 string next = current + "/" + part;
                 if (!AssetDatabase.IsValidFolder(next))
                 {
-                    if (File.Exists(next) || Directory.Exists(next) || File.Exists(next + ".meta"))
-                        throw new InvalidOperationException("Cache folder path is occupied or not imported: " + next);
-                    if (string.IsNullOrEmpty(AssetDatabase.CreateFolder(current, part)))
+                    // A folder made on disk outside Unity (or one whose import is still pending) is imported rather than
+                    // treated as an obstruction; only a file in the folder's place stops the pass.
+                    // Import that folder only: a project-wide Refresh here would also import a script edit and reload the
+                    // domain in the middle of a build.
+                    if (Directory.Exists(next) || File.Exists(next + ".meta")) AssetDatabase.ImportAsset(next, ImportAssetOptions.ImportRecursive | ImportAssetOptions.ForceSynchronousImport);
+                    if (File.Exists(next)) throw new InvalidOperationException("Cache folder path is occupied by a file: " + next);
+                    if (!AssetDatabase.IsValidFolder(next) && string.IsNullOrEmpty(AssetDatabase.CreateFolder(current, part)))
                         throw new InvalidOperationException("Cannot create cache folder: " + next);
                 }
                 current = next;

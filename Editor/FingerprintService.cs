@@ -76,6 +76,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 writer.Write(Version); writer.Write(Id(group.Source)); writer.Write(sourceHash);
                 writer.Write(ImporterHash(group.Source));
                 writer.Write(group.RepairsPadding);
+                // The BC7 narrowing is opt-in: a verdict decided with it on must never be reused with it off.
+                writer.Write(ChannelFormats.NarrowBc7);
                 // Code constants a cached "retained" outcome depends on: changing either revisits those textures.
                 writer.Write(RetainedException.MinimumUnusedTexels);
                 writer.Write(AvatarTextureOptimizer.GetPaddingPixels(group.Source.width, group.Source.height));

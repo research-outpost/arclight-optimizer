@@ -111,8 +111,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 foreach (var renderer in renderers)
                 {
                     var weights = kept.Select(s => renderer.GetBlendShapeWeight(s)).ToArray();
-                    renderer.sharedMesh = copy;
-                    for (int i = 0; i < kept.Length; i++) renderer.SetBlendShapeWeight(i, weights[i]);
+                    // Rebind, so the re-indexed weights are what a later controller commit captures (a bound Animator
+                    // would otherwise write back the weights it captured before the mesh was rebuilt).
+                    SkinnedMeshMerger.Rebind(renderer, () =>
+                    {
+                        renderer.sharedMesh = copy;
+                        for (int i = 0; i < kept.Length; i++) renderer.SetBlendShapeWeight(i, weights[i]);
+                    });
                     RenumberEyelids(root, renderer, kept);
                 }
                 result.Meshes++;

@@ -19,8 +19,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 importer.textureShape != TextureImporterShape.Texture2D)
                 throw new InvalidOperationException("Only Default or authored NormalMap 2D textures are supported.");
             bool flattened = !SourceImages.IsPng(path);
-            if (flattened && importer.textureType == TextureImporterType.NormalMap)
-                throw new InvalidOperationException("Normal maps must be authored PNGs; this source format is retained.");
             if (importer.textureType == TextureImporterType.NormalMap)
             {
                 if (importer.convertToNormalmap)
@@ -145,9 +143,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // A linear texture read only through .r becomes BC4 instead (from DXT5 or DXT1), which stores its one channel
     // more precisely than a BC1/BC3 colour channel; from DXT1 that is the same size, so it is a quality gain only.
     // An uncompressed (RGBA32, ARGB32 or RGB24) linear texture read only through .r becomes R8: the same red bytes, a quarter or
-    // a third of the size. BC7, crunched and Android formats, and other uncompressed ones, are never changed.
+    // a third of the size. A PC texture Unity imports as BC7 ("Compressed (High Quality)") stores the same colour at 8 bits per
+    // texel, so the same opaque-colour rule would halve it — but BC7's extra endpoint precision is what a very smooth gradient
+    // shows, and the owner's check on real avatar art found the banding visible, so that narrowing is OPT-IN only
+    // (NarrowBc7, off by default) and BC7 imports are otherwise left exactly as authored. Crunched and Android imports, normal
+    // maps and the other uncompressed formats never change.
     internal static class ChannelFormats
     {
+        // Opt-in BC7 -> BC1 for opaque colour textures. Set once per build from the avatar's component, and part of the cache
+        // recipe, so verdicts decided under one setting are never reused under the other.
+        internal static bool NarrowBc7;
+
         public static TextureImporterFormat? Choose(TextureImporter importer, TextureChannels read)
         {
             if (importer.textureType != TextureImporterType.Default || (read & TextureChannels.A) != 0) return null;
@@ -155,12 +161,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             bool redOnly = read == TextureChannels.R && !importer.sRGBTexture;
             if (Uncompressed(format)) return redOnly ? TextureImporterFormat.R8 : (TextureImporterFormat?)null;
             if (format == TextureImporterFormat.DXT1) return redOnly ? TextureImporterFormat.BC4 : (TextureImporterFormat?)null;
-            if (format != TextureImporterFormat.DXT5) return null;
-            return redOnly ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
+            if (format == TextureImporterFormat.DXT5) return redOnly ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
+            // BC7 is Unity's "Compressed (High Quality)" on PC: 8 bits per texel for opaque colour. BC1 carries the same colour
+            // at 4 bits, so a texture whose alpha nothing reads halves. Opt-in (see NarrowBc7); the render comparison in
+            // ChannelFormatTests bounds how much precision that costs.
+            if (format == TextureImporterFormat.BC7 && NarrowBc7) return redOnly ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
+            return null;
         }
 
-        // True when the chosen format shrinks the stored size (a DXT5 or uncompressed source), which alone can justify a replacement.
-        public static bool Shrinks(TextureImporter importer) => Current(importer) == TextureImporterFormat.DXT5 || Uncompressed(Current(importer));
+        // True when the chosen format shrinks the stored size (a DXT5 source, an opted-in BC7 one, or an uncompressed source),
+        // which alone can justify a replacement.
+        public static bool Shrinks(TextureImporter importer)
+        {
+            var format = Current(importer);
+            return format == TextureImporterFormat.DXT5 || format == TextureImporterFormat.BC7 && NarrowBc7 || Uncompressed(format);
+        }
 
         private static bool Uncompressed(TextureImporterFormat format) =>
             format == TextureImporterFormat.RGBA32 || format == TextureImporterFormat.ARGB32 || format == TextureImporterFormat.RGB24;
@@ -460,30 +475,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
         }
 
-        // For a 16-bit PNG source: whether an 8-bit copy rounded as Decode16 reads it, imported with the source's
-        // settings, gives exactly the texture data Unity builds from the source on the active platform. Only then does
-        // anything derived from the rounded pixels match the original. The temporary copy lives in folder for the call.
-        internal static bool RoundedImportMatches(Texture2D source, string folder)
+        // Whether re-encoding the pixels the tool read, with the source's own import settings, imports to exactly the
+        // texture data Unity builds from the source on the active platform. A 16-bit PNG is read rounded and a
+        // flattened source (PSD, TGA...) at Unity's own 8 bits; either way the copy must reproduce the imported
+        // texture before anything derived from those pixels is used. The temporary copy lives in folder for the call.
+        internal static bool ImportMatches(Texture2D source, Color32[] pixels, PngInfo info, string folder)
         {
+            if (!source || pixels == null || info.Width <= 0 || info.Height <= 0 || pixels.Length < info.Width * info.Height) return false;
             string path = AssetDatabase.GetAssetPath(source);
-            if (!SourceImages.IsPng(path)) return true; // Flattened sources (PSD, TGA...) are read by Unity at 8 bits.
-            // The IHDR answers the bit-depth question in 33 bytes; only a real 16-bit source reads and hashes the file.
-            if (InspectHeader(path).BitDepth != 16) return true;
-            var bytes = File.ReadAllBytes(LongPath.For(path));
-            var info = Inspect(bytes);
-            if (info.BitDepth != 16) return true;
-            string key = "Arclight.Optimizer.RoundedImport." + FingerprintService.Version + "." +
-                FingerprintService.Hash(bytes) + "|" + FingerprintService.ImporterHash(source) + "|" + EditorUserBuildSettings.activeBuildTarget;
+            string key = "Arclight.Optimizer.ImportMatch." + FingerprintService.Version + "." +
+                FingerprintService.FileHash(path) + "|" + FingerprintService.ImporterHash(source) + "|" + EditorUserBuildSettings.activeBuildTarget;
             // SessionState, like the pixel signature: the probe (temp import plus raw-data compare) would otherwise
             // rerun after every domain reload and in every batch build. The key pins source bytes, importer and target.
             string stored = SessionState.GetString(key, "");
             if (stored.Length == 1) return stored[0] == '1';
-            string meta = GenerationCoordinator.CopiedImporterMeta(path + ".meta", "AvatarTextureOptimizer:rounding");
+            string meta = GenerationCoordinator.CopiedImporterMeta(path + ".meta", "AvatarTextureOptimizer:importmatch");
             if (meta == null) { SessionState.SetString(key, "0"); return false; }
             string temp = folder + "/" + SourceImages.TempPrefix + Guid.NewGuid().ToString("N") + ".png";
             try
             {
-                File.WriteAllBytes(temp, Encode(Decode(bytes, out _), info));
+                File.WriteAllBytes(temp, Encode(pixels, info));
                 File.WriteAllText(temp + ".meta", meta, new System.Text.UTF8Encoding(false));
                 AssetDatabase.ImportAsset(temp, ImportAssetOptions.ForceSynchronousImport);
                 var copy = AssetDatabase.LoadAssetAtPath<Texture2D>(temp);
@@ -502,6 +513,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (File.Exists(temp)) File.Delete(temp);
                 if (File.Exists(temp + ".meta")) File.Delete(temp + ".meta");
             }
+        }
+
+        // For a 16-bit PNG source: whether an 8-bit copy rounded as Decode16 reads it imports to the same texture data.
+        internal static bool RoundedImportMatches(Texture2D source, string folder)
+        {
+            string path = AssetDatabase.GetAssetPath(source);
+            if (!SourceImages.IsPng(path)) return true; // Flattened sources are proved by ImportMatches with their own pixels.
+            // The IHDR answers the bit-depth question in 33 bytes; only a real 16-bit source reads and hashes the file.
+            if (InspectHeader(path).BitDepth != 16) return true;
+            var bytes = File.ReadAllBytes(LongPath.For(path));
+            var info = Inspect(bytes);
+            if (info.BitDepth != 16) return true;
+            return ImportMatches(source, Decode(bytes, out _), info, folder);
         }
 
         public static byte[] Encode(Color32[] pixels, PngInfo info)

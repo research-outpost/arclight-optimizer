@@ -44,7 +44,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Unique among the avatars of the open scene and unchanged by a domain reload.
-        private static string ScenePath(GameObject avatar)
+        internal static string ScenePath(GameObject avatar)
         {
             string path = avatar.name;
             for (var t = avatar.transform.parent; t; t = t.parent) path = t.name + "/" + path;

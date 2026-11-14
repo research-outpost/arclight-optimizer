@@ -85,8 +85,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return "Assets/d4rkAvatarOptimizer/TrashBin/";
         });
 
-        // Whether d4rkAvatarOptimizer may optimize this avatar on upload: it has a d4rk component (enabled or not), or d4rk is
-        // installed with its global "Always Optimize on Upload" setting, under which d4rk adds its own component at callback -15.
+        // Whether the d4rkAvatarOptimizer package is installed at all; whether it acts on this avatar is MayRun's answer.
         internal static bool Installed => D4rkType() != null;
 
         // d4rk Fighting Actions declares/injects its parameters at the SDK stage, after NDMF, through a component in
@@ -98,9 +97,48 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                    type.Name.IndexOf("Action", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        internal static bool MayRun(GameObject root) =>
-            root.GetComponentsInChildren<Component>(true).Any(c => c && c.GetType().Name == "d4rkAvatarOptimizer") ||
-            D4rkType() != null && GlobalOptimizeSetting();
+        // Whether d4rkAvatarOptimizer will optimize this avatar on upload. Mirrors d4rk's own AvatarBuildHook (4.7.x)
+        // rather than "a component exists": an ACTIVE component with Apply On Upload set runs; with no active component
+        // the global "Always Optimize on Upload" setting makes d4rk add one at callback -15; in Play Mode its "Optimize
+        // in Play Mode" setting decides. A disabled component, or one with Apply On Upload unset, does nothing on
+        // upload, so standing a structure-sensitive pass down for it would only lose that pass's savings.
+        // Anything unreadable answers "will run": that direction costs bytes, the other changes what d4rk merges.
+        internal static bool MayRun(GameObject root)
+        {
+            var optimizers = root.GetComponentsInChildren<Component>(true)
+                .Where(c => c && c.GetType().Name == "d4rkAvatarOptimizer" && (!(c is Behaviour behaviour) || behaviour.isActiveAndEnabled))
+                .ToList();
+            // Two active components abort d4rk's build; answer as if it runs so nothing is skipped in vain.
+            if (optimizers.Count > 1) return true;
+            if (Application.isPlaying && !OptimizesInPlayMode()) return false;
+            return optimizers.Count == 1 ? ApplyOnUpload(optimizers[0]) : D4rkType() != null && GlobalOptimizeSetting();
+        }
+
+        // d4rk's own switch, read by reflection (a public property forwarding to its settings). A renamed member or a
+        // throw answers "set", so d4rk is assumed to run.
+        private static bool ApplyOnUpload(Component optimizer)
+        {
+            try
+            {
+                var type = optimizer.GetType();
+                if (type.GetProperty("ApplyOnUpload")?.GetValue(optimizer) is bool fromProperty) return fromProperty;
+                if (type.GetField("ApplyOnUpload")?.GetValue(optimizer) is bool fromField) return fromField;
+            }
+            catch (Exception) { }
+            return true;
+        }
+
+        // d4rk's Play Mode switch (static, on its settings type). Unreadable answers "on", so d4rk is assumed to run.
+        private static bool OptimizesInPlayMode()
+        {
+            try
+            {
+                var settings = D4rkType()?.Assembly?.GetType("d4rkpl4y3r.AvatarOptimizer.AvatarOptimizerSettings");
+                if (settings?.GetProperty("DoOptimizeInPlayMode")?.GetValue(null) is bool value) return value;
+            }
+            catch (Exception) { }
+            return true;
+        }
 
         // Read d4rk's own public setting property by reflection instead of its EditorPrefs key by name: if d4rk
         // renames the key, GetBool would read false and Arclight's mesh cleanup would run beside d4rk's.

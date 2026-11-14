@@ -1,0 +1,54 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using UnityEngine;
+
+namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+{
+    // The opt-in Texture Size Cap: textures the avatar's materials use that are large enough for the cap to be worth
+    // turning on. This is an offer, not a warning — nothing is wrong with a big texture, and Arclight never resizes a
+    // source file, so the card only points at a setting that would make build copies smaller.
+    internal static partial class AvatarAnalyzer
+    {
+        private const int CapCandidate = 2048, CapTarget = 1024;
+
+        private static void CapChecks(Avatar avatar, List<Finding> findings)
+        {
+            var component = avatar.Root.GetComponent<AvatarTextureOptimizer>();
+            if (!component || !component.enabled || component.textureSizeCap != TextureSizeCap.Off) return;
+            var large = avatar.Root.GetComponentsInChildren<Renderer>(true)
+                .Where(r => (r is SkinnedMeshRenderer || r is MeshRenderer) && !EditorOnly(r.transform, avatar.Root.transform))
+                .SelectMany(r => r.sharedMaterials).Where(m => m)
+                .SelectMany(m => m.GetTexturePropertyNames().Select(m.GetTexture))
+                .OfType<Texture2D>().Where(t => t).Distinct()
+                .Where(t => Mathf.Max(t.width, t.height) >= CapCandidate)
+                .Select(t => (Texture: t, Size: Mathf.Max(t.width, t.height), Bytes: FileLength(t)))
+                .OrderByDescending(t => t.Size).ThenByDescending(t => t.Bytes).ToList();
+            if (large.Count == 0) return;
+            long bytes = large.Sum(t => t.Bytes);
+            double factor = 1.0 - (double)CapTarget * CapTarget / ((double)large[0].Size * large[0].Size);
+            findings.Add(new Finding
+            {
+                Severity = Severity.TidyUp, Key = "texcap|", Target = large[0].Texture,
+                Title = N(large.Count, "texture") + " " + (large.Count == 1 ? "is" : "are") + " " + CapCandidate + " px or larger",
+                Detail = N(large.Count, "texture") + " at " + CapCandidate + " px or more hold most of this avatar's texture bytes. " +
+                    "The Texture Size Cap setting writes a build copy of each at " + CapTarget + " px — a quarter of the pixels, so roughly three quarters " +
+                    "of their compressed size — and uses it only when it measures smaller. They look softer when displayed large; the source files are never changed. " +
+                    "Source files: " + Bytes(bytes) + ".\n" + Bullets(large.Select(t => t.Texture.name + " (" + t.Size + " px, " + Bytes(t.Bytes) + ")")),
+                Fix = "Set Texture Size Cap to " + CapTarget + " px on the Arclight Optimizer component. Check the avatar close up afterwards; Exclude keeps any single object's textures out of it.",
+                Identity = string.Join("\n", large.Select(t => t.Texture.name + "|" + t.Size)),
+                Data = new Fixes.CapTextures { Component = component }
+            });
+        }
+
+        private static long FileLength(Texture2D texture)
+        {
+            string path = UnityEditor.AssetDatabase.GetAssetPath(texture);
+            try { return string.IsNullOrEmpty(path) ? 0 : new FileInfo(path).Length; } catch (Exception) { return 0; }
+        }
+
+        private static string Bytes(long bytes) =>
+            bytes >= 1024 * 1024 ? (bytes / (1024.0 * 1024.0)).ToString("F1") + " MiB" : (bytes / 1024.0).ToString("F0") + " KiB";
+    }
+}

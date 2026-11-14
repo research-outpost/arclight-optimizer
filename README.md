@@ -29,7 +29,7 @@ It also checks the avatar as uploaded, so Modular Avatar and VRCFury additions c
 
 ## Install
 
-Requires **Unity 2022.3** and **[NDMF](https://github.com/bdunderscore/ndmf) 1.14.8 or later (1.x)**.
+Requires **Unity 2022.3**, the **VRChat SDK 3.10.6 or later** (material contacts, which Arclight models, were introduced in 3.10.6) and **[NDMF](https://github.com/bdunderscore/ndmf) 1.14.8 or later (1.x)** (tested on 1.14.8 and 1.15.0).
 
 **[Add to VCC or ALCOM](https://research-outpost.github.io/arclight-optimizer-vpm/)**, or add this repository in **Settings → Packages → Add Repository**:
 
@@ -45,19 +45,22 @@ Manual install: extract `research-outpost.arclight-optimizer-<version>.zip` from
 2. **Add Component → Arclight → Arclight Optimizer**.
 3. Build or upload as usual, or enter Play Mode to preview (needs Scene Reload on).
 
-Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by default; keeps MMD dance blend shapes), **Menu Icon Size** (0 by default; caps expression-menu icon build copies, only when the measured bundle shrinks), **Compress Audio** (off by default; re-encodes uncompressed clips as Vorbis at the chosen quality, only when the measured bundle shrinks) and **Exclude** (objects and their children left alone). Disable the component to skip it.
+Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by default; keeps MMD dance blend shapes), **Texture Size Cap** (Off by default; caps build copies of the avatar's textures at 1024, 2048 or 4096 pixels, PC only), **Menu Icon Cap** (Off by default; caps expression-menu icon build copies at 64, 128 or 256 pixels, only when the measured bundle shrinks), **Narrow Opaque Textures** (Off by default; ships opaque colour textures Unity imports as BC7 as BC1 at half the size, PC only, and the one setting that can visibly band), **Compress Audio** (off by default; re-encodes uncompressed clips as Vorbis at the chosen quality, only when the measured bundle shrinks) and **Exclude** (objects and their children left alone). Disable the component to skip it.
 
 **Open reports folder** on the component shows what each build saved and changed, and why anything was kept.
 
 ## Accepted differences
 
 - **Generated textures**: compression rounding after clearing and repadding.
+- **Opaque colour textures** (PC builds): a texture Unity imports as DXT5, whose alpha nothing reads, ships as BC1 (DXT1) at half the size. BC1 stores the same colour as DXT5, so this is not visible.
+- **Narrow Opaque Textures** (Off by default, PC only): a texture Unity imports as BC7 (Compressed High Quality), whose alpha nothing reads, ships as BC1 at half the size. BC1 carries less colour precision than BC7, so very smooth gradients can band. Measured in sRGB against the authored art: 1.1-1.3 RMS per channel of 255, a 99th percentile of 4-5 levels, fewer than 0.001% of channels more than 32 off — and the banding was still visible on a real avatar close up, which is why this is a choice rather than the default. Normal maps and every other texture type are never narrowed.
 - **Merged meshes and bones**: at most 1/255 per colour channel.
 - **Cropped textures**: only the smallest mips can differ.
 - **Paused PhysBones**: restart from rest when shown again.
 - **Mono audio**: level within 0.05%.
 - **Compressed audio** (off by default): uncompressed clips are re-encoded as Vorbis at the chosen quality, so the sound changes by the codec's loss; a clip is only replaced when its measured bundle is smaller.
-- **Menu Icon Size** (0 by default): expression-menu icons above the cap are replaced by a downscaled build copy, so they look slightly softer when the menu is displayed large; a copy is only used when its measured bundle is smaller.
+- **Menu icons**: every expression-menu icon gets a build copy — mipmaps are dropped (the menu draws an icon at one size, so no mip is sampled) and an opaque icon compresses as DXT1 instead of DXT5; in a build it is used only when it measures smaller. With **Menu Icon Cap** set, icons above 64, 128 or 256 pixels are also resampled, so they look slightly softer when the menu is displayed large.
+- **Texture Size Cap** (Off by default, PC only): textures above 1024, 2048 or 4096 pixels are replaced by a resampled build copy. A texture also held by a particle, trail or line renderer, by an excluded object, or by a material an animation swaps in keeps its authored size, since only one copy of it can be repointed safely, so they look softer when displayed large. In a build the copy is used only when its measured bundle is smaller; in Play Mode there is no bundle to measure, and the copy is used anyway because capping, dropping mips and narrowing the format only ever remove data. Source textures and Edit Mode materials never change — look at the built avatar or the report, not the texture in the Project window.
 - **Folded animator layers**: a rotation can differ by one float step.
 - **Unified Bounds** (off by default): meshes may draw when just off screen.
 - **One anchor override**: every mesh is lit from the Chest bone (Exclude keeps a mesh's own), so lighting shifts slightly on meshes that had another anchor or none.
@@ -72,7 +75,7 @@ Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by defau
 
 **Texture clearing.** Used pixels are kept, padding is rebuilt from them, and the rest is filled with a flat colour. A texture is only replaced when its estimated compressed size gets smaller.
 
-**Smaller formats (PC only).** DXT5 becomes DXT1 when alpha is never read or always opaque, and red-only linear masks become BC4 (R8 when uncompressed). Only for shaders whose source has been checked: Unity Standard and Unlit/Texture, lilToon 2.x, Poiyomi 10–12, VRChat mobile shaders, NonToon, Sunao, ORL Toon and Mochie Standard. BC7, crunched and Quest textures keep their format.
+**Smaller formats (PC only).** DXT5 becomes DXT1 when alpha is never read or always opaque, and red-only linear masks become BC4 (R8 when uncompressed). Only for shaders whose source has been checked: Unity Standard and Unlit/Texture, lilToon 2.x, Poiyomi 10–12, VRChat mobile shaders, NonToon, Sunao, ORL Toon and Mochie Standard. BC7, crunched and Quest textures keep their format unless **Narrow Opaque Textures** is turned on.
 
 **Mono audio.** Identical-channel stereo is stored as mono at +3 dB (same level and balance), only when it can't clip and every source is spatialized or plain 2D without pan.
 
@@ -91,10 +94,9 @@ Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by defau
 
 ## Limitations
 
-- No downscaling or atlasing.
-- Sources: 8-bit PNG, PSD, TGA, TIFF, BMP and JPEG. Normal maps must be PNG.
+- No atlasing; the only resolution reduction is the opt-in **Texture Size Cap**.
+- Sources: 8- or 16-bit PNG, PSD, TGA, TIFF, BMP and JPEG, for normal maps too. Other formats (EXR/HDR, DDS/KTX, animated PNG, cubemaps and texture arrays) are kept.
 - Matcaps, ramps, unknown sampling and untrackable texture animation are kept.
-- Distant mips can show slight colour bleeding; check at a distance.
 - Quest textures keep their formats; Quest builds are untested on a device.
 - **Unsupported Shaders** guesses texture mapping for unrecognized shaders and may cause artifacts. Test before uploading.
 

@@ -216,9 +216,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             PngInfo info;
             var pixels = flattened ? SourceImages.Flatten(sourcePath, folder, out info) : PngPixels.Decode(bytes, out info);
             checkCancelled?.Invoke();
-            if (info.BitDepth == 16 && !PngPixels.RoundedImportMatches(source, folder))
-                throw new InvalidOperationException("This 16-bit source does not compress the same once rounded to 8 bits on this platform; original retained.");
             bool normal = sourceImporter.textureType == TextureImporterType.NormalMap;
+            // A 16-bit PNG is read rounded and a flattened normal map (PSD, TGA...) at Unity's own 8 bits. Either way the
+            // replacement must import to the same texture data before the pixels (and the flat-normal fill) are used.
+            if (flattened && normal)
+            {
+                if (!PngPixels.ImportMatches(source, pixels, info, folder))
+                    throw new InvalidOperationException("This source's 8-bit copy does not import to the same texture data on this platform; original retained.");
+            }
+            else if (info.BitDepth == 16 && !PngPixels.RoundedImportMatches(source, folder))
+                throw new InvalidOperationException("This 16-bit source does not compress the same once rounded to 8 bits on this platform; original retained.");
             if (normal)
                 for (int i = 0; i < pixels.Length; i++)
                 {

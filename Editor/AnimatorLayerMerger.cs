@@ -694,9 +694,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Late stage (committed controllers after d4rk/VRCFury): removes a never-raised weight-0 layer whose states all
-        // have Write Defaults off and carry no behaviour. Conservative: one Layer Control anywhere, or any synced layer
-        // in the controller, skips the whole controller so removing a layer cannot renumber a control or a copy.
-        internal static int RemoveInertWeightZeroCommitted(IEnumerable<AnimatorController> controllers)
+        // have Write Defaults off and carry no behaviour. Conservative: one Layer Control in any controller the avatar
+        // carries (an owned one or a source asset), or any synced layer in the controller, skips the whole removal so
+        // it cannot renumber a layer a control names or a copy.
+        internal static int RemoveInertWeightZeroCommitted(IEnumerable<AnimatorController> controllers, IEnumerable<AnimatorController> everyController = null)
         {
             var list = controllers.Where(c => c && BuildOwnership.IsBuildOwned(c)).Distinct().ToList();
             if (list.Count == 0) return 0;
@@ -707,7 +708,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 foreach (var child in machine.states) foreach (var behaviour in child.state.behaviours) yield return behaviour;
                 foreach (var sub in machine.stateMachines) foreach (var behaviour in Behaviours(sub.stateMachine)) yield return behaviour;
             }
-            if (list.SelectMany(c => c.layers).Where(l => l.stateMachine).SelectMany(l => Behaviours(l.stateMachine))
+            // Every controller the avatar carries, not only the ones being edited: a Layer Control in a source-asset
+            // controller can raise a layer in an owned one, and removing a layer renumbers everything after it.
+            if ((everyController ?? list).Where(c => c).Distinct()
+                .SelectMany(c => c.layers).Where(l => l.stateMachine).SelectMany(l => Behaviours(l.stateMachine))
                 .Any(b => b && b.GetType().Name == "VRCAnimatorLayerControl")) return 0;
             int removed = 0;
             foreach (var controller in list)

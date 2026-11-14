@@ -85,14 +85,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     // Clips that differed only in those keys, curves or events are identical now.
                     if (merge && (keys > 0 || curves > 0 || events > 0) && AnimationClipDeduplicator.MergeCommitted(owned, special, IsBuildOwned) is int same && same > 0)
                         Note($"Merged {same} animation clip(s) that became identical once redundant keys, curves or events were removed.");
-                    int lateLayers = AnimatorLayerMerger.RemoveInertWeightZeroCommitted(owned);
+                    int lateLayers = AnimatorLayerMerger.RemoveInertWeightZeroCommitted(owned, controllers.OfType<AnimatorController>());
                     if (lateLayers > 0)
                         Note($"Removed {lateLayers} never-raised weight-0 animator layer(s) left after the build's optimizers.");
                 }
                 if (streams) foreach (string cleaned in CleanAfterD4rk(avatarGameObject, bindings)) Note(cleaned);
                 // d4rk has finished reading and writing meshes: its final meshes and NDMF's can drop their CPU copy now. Only meshes in
                 // this build's own asset containers (never a scene-stored or source mesh), and none an excluded object could hold.
-                if (streams && !Exclusions.Any)
+                if (streams && !Exclusions.Any(avatarGameObject))
                 {
                     int unreadable = MeshReadWrite.Run(avatarGameObject, afterD4rk: true, eligible: mesh => AssetDatabase.Contains(mesh) && IsBuildOwned(mesh));
                     if (unreadable > 0) Note("Turned off Read/Write on " + unreadable + " mesh(es) after d4rk's merge, so the avatar does not keep a second copy of them in memory.");
@@ -115,7 +115,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static System.Collections.Generic.List<string> CleanAfterD4rk(GameObject avatar, VRChatPlatformAnimatorBindings bindings)
         {
             var notes = new System.Collections.Generic.List<string>();
-            if (Exclusions.Any) { notes.Add("Vertex streams and meshes were left as they are after d4rk's merge: the avatar has excluded objects, which d4rk's merge can hide."); return notes; }
+            if (Exclusions.Any(avatar)) { notes.Add("Vertex streams and meshes were left as they are after d4rk's merge: the avatar has excluded objects, which d4rk's merge can hide."); return notes; }
             var clones = new CloneContext(bindings);
             var entries = bindings.GetInnateControllers(avatar).Where(e => e.Item2)
                 .Select(e => new System.Collections.Generic.KeyValuePair<object, VirtualAnimatorController>(e.Item1, clones.Clone(e.Item2)))
@@ -163,6 +163,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (result.Meshes > 0) notes.Add($"Removed vertex streams no material reads from {result.Meshes} mesh(es) after d4rk's merge ({result.Bytes / 1024:N0} KiB).");
             var deltas = BlendShapeDeltaStripper.Run(analysis, save, afterD4rk: true, eligible: owned);
             if (deltas.Frames > 0) notes.Add($"Removed normal and tangent deltas the mesh has no channel for from {deltas.Frames} blend shape frame(s) after d4rk's merge.");
+            if (deltas.DroppedFrames > 0) notes.Add($"Dropped {deltas.DroppedFrames} blend shape frame(s) that only repeated their neighbours' interpolation, after d4rk's merge.");
             return notes;
         }
 

@@ -26,6 +26,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         internal sealed class Curves { public List<(AnimationClip Clip, EditorCurveBinding Binding, bool ObjectReference)> Bindings = new List<(AnimationClip, EditorCurveBinding, bool)>(); }
         // Texture assets (paths in Assets) whose import settings get Streaming Mipmaps turned on.
         internal sealed class Streaming { public List<string> Paths = new List<string>(); }
+        // The opt-in texture size cap, set on the avatar's Arclight Optimizer component.
+        internal sealed class CapTextures { public AvatarTextureOptimizer Component; }
         // Scene objects whose active state differs from how the FX layer starts them in game, with the in-game state.
         internal sealed class StartStates { public List<(GameObject Object, bool On)> Objects = new List<(GameObject, bool)>(); }
 
@@ -99,6 +101,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                                 serialized.ApplyModifiedProperties(); // Recorded for Undo.
                             }
                         return "Cleared " + cleared + " missing reference(s). References to objects outside the avatar were left for you to point at the right object.";
+                    });
+                case CapTextures c when c.Component:
+                    return ("Set it to 1024 px", () =>
+                    {
+                        using (var serialized = new SerializedObject(c.Component))
+                        {
+                            var property = serialized.FindProperty(nameof(AvatarTextureOptimizer.textureSizeCap));
+                            property.enumValueIndex = Array.IndexOf(Enum.GetValues(typeof(TextureSizeCap)), TextureSizeCap.Size1024);
+                            serialized.ApplyModifiedProperties(); // Recorded for Undo.
+                        }
+                        return "Set Texture Size Cap to 1024 px. Build and look at the avatar close up; sources are unchanged.";
                     });
                 case ExpressionAdds e when finding.Target && Writable(finding.Target):
                     return ("Add them", () =>

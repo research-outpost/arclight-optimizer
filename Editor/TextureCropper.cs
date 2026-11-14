@@ -26,7 +26,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //  - Power-of-two sources with box-filtered mipmaps and without crunch, coverage-preserving or border mipmaps,
     //    height-to-normal conversion or alpha-is-transparency dilation, all of which read beyond the crop; the crop's import
     //    gets a max size that keeps the original's import scale, and is checked after import. A source other than PNG (PSD,
-    //    TGA, TIFF, BMP, JPEG; never a normal map) is read as the pixels Unity flattens it to (SourceImages.Flatten, as
+    //    TGA, TIFF, BMP, JPEG; never a normal map, which the crop leaves alone) is read as the pixels Unity flattens it to (SourceImages.Flatten, as
     //    texture generation does) and its crop is a PNG with the source's import settings, held to the same GPU check.
     // Textures and materials linked through shared textures or bases are decided together. Materials an animation swaps
     // in keep their original textures. Generated crops are cached by source content and crop. A part that is one colour
@@ -235,7 +235,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (!AuditedForCollapse(group, texture, android)) continue;
                 string path = AssetDatabase.GetAssetPath(texture);
                 if (!SourceImages.IsSupported(path) || !(AssetImporter.GetAtPath(path) is TextureImporter importer)) continue;
-                // A source Unity flattens (PSD, TGA...) is read as its flattened pixels; normal maps must be authored PNGs.
+                // A source Unity flattens (PSD, TGA...) is read as its flattened pixels; the crop never touches a normal map.
                 bool flattened = !SourceImages.IsPng(path);
                 if (flattened && importer.textureType != TextureImporterType.Default) continue;
                 // Each of these makes mip levels differ from a plain average, or reads something other than the pixels.
@@ -508,7 +508,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 string path = AssetDatabase.GetAssetPath(texture);
                 if (!SourceImages.IsSupported(path) || !(AssetImporter.GetAtPath(path) is TextureImporter importer)) return null;
-                // A source Unity flattens (PSD, TGA...) is cropped from its flattened pixels; normal maps must be authored PNGs.
+                // A source Unity flattens (PSD, TGA...) is cropped from its flattened pixels; the crop never touches a normal map.
                 bool flattened = !SourceImages.IsPng(path);
                 if (flattened && importer.textureType != TextureImporterType.Default) return null;
                 // Each step here reads texels beyond the crop's edge (wider mip kernels, height-to-normal, alpha dilation).

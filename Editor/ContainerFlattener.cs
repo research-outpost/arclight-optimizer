@@ -109,8 +109,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 rewriter.RewriteMasks((owner, path) => maskRewrite.TryGetValue((owner, path), out string next) ? next : path);
 
             if (rewrite.Count > 0)
-                rewriter.Rewrite((owner, binding) => rewrite.TryGetValue((owner, binding.path), out string path)
-                    ? new EditorCurveBinding { path = path, type = binding.type, propertyName = binding.propertyName } : (EditorCurveBinding?)null);
+                rewriter.Rewrite((owner, binding) =>
+                {
+                    if (!rewrite.TryGetValue((owner, binding.path), out string path)) return null;
+                    // Copy and change the path: building a fresh binding would drop its flags (isPPtrCurve for a material or
+                    // mesh swap), and NDMF's SetObjectCurve refuses a binding that no longer says it carries an object.
+                    var moved = binding;
+                    moved.path = path;
+                    return moved;
+                });
             foreach (var container in flattened.OrderByDescending(Depth))
             {
                 var parent = container.parent;
