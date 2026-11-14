@@ -37,5 +37,12 @@ namespace Okarin.AvatarTextureOptimizer
         public bool unifiedBounds;
         [Tooltip("Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object.")]
         public System.Collections.Generic.List<Transform> exclude = new System.Collections.Generic.List<Transform>();
+        [Tooltip("Maximum size for expression-menu icon build copies (0 keeps the authored size). Icons are drawn small in VRChat's menu; a cap of 256 usually looks the same and cuts their bundle cost several-fold. Source files are never changed.")]
+        public int menuIconMaxSize;
+        [Tooltip("Re-encode uncompressed (PCM) audio clips as Vorbis in the built avatar. Cuts music and voice lines by roughly an order of magnitude; the sound changes by the codec's loss. The source files are never changed.")]
+        public bool compressAudio;
+        [Range(0f, 1f)]
+        [Tooltip("Vorbis quality for Compress Audio. 0.7 is a good size/quality trade; 1 is transparent for most material.")]
+        public float audioQuality = 0.7f;
     }
 }

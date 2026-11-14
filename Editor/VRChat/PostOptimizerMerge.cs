@@ -44,7 +44,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         Note($"Merged {materials} duplicate material(s) and {clips} duplicate animation clip(s) d4rk left" +
                             (owned.Length < controllers.Length ? $"; {controllers.Length - owned.Length} controller(s) skipped as source assets." : "."));
                 }
-                if (reduce)
+                // VRCFury that has not built yet can still add objects, readers and clips: nothing that proves from
+                // the animation is sound then. A built one has finished, and one that will not build this run leaves
+                // the authored animation final, so the avatar is safe to clean either way.
+                bool animationFinal = !RivalState.Of(avatarGameObject).AnimationIncomplete;
+                if (reduce && !animationFinal)
+                    Note("Clip cleanup skipped: VRCFury had not built this avatar when the late stage ran.");
+                else if (reduce)
                 {
                     // After merging, so each kept clip is reduced once.
                     var clips = owned.SelectMany(AnimationClipDeduplicator.AllClips).Where(clip => clip && !special(clip) && IsBuildOwned(clip)).ToList();
@@ -73,11 +79,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         Swaps(animation.transform, AnimationUtility.GetAnimationClips(animation.gameObject));
                     int curves = AnimationKeyReducer.RemoveDead(clips, avatarGameObject.transform, elsewhere, meshSwapped);
                     int keys = AnimationKeyReducer.Reduce(clips);
-                    if (keys > 0 || curves > 0)
-                        Note($"Removed {curves} animation curve(s) that drive nothing and {keys} redundant animation key(s).");
-                    // Clips that differed only in those keys or curves are identical now.
-                    if (merge && (keys > 0 || curves > 0) && AnimationClipDeduplicator.MergeCommitted(owned, special, IsBuildOwned) is int same && same > 0)
-                        Note($"Merged {same} animation clip(s) that became identical once redundant keys and curves were removed.");
+                    int events = AnimationKeyReducer.RemoveEvents(clips, avatarGameObject);
+                    if (keys > 0 || curves > 0 || events > 0)
+                        Note($"Removed {curves} animation curve(s) that drive nothing, {keys} redundant animation key(s) and {events} animation event(s) no component can receive.");
+                    // Clips that differed only in those keys, curves or events are identical now.
+                    if (merge && (keys > 0 || curves > 0 || events > 0) && AnimationClipDeduplicator.MergeCommitted(owned, special, IsBuildOwned) is int same && same > 0)
+                        Note($"Merged {same} animation clip(s) that became identical once redundant keys, curves or events were removed.");
+                    int lateLayers = AnimatorLayerMerger.RemoveInertWeightZeroCommitted(owned);
+                    if (lateLayers > 0)
+                        Note($"Removed {lateLayers} never-raised weight-0 animator layer(s) left after the build's optimizers.");
                 }
                 if (streams) foreach (string cleaned in CleanAfterD4rk(avatarGameObject, bindings)) Note(cleaned);
                 // d4rk has finished reading and writing meshes: its final meshes and NDMF's can drop their CPU copy now. Only meshes in
@@ -113,6 +123,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     .Select(a => new System.Collections.Generic.KeyValuePair<object, VirtualAnimatorController>(a, clones.Clone(a.runtimeAnimatorController))))
                 .ToList();
             var analysis = AvatarAnalysis.Build(avatar, entries);
+            // N5 late: d4rk's merge leaves groups Arclight could not see before it ran. Run the skinned merger again
+            // with no animation rewriter for renderers it refuses, and only where the host mesh lives in a build-owned
+            // asset (the merged mesh is saved beside it). Animated renderers keep their existing handling.
+            var realControllers = bindings.GetInnateControllers(avatar).Select(e => e.Item2).OfType<AnimatorController>()
+                .Concat(avatar.GetComponentsInChildren<Animator>(true)
+                    .Where(a => a && a.gameObject != avatar && a.runtimeAnimatorController)
+                    .Select(a => a.runtimeAnimatorController).OfType<AnimatorController>())
+                .Where(c => c && AssetDatabase.Contains(c) && BuildOwnership.IsBuildOwned(c)).Distinct().ToArray();
+            var lateClips = realControllers.SelectMany(AnimationClipDeduplicator.AllClips)
+                .Where(c => c && AssetDatabase.Contains(c) && BuildOwnership.IsBuildOwned(c))
+                .Select(c => (avatar.transform, c)).ToList();
+            var lateMasks = realControllers.SelectMany(c => c.layers).Select(l => l.avatarMask)
+                .Where(m => m && AssetDatabase.Contains(m) && BuildOwnership.IsBuildOwned(m))
+                .Distinct().Select(m => (avatar.transform, m)).ToList();
+            var lateRewriter = AnimationRewriter.For(lateClips, lateMasks);
+            var lateMerge = SkinnedMeshMerger.Run(analysis, (a, b) => { }, lateRewriter,
+                (source, added) => AssetDatabase.AddObjectToAsset(added, AssetDatabase.GetAssetPath(source)),
+                mesh => mesh && AssetDatabase.Contains(mesh) && BuildOwnership.IsBuildOwned(mesh));
+            if (lateMerge.Merged > 0)
+            {
+                analysis.RescanReferences();
+                notes.Add($"Merged {lateMerge.Merged} skinned mesh(es) that survived the build's optimizers.");
+            }
             // NDMF has already saved the build's assets, and the SDK saves the avatar as a prefab for upload, so a mesh made here
             // must be saved too or the upload loses it: each copy goes into its source mesh's asset. Only meshes in this build's own
             // containers (NDMF's generated assets, d4rk's TrashBin) qualify, so no source asset (a .asset or an imported model) is
@@ -134,12 +167,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Source assets must never be edited. Objects made during this build are in-memory or live in generated
-        // asset containers (NDMF, d4rkAvatarOptimizer).
-        private static bool IsBuildOwned(Object asset)
-        {
-            string path = AssetDatabase.GetAssetPath(asset);
-            return path.Length == 0 || path.StartsWith("Packages/nadena.dev.ndmf/__Generated/", System.StringComparison.Ordinal) ||
-                D4rkOrdering.IsD4rkOutput(asset);
-        }
+        // asset containers (NDMF, a late optimizer); the rule is shared with every other pass (see BuildOwnership).
+        private static bool IsBuildOwned(Object asset) => BuildOwnership.IsBuildOwned(asset);
     }
 }

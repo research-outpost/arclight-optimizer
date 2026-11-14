@@ -107,6 +107,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             // Each folder's orphan metas carry that folder's own userData marker, not the main folder's.
             PrepareTracked(plan, folder + "/Audio", AudioMonoConverter.IsGenerated, decodeCopies: true, ownerMarker: "ArclightMono:");
+            PrepareTracked(plan, folder + "/Audio/Vorbis", AudioCompressor.IsGenerated, decodeCopies: false, ownerMarker: "ArclightVorbis:");
+            PrepareTracked(plan, folder + "/MenuIcons", MenuIconOptimizer.IsGenerated, decodeCopies: false, ownerMarker: "ArclightIcon:");
             PrepareTracked(plan, folder + "/Crops", TextureCropper.IsGenerated, decodeCopies: false, ownerMarker: "ArclightCrop:");
             return plan;
         }

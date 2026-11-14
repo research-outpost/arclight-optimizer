@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
@@ -97,6 +98,28 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var list = clips.Where(c => c && !c.legacy && !elsewhere.Contains(c)).Distinct().ToList();
             // One path walk per distinct path, not per curve: clips repeat paths heavily and root is fixed here.
             var resolvedByPath = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Transform>>(System.StringComparer.Ordinal);
+            // What Unity can actually animate on an object, asked once per (object, type). A property outside that set
+            // does nothing at runtime, however alive its object and type are.
+            var animatableByTarget = new System.Collections.Generic.Dictionary<(int, Type), HashSet<string>>();
+            bool Animatable(Component component, EditorCurveBinding b)
+            {
+                string property = b.propertyName ?? "";
+                // Virtual bindings: handled above (blend shape) or by the renderer's own property set.
+                if (property.StartsWith("material.", StringComparison.Ordinal) || property.StartsWith("blendShape.", StringComparison.Ordinal) ||
+                    property.StartsWith("m_Materials.Array.data[", StringComparison.Ordinal) || property == "m_Mesh") return true;
+                var key = (component.gameObject.GetInstanceID(), b.type);
+                if (!animatableByTarget.TryGetValue(key, out var names))
+                {
+                    try
+                    {
+                        names = new HashSet<string>(AnimationUtility.GetAnimatableBindings(component.gameObject, root.gameObject)
+                            .Where(x => x.type == b.type).Select(x => x.propertyName), StringComparer.Ordinal);
+                    }
+                    catch (Exception) { return true; } // Cannot prove it dead: keep.
+                    animatableByTarget[key] = names;
+                }
+                return names.Count == 0 || names.Contains(property);
+            }
             bool Dead(EditorCurveBinding b)
             {
                 if (b.type == typeof(Animator)) return false;
@@ -114,7 +137,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     string shape = property.Substring("blendShape.".Length);
                     return components.All(c => c is SkinnedMeshRenderer s && s.sharedMesh && s.sharedMesh.GetBlendShapeIndex(shape) < 0);
                 }
-                return false;
+                // A named property the type cannot animate (a renamed serialized field) is dead data Unity skips.
+                return targets.Count == 1 && !Animatable(components[0], b);
             }
             int removed = 0;
             foreach (var clip in list)
@@ -142,6 +166,34 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     continue;
                 }
                 removed += dead.Count;
+            }
+            return removed;
+        }
+
+        // Removes AnimationEvents from build-owned clips when no component on the avatar has the named method. Avatars
+        // cannot run user scripts, but an SDK or plugin component could expose one, so a match keeps that clip's events
+        // (fail closed). Udon-named components keep every event, the same guard the parameter passes use.
+        internal static int RemoveEvents(IEnumerable<AnimationClip> clips, GameObject root)
+        {
+            if (!root) return 0;
+            var components = root.GetComponentsInChildren<Component>(true)
+                .Where(c => c && !(c is Transform)).ToArray();
+            if (components.Any(c => (c.GetType().FullName ?? "").IndexOf("Udon", StringComparison.OrdinalIgnoreCase) >= 0)) return 0;
+            bool Receives(AnimationEvent e)
+            {
+                if (string.IsNullOrEmpty(e.functionName)) return false;
+                foreach (var component in components)
+                    if (component.GetType().GetMethod(e.functionName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance) != null)
+                        return true;
+                return false;
+            }
+            int removed = 0;
+            foreach (var clip in clips.Where(c => c && !c.legacy).Distinct())
+            {
+                var events = AnimationUtility.GetAnimationEvents(clip);
+                if (events == null || events.Length == 0 || events.Any(Receives)) continue;
+                AnimationUtility.SetAnimationEvents(clip, Array.Empty<AnimationEvent>());
+                removed += events.Length;
             }
             return removed;
         }

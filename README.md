@@ -45,7 +45,7 @@ Manual install: extract `research-outpost.arclight-optimizer-<version>.zip` from
 2. **Add Component → Arclight → Arclight Optimizer**.
 3. Build or upload as usual, or enter Play Mode to preview (needs Scene Reload on).
 
-Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by default; keeps MMD dance blend shapes) and **Exclude** (objects and their children left alone). Disable the component to skip it.
+Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by default; keeps MMD dance blend shapes), **Menu Icon Size** (0 by default; caps expression-menu icon build copies, only when the measured bundle shrinks), **Compress Audio** (off by default; re-encodes uncompressed clips as Vorbis at the chosen quality, only when the measured bundle shrinks) and **Exclude** (objects and their children left alone). Disable the component to skip it.
 
 **Open reports folder** on the component shows what each build saved and changed, and why anything was kept.
 
@@ -56,6 +56,8 @@ Options: **Unsupported Shaders** (see Limitations), **MMD Support** (on by defau
 - **Cropped textures**: only the smallest mips can differ.
 - **Paused PhysBones**: restart from rest when shown again.
 - **Mono audio**: level within 0.05%.
+- **Compressed audio** (off by default): uncompressed clips are re-encoded as Vorbis at the chosen quality, so the sound changes by the codec's loss; a clip is only replaced when its measured bundle is smaller.
+- **Menu Icon Size** (0 by default): expression-menu icons above the cap are replaced by a downscaled build copy, so they look slightly softer when the menu is displayed large; a copy is only used when its measured bundle is smaller.
 - **Folded animator layers**: a rotation can differ by one float step.
 - **Unified Bounds** (off by default): meshes may draw when just off screen.
 - **One anchor override**: every mesh is lit from the Chest bone (Exclude keeps a mesh's own), so lighting shifts slightly on meshes that had another anchor or none.

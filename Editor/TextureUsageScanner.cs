@@ -82,8 +82,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var renderers = root.GetComponentsInChildren<Renderer>(true)
                 .Where(r => r is MeshRenderer || r is SkinnedMeshRenderer)
                 .ToArray();
-            string d4rkWarning = D4rkOrdering.RanBeforeWarning(renderers);
-            if (d4rkWarning != null) result.Warnings.Add(d4rkWarning);
+            string orderingWarning = RivalState.OrderingWarning(renderers);
+            if (orderingWarning != null) result.Warnings.Add(orderingWarning);
             foreach (var renderer in renderers)
             {
                 progress?.CheckCancelled();

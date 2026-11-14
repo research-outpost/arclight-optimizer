@@ -34,9 +34,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var result = new Result();
             if (!analysis.Complete) return result;
             var root = analysis.Root;
-            bool d4rk = D4rkOrdering.MayRun(root);
-            physBones &= !d4rk; // Removing them changes which bones d4rk merges, and so its rounding (Chocofuyu: one pixel at 96/255).
-            var users = root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh && !d4rk).GroupBy(r => r.sharedMesh)
+            bool structureChanges = RivalState.Of(root).StructureChanges;
+            physBones &= !structureChanges; // Removing them changes which bones a later merge produces, and so its rounding (Chocofuyu: one pixel at 96/255).
+            var users = root.GetComponentsInChildren<SkinnedMeshRenderer>(true).Where(r => r.sharedMesh && !structureChanges).GroupBy(r => r.sharedMesh)
                 .Where(g => !g.Any(Exclusions.Excluded));
             var swaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
             foreach (var group in users)

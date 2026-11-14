@@ -24,22 +24,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     {
         internal sealed class Result
         {
-            public int Meshes, AudioClips, Compacted, MonoAudio, Stripped, FrozenShapes, MergedSkinned, MergedInto;
+            public int Meshes, AudioClips, Compacted, MonoAudio, CompressedAudio, Stripped, FrozenShapes, MergedSkinned, MergedInto;
             // Plain MeshRenderers merged into skinned meshes (SkinnedMeshMerger rigid members); not counted in MergedSkinned.
             public int MergedRigid;
             // Mesh bytes are uncompressed vertex and index data; audio bytes are estimated bundle sizes.
             public long MeshBytes, AudioBytes;
             public int AudioUnmeasured;
-            public bool Changed => Meshes + AudioClips + Compacted + MonoAudio + Stripped + FrozenShapes + MergedSkinned + MergedRigid > 0;
+            public bool Changed => Meshes + AudioClips + Compacted + MonoAudio + CompressedAudio + Stripped + FrozenShapes + MergedSkinned + MergedRigid > 0;
             public override string ToString() =>
                 $"merged {Meshes} duplicate mesh(es) and {AudioClips} duplicate audio clip(s), gave {Compacted} mesh(es) a 16-bit index buffer, " +
-                $"made {MonoAudio} identical-channel stereo clip(s) mono (+3 dB), removed unused vertex channels from {Stripped} mesh(es), baked or removed {FrozenShapes} blend shape(s), merged {MergedSkinned} skinned mesh(es)" + (MergedRigid > 0 ? $" and {MergedRigid} static mesh(es)" : "") + $" into {MergedInto}";
+                $"made {MonoAudio} identical-channel stereo clip(s) mono (+3 dB), re-encoded {CompressedAudio} PCM clip(s) as Vorbis, removed unused vertex channels from {Stripped} mesh(es), baked or removed {FrozenShapes} blend shape(s), merged {MergedSkinned} skinned mesh(es)" + (MergedRigid > 0 ? $" and {MergedRigid} static mesh(es)" : "") + $" into {MergedInto}";
         }
 
         // monoAudio: convert qualifying identical-channel stereo clips. Callers pass false when animation can change
         // an AudioSource's or VRC Spatial Audio Source's playback settings, since sources are judged on stored values.
+        // compressAudio: opt-in Vorbis re-encode of uncompressed clips (AudioCompressor); audioQuality is 0..1.
         internal static Result Run(GameObject root, bool merge, bool compact, Action<UnityEngine.Object, UnityEngine.Object> register,
-            bool monoAudio = false, ICollection<GameObject> monoVetoed = null)
+            bool monoAudio = false, ICollection<GameObject> monoVetoed = null, bool compressAudio = false, float audioQuality = .7f)
         {
             var result = new Result();
             // Components under an Arclight Exclude keep their own meshes and clips (identical copies stay identical), and a mesh
@@ -86,11 +87,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 foreach (var pair in replace) register(pair.Key, pair.Value);
                 Rewrite(components, replace);
             }
+            Dictionary<AudioClip, AudioClip> mono = null;
             if (monoAudio)
             {
                 BuildTimings.Step("Mono audio");
                 // Judged after merging, on the clips the components now hold.
-                var mono = AudioMonoConverter.Convert(ClipReferences(components).Where(r => !excluded.Contains(r.Item2)).ToList(), monoVetoed);
+                mono = AudioMonoConverter.Convert(ClipReferences(components).Where(r => !excluded.Contains(r.Item2)).ToList(), monoVetoed);
                 if (mono.Count > 0)
                 {
                     foreach (var pair in mono)
@@ -100,6 +102,25 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     foreach (var pair in monoReplace) register(pair.Key, pair.Value);
                     Rewrite(components, monoReplace);
                     result.MonoAudio = mono.Count;
+                }
+            }
+            if (compressAudio)
+            {
+                BuildTimings.Step("Audio compression");
+                // Judged after mono: the clips the components now hold, minus the copies that pass just made, so two
+                // replacements never chain. Excluded objects keep their clips (see the class doc).
+                var clips = ClipReferences(components).Where(r => !excluded.Contains(r.Item2)).ToList();
+                var skip = new HashSet<AudioClip>(mono != null ? mono.Values : Enumerable.Empty<AudioClip>());
+                var compressed = AudioCompressor.Convert(clips, audioQuality, skip);
+                if (compressed.Count > 0)
+                {
+                    foreach (var pair in compressed)
+                        if (TryMeasure(pair.Key, out long sourceBytes) && TryMeasure(pair.Value, out long copyBytes)) result.AudioBytes += sourceBytes - copyBytes;
+                        else result.AudioUnmeasured++;
+                    var audioReplace = compressed.ToDictionary(p => (UnityEngine.Object)p.Key, p => (UnityEngine.Object)p.Value);
+                    foreach (var pair in audioReplace) register(pair.Key, pair.Value);
+                    Rewrite(components, audioReplace);
+                    result.CompressedAudio = compressed.Count;
                 }
             }
             return result;

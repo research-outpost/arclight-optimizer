@@ -24,7 +24,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static int Run(GameObject root, ICollection<Mesh> sourceMeshes = null, bool afterD4rk = false, System.Func<Mesh, bool> eligible = null)
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode) return 0;
-            if (!afterD4rk && D4rkOrdering.MayRun(root)) return 0; // d4rk reads these meshes after Arclight.
+            if (!afterD4rk && RivalState.Of(root).StructureChanges) return 0; // the later merge reads these meshes.
             var particleMeshes = new HashSet<Mesh>();
             var particleRenderers = new HashSet<Renderer>();
             foreach (var system in root.GetComponentsInChildren<ParticleSystem>(true))
@@ -64,11 +64,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return count;
         }
 
-        // Made during this build: in memory, or in NDMF's generated assets. Never a source asset.
-        private static bool BuildOwned(Mesh mesh)
-        {
-            string path = AssetDatabase.GetAssetPath(mesh);
-            return path.Length == 0 || path.StartsWith("Packages/nadena.dev.ndmf/__Generated/", System.StringComparison.Ordinal);
-        }
+        // Made during this build: in memory, in NDMF's generated assets, or in a late optimizer's container.
+        private static bool BuildOwned(Mesh mesh) => BuildOwnership.IsBuildOwned(mesh);
     }
 }

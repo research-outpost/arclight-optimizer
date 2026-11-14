@@ -270,7 +270,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // Write the marks collected so far and forget them; the next pass reloads, which also drops records the
         // cache cleanup has since pruned.
-        private static void FlushUsage()
+        internal static void FlushUsage()
         {
             if (usagePending != null) SaveUsage(usagePending);
             usagePending = null;

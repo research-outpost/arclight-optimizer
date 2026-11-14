@@ -18,10 +18,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //    that are always in the same state as every other member's.
     //  - Untouched renderers: no animation binds to the renderer except movable blend shape, material and enabled curves, nothing else
     //    references it, no Cloth, its mesh is not swapped, its material count equals its submesh count.
-    //  - Same frame of reference: the same root bone (skinned vertices are rendered in its space, so object-space
-    //    shader effects and bounds stay put) and the same renderer settings (shadows, probes, anchors, layers,
-    //    motion vectors, quality, sorting). Light and reflection probes are sampled at the anchor, or at the bounds
-    //    centre when there is none, so without a shared anchor the bounds centres must already coincide.
+    //  - Same frame of reference: the same root bone, or a different one only when no material can read object-space
+    //    positions or axes (FrameSafe) and probe lighting does not use a bounds centre in that frame; skinned vertices
+    //    are rendered in the root bone's space, so object-space shader effects and bounds stay put. The same renderer
+    //    settings (shadows, probes, anchors, layers, motion vectors, quality, sorting) always. Light and reflection
+    //    probes are sampled at the anchor, or at the bounds centre when there is none, so without a shared anchor the
+    //    bounds centres must already coincide.
     //  - Opaque only: every material in a queue up to 2500, where draw order between renderers does not change
     //    the image. Transparent materials sort by renderer, and merging would fix their order.
     //  - Joinable vertex layouts: an attribute two members both have is stored in the same format and dimension. One some
@@ -56,7 +58,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             public readonly List<string> Hints = new List<string>();
         }
 
-        internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register, AnimationRewriter rewriter = null)
+        internal static Result Run(AvatarAnalysis analysis, Action<Object, Object> register, AnimationRewriter rewriter = null,
+            Action<Object, Object> save = null, Func<Mesh, bool> savable = null)
         {
             var result = new Result();
             if (!analysis.Complete) return result;
@@ -112,7 +115,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var first = body ? body : readers.FirstOrDefault(members.Contains);
                     if (first) { members.Remove(first); members.Insert(0, first); }
                     if (members.Count < 2) continue;
-                    if (Merge(members, register, root, moves, body, analysis, contacts, result)) { result.Merged += members.Count; result.Into++; mergedAway.UnionWith(members); }
+                    if (Merge(members, register, root, moves, body, analysis, contacts, result, save, savable)) { result.Merged += members.Count; result.Into++; mergedAway.UnionWith(members); }
                 }
             }
             }
@@ -339,10 +342,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (analysis.IsAnimated(t.gameObject, p => p == "m_IsActive")) toggles.Add(ToggleSignature(t.gameObject, analysis));
             if (analysis.IsAnimated(r, p => p == "m_Enabled")) toggles.Add("renderer " + Signature(r, r.enabled, "m_Enabled", analysis));
             toggles.Sort(StringComparer.Ordinal);
-            var rootBone = r.rootBone ? r.rootBone : r.transform;
             return new[]
             {
-                ("toggle", string.Join("|", toggles)), ("root bone", rootBone.GetInstanceID().ToString()), ("layer", r.gameObject.layer.ToString()),
+                ("toggle", string.Join("|", toggles)), ("layer", r.gameObject.layer.ToString()),
                 ("shadow casting", r.shadowCastingMode.ToString()), ("receive shadows setting", r.receiveShadows.ToString()),
                 ("light probe setting", r.lightProbeUsage.ToString()), ("reflection probe setting", r.reflectionProbeUsage.ToString()),
                 ("probe anchor", (r.probeAnchor ? r.probeAnchor.GetInstanceID() : 0).ToString()),
@@ -360,10 +362,49 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var a = members[0];
             if (!LayoutsJoin(members, b, analysis)) return false;
             bool probesSampled = a.lightProbeUsage != LightProbeUsage.Off || a.reflectionProbeUsage != ReflectionProbeUsage.Off;
+            var aRoot = a.rootBone ? a.rootBone : a.transform;
+            var bRoot = b.rootBone ? b.rootBone : b.transform;
+            if (aRoot != bRoot)
+            {
+                // Different root bones mean the merged renderer draws the member in another frame. That is invisible
+                // only when no material reads object-space positions or axes, and when probe lighting does not come
+                // from a bounds centre in that frame.
+                if (!FrameSafe(a, analysis) || !FrameSafe(b, analysis)) return false;
+                if (probesSampled && !a.probeAnchor) return false;
+                return true;
+            }
             // Without an anchor, probes are sampled at the bounds centre; the merged bounds must keep it. With Update When
             // Offscreen the centre is recomputed from the skinned vertices every frame, so no two renderers share it.
             if (probesSampled && !a.probeAnchor && (a.updateWhenOffscreen || !a.localBounds.center.Equals(b.localBounds.center))) return false;
             return true;
+        }
+
+        // Whether drawing this renderer's vertices in another root bone's frame is invisible: lilToon only when its
+        // audited object-space features are off (including any an animation can switch on), and Unity's built-ins,
+        // which have no object-space position or axis read at all.
+        private static bool FrameSafe(SkinnedMeshRenderer renderer, AvatarAnalysis analysis)
+        {
+            var animated = BoundsUnifier.AnimatedRange(analysis, renderer);
+            return renderer.sharedMaterials.Concat(analysis.SwappedMaterials(renderer)).Where(m => m).All(m =>
+            {
+                if (!m.shader || Broken(m.shader)) return false;
+                if (VertexStreamStripper.IsAuditedLilToonShader(m.shader, out _))
+                    return RigidAccessoryConverter.ObjectSpaceSafe(m, animated);
+                return m.shader.name == "Standard" || m.shader.name == "Unlit/Texture";
+            });
+        }
+
+        // A bounds volume expressed in another transform's local frame, as a skinned renderer's local bounds are in
+        // its root bone's frame.
+        private static Bounds InFrame(Bounds bounds, Transform from, Transform to)
+        {
+            if (from == to) return bounds;
+            var matrix = to.worldToLocalMatrix * from.localToWorldMatrix;
+            var min = bounds.min; var max = bounds.max;
+            var result = new Bounds(matrix.MultiplyPoint3x4(bounds.center), Vector3.zero);
+            for (int i = 0; i < 8; i++)
+                result.Encapsulate(matrix.MultiplyPoint3x4(new Vector3((i & 1) == 0 ? min.x : max.x, (i & 2) == 0 ? min.y : max.y, (i & 4) == 0 ? min.z : max.z)));
+            return result;
         }
 
         // The non-skin attributes of these meshes, one descriptor per attribute (the first mesh's that has it), in attribute order.
@@ -555,8 +596,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         private static bool Merge(List<SkinnedMeshRenderer> members, Action<Object, Object> register, GameObject root,
-            Dictionary<GameObject, Move> moves, SkinnedMeshRenderer mmdBody, AvatarAnalysis analysis, MaterialContacts contacts, Result result)
+            Dictionary<GameObject, Move> moves, SkinnedMeshRenderer mmdBody, AvatarAnalysis analysis, MaterialContacts contacts, Result result,
+            Action<Object, Object> save = null, Func<Mesh, bool> savable = null)
         {
+            // The late stage can only persist a merged mesh into the host's existing build-owned asset. Without one,
+            // the group stays as it is rather than producing an in-memory mesh the upload would lose.
+            if (savable != null && !savable(members[0].sharedMesh)) return false;
             // Shape names: the host keeps its own; a later member's colliding name (or, when the root Body hosts, an MMD
             // world name) gets the member's object name appended.
             // A removed shape can leave curves behind (the freezer drops shapes whose curves change nothing). Those names
@@ -592,6 +637,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 names.Add(map);
             }
             var host = members[0];
+            var hostRoot = host.rootBone ? host.rootBone : host.transform;
             var bones = new List<Transform>(); var bindposes = new List<Matrix4x4>();
             var boneSlot = new Dictionary<(Transform, Matrix4x4), int>();
             var mesh = new Mesh { name = string.Join(" + ", members.Select(m => m.sharedMesh.name)) };
@@ -628,7 +674,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     submeshes.Add(source.GetIndices(s).Select(i => i + offset).ToArray());
                     materials.Add(renderer.sharedMaterials[s]);
                 }
-                var b0 = renderer.localBounds;
+                var memberRoot = renderer.rootBone ? renderer.rootBone : renderer.transform;
+                var b0 = InFrame(renderer.localBounds, memberRoot, hostRoot);
                 bounds = bounds == null ? b0 : Encapsulated(bounds.Value, b0);
             }
 
@@ -662,6 +709,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             mesh.RecalculateBounds();
             MeshAndAudioOptimizer.KeepUvDensity(mesh, members.Select(m => m.sharedMesh));
+            if (save != null)
+            {
+                try { save(members[0].sharedMesh, mesh); }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("Arclight Optimizer: late mesh merge could not save its result: " + e.Message);
+                    return false;
+                }
+            }
 
             var sources = members.Select(m => m.sharedMesh).ToList(); // Before the host takes the merged mesh.
             var weightsByName = members.SelectMany(r => Enumerable.Range(0, r.sharedMesh.blendShapeCount)

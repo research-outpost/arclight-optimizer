@@ -34,8 +34,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (full.IndexOf("Udon", StringComparison.OrdinalIgnoreCase) >= 0) return true;
             for (var baseType = type.BaseType; baseType != null && baseType != typeof(Component); baseType = baseType.BaseType)
                 if ((baseType.FullName ?? string.Empty).IndexOf("UdonSharp", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            return full.IndexOf("d4rk", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                   type.Name.IndexOf("Action", StringComparison.OrdinalIgnoreCase) >= 0;
+            return RivalState.ReadsParametersOutsideTheScan(type);
         }
 
         // True while the avatar carries any component that could read parameters outside this scan's view.

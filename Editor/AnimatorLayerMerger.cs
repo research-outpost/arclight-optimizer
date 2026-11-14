@@ -683,10 +683,52 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // shapes VRChat drives and audio properties a behaviour sets would lose their per-frame default rewrite.
             // A weight-0 layer whose states write defaults still rewrites the defaults of everything it binds (Unity
             // evaluates non-synced state machines every frame), so a material-binding layer needs write defaults off too.
-            if (bindings.Any(b => (b.propertyName ?? "").StartsWith("material.", StringComparison.Ordinal)) &&
-                nodes.OfType<VirtualState>().Any(s => s != null && s.WriteDefaultValues)) return false;
-            return shareOwner && layer.DefaultWeight == 0 && bindings.All(b => b.type == typeof(GameObject) && b.propertyName == "m_IsActive" ||
-                b.propertyName == "m_Enabled" || (b.propertyName ?? "").StartsWith("material.", StringComparison.Ordinal)) && !bindings.Overlaps(others);
+            bool writesDefaults = nodes.OfType<VirtualState>().Any(s => s != null && s.WriteDefaultValues);
+            if (bindings.Any(b => (b.propertyName ?? "").StartsWith("material.", StringComparison.Ordinal)) && writesDefaults) return false;
+            if (!shareOwner || layer.DefaultWeight != 0 || bindings.Overlaps(others)) return false;
+            // With Write Defaults off a weight-0 layer contributes nothing, whatever it binds: no value, no default
+            // rewrite. With them on, only the properties whose default rewrite is the authored value can go.
+            if (!writesDefaults) return true;
+            return bindings.All(b => b.type == typeof(GameObject) && b.propertyName == "m_IsActive" ||
+                b.propertyName == "m_Enabled" || (b.propertyName ?? "").StartsWith("material.", StringComparison.Ordinal));
+        }
+
+        // Late stage (committed controllers after d4rk/VRCFury): removes a never-raised weight-0 layer whose states all
+        // have Write Defaults off and carry no behaviour. Conservative: one Layer Control anywhere, or any synced layer
+        // in the controller, skips the whole controller so removing a layer cannot renumber a control or a copy.
+        internal static int RemoveInertWeightZeroCommitted(IEnumerable<AnimatorController> controllers)
+        {
+            var list = controllers.Where(c => c && BuildOwnership.IsBuildOwned(c)).Distinct().ToList();
+            if (list.Count == 0) return 0;
+            IEnumerable<StateMachineBehaviour> Behaviours(AnimatorStateMachine machine)
+            {
+                if (machine == null) yield break;
+                foreach (var behaviour in machine.behaviours) yield return behaviour;
+                foreach (var child in machine.states) foreach (var behaviour in child.state.behaviours) yield return behaviour;
+                foreach (var sub in machine.stateMachines) foreach (var behaviour in Behaviours(sub.stateMachine)) yield return behaviour;
+            }
+            if (list.SelectMany(c => c.layers).Where(l => l.stateMachine).SelectMany(l => Behaviours(l.stateMachine))
+                .Any(b => b && b.GetType().Name == "VRCAnimatorLayerControl")) return 0;
+            int removed = 0;
+            foreach (var controller in list)
+            {
+                var layers = controller.layers;
+                if (layers.Any(l => l.syncedLayerIndex >= 0)) continue;
+                int here = 0;
+                for (int i = layers.Length - 1; i >= 1; i--)
+                {
+                    var layer = layers[i];
+                    if (layer.defaultWeight != 0 || layer.stateMachine == null) continue;
+                    if (layer.stateMachine.stateMachines.Length > 0) continue; // nested machines: leave it
+                    if (Behaviours(layer.stateMachine).Any()) continue;
+                    if (layer.stateMachine.states.Any(s => s.state == null || s.state.writeDefaultValues)) continue;
+                    controller.RemoveLayer(i);
+                    removed++;
+                    here++;
+                }
+                if (here > 0) { EditorUtility.SetDirty(controller); AssetDatabase.SaveAssetIfDirty(controller); }
+            }
+            return removed;
         }
 
         private static IEnumerable<StateMachineBehaviour> Behaviours(VirtualNode node) =>

@@ -27,9 +27,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     // an aborted build leaves its entries behind, so clear the sets and the mirrors before anything
                     // this build may request.
                     MergeRequests.BeginBuild(); KeyReductionRequests.BeginBuild(); StreamRequests.BeginBuild();
-                    // The SDK can (re)build its callback list after editor load; re-assert NDMF-before-d4rk order
-                    // per build (idempotent and cheap) instead of relying on the load-time pass alone.
-                    D4rkOrdering.EnsureNdmfFirst();
+                    // Re-assert the callback order the late hook depends on (idempotent and cheap).
+                    RivalState.EnsureOrderingBeforeLate();
+                    // Play Mode never runs the SDK preprocess hook that snapshots source assets, so take the snapshot
+                    // here (conservative: anything VRCFury already generated counts as pre-existing).
+                    if (EditorApplication.isPlayingOrWillChangePlaymode) BuildOwnership.Begin(ctx.AvatarRootObject);
                     Exclusions.Record(ctx.AvatarRootObject);
                     ctx.GetState<SubstitutionState>().SourceMeshes = MeshReadWrite.Record(ctx.AvatarRootObject);
                     var config = ctx.AvatarRootObject.GetComponent<AvatarTextureOptimizer>();
@@ -74,8 +76,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // VRCFury component. So an un-built avatar with no VRCFury components anywhere is one VRCFury legitimately
             // passed over, and its animation is already complete — the full passes may run. An avatar VRCFury should
             // have built still carries its components whenever it was not built, so the stand-down there is unchanged.
-            bool vrcfuryBuilt = ctx.AvatarRootObject.GetComponents<Component>().Any(c => c && c.GetType().Name == "VRCFuryTest");
-            state.VrcfuryPending = config.enabled && !vrcfuryBuilt && CarriesVrcfuryComponents(ctx.AvatarRootObject);
+            var rivals = RivalState.Of(ctx.AvatarRootObject);
+            state.VrcfuryPending = config.enabled && rivals.AnimationIncomplete;
             if (state.VrcfuryPending)
             {
                 AnalyzerBuildNotes.VrcfuryStoodDown = true;
@@ -84,45 +86,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     "Build or upload with VRCFury enabled. A manual bake causes this, and so would a VRCFury update that changes how it marks a built avatar.");
                 state.Report.Add(null, pending);
             }
-            // The texture pass removes the component; the post-d4rk hook reads these requests instead.
+            // The texture pass removes the component; the late optimizer hook reads these requests instead.
             if (config.enabled && config.mergeDuplicates) MergeRequests.Add(ctx.AvatarRootObject);
             if (config.enabled && config.optimizeAnimations) KeyReductionRequests.Add(ctx.AvatarRootObject);
-            // With d4rk the stream pass waits until after its merge (see VertexStreamStripper).
-            if (config.enabled && config.optimizeMeshes && D4rkOrdering.MayRun(ctx.AvatarRootObject))
+            // When a later optimizer rewrites meshes, the stream pass waits until after its merge (see VertexStreamStripper).
+            if (config.enabled && config.optimizeMeshes && rivals.StructureChanges)
                 StreamRequests.Add(ctx.AvatarRootObject);
             // Read by the later passes; the component itself is removed by the texture pass.
             state.MergeMeshesAndAudio = config.enabled && config.mergeDuplicates;
             state.OptimizeMeshes = config.enabled && config.optimizeMeshes;
             state.OptimizeAudio = config.enabled && config.optimizeAudio;
+            state.CompressAudio = config.enabled && config.optimizeAudio && config.compressAudio;
+            state.AudioQuality = config.audioQuality;
+            state.MenuIconMaxSize = config.enabled ? config.menuIconMaxSize : 0;
             state.KeepMmdShapes = config.keepMmdShapes;
             state.UnifiedBounds = config.unifiedBounds;
-        }
-
-        // Does this avatar carry VRCFury's own components? VRCFury's builder runs on an avatar exactly when the avatar
-        // has one (its ShouldRun gate), so no components means VRCFury passed the avatar over by design, at any setting.
-        // The components are found by the base class VRCFuryBuilder tests with (renames of the VF. namespace alone then
-        // cannot fool this check); the old namespace sniff stays as a second catcher. When VRCFury's package is
-        // installed but its base type cannot be found at all — a rename this deep would also move its built marker —
-        // the check fails closed and the stand-down stays.
-        private static bool CarriesVrcfuryComponents(GameObject avatar)
-        {
-            Type furyBase = null;
-            bool vrcfuryInstalled = UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages()
-                .Any(p => p.name == "com.vrcfury.vrcfury");
-            if (vrcfuryInstalled)
-                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    Type[] types;
-                    try { types = assembly.GetTypes(); }
-                    catch (System.Reflection.ReflectionTypeLoadException e) { types = e.Types.Where(t => t != null).ToArray(); }
-                    furyBase = types.FirstOrDefault(t => t.Name == "VRCFuryComponent" && typeof(Component).IsAssignableFrom(t));
-                    if (furyBase != null) break;
-                }
-            if (vrcfuryInstalled && furyBase == null) return true; // cannot see VRCFury's own gate: fail closed
-            return avatar.GetComponentsInChildren<Component>(true).Any(c => c &&
-                ((furyBase != null && furyBase.IsInstanceOfType(c)) ||
-                 (c.GetType().Namespace ?? "").StartsWith("VF.", StringComparison.Ordinal)) &&
-                c.GetType().Name != "VRCFuryDebugInfo");
         }
 
         private static void Textures(BuildContext ctx)
@@ -341,10 +319,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         state.Report?.Add(null, summary);
                     }
                     BuildTimings.Step("MenuIconMerger");
-                    int icons = vrcfuryPending ? 0 : MenuIconMerger.Run(ctx.AvatarRootObject);
+                    int icons = vrcfuryPending ? 0 : MenuIconMerger.Run(ctx.AvatarRootObject, state.MenuIconMaxSize);
                     if (icons > 0)
                     {
-                        string summary = "Pointed the expressions menu at one copy of " + icons + " duplicate icon file(s) (identical image and import settings).";
+                        string summary = "Pointed the expressions menu at " + icons + " merged or size-capped icon copy/copies (identical image and import settings, or the Menu Icon Size cap).";
                         Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, summary);
                     }
@@ -513,7 +491,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 bool monoAudio = state.OptimizeAudio && monoVetoed != null;
                 BuildTimings.Step("MeshAndAudioOptimizer");
                 var result = MeshAndAudioOptimizer.Run(ctx.AvatarRootObject, state.MergeMeshesAndAudio, state.OptimizeMeshes,
-                    ReplacementRegistry.Register, monoAudio, monoVetoed);
+                    ReplacementRegistry.Register, monoAudio, monoVetoed, state.CompressAudio, state.AudioQuality);
                 result.FrozenShapes = frozen.Frozen + frozen.Removed;
                 result.MergedSkinned = mergedSkinned.Merged - mergedSkinned.Rigid;
                 result.MergedRigid = mergedSkinned.Rigid;
@@ -568,7 +546,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (state.Report != null && result.Changed)
                 {
                     state.Report.AddSavings("Audio", result.AudioBytes, OptimizationLog.Count(result.MonoAudio, "made mono") +
-                        OptimizationLog.Count(result.AudioClips, "duplicate(s) merged"), result.AudioUnmeasured);
+                        OptimizationLog.Count(result.AudioClips, "duplicate(s) merged") +
+                        OptimizationLog.Count(result.CompressedAudio, "re-encoded as Vorbis"), result.AudioUnmeasured);
                     state.Report.AddSavings("Meshes", result.MeshBytes, OptimizationLog.Count(result.Meshes, "duplicate(s) merged") +
                         OptimizationLog.Count(result.Compacted, "index buffer(s) halved") +
                         OptimizationLog.Count(result.Stripped, "with unused vertex channels removed") +
@@ -577,7 +556,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             (mergedSkinned.Contacts > 0 ? " (" + mergedSkinned.Contacts + " material contact(s) followed the merge)" : "") + ", " : ""));
                     state.Report.Refresh(ctx.AvatarRootObject, state);
                 }
-                if (monoAudio) CacheCleanup.Schedule(AutomaticTextureOptimizer.CacheFolder);
+                if (monoAudio || state.CompressAudio) CacheCleanup.Schedule(AutomaticTextureOptimizer.CacheFolder);
             }
             catch (Exception e)
             {
@@ -744,6 +723,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public bool Applied;
         public bool Cancelled;
         public bool MergeMeshesAndAudio, OptimizeMeshes, OptimizeAudio;
+        // Opt-in size cap for expression-menu icon build copies (0 = authored size).
+        internal int MenuIconMaxSize;
+        // Opt-in Vorbis re-encode of uncompressed clips (see AudioCompressor).
+        internal bool CompressAudio;
+        internal float AudioQuality = .7f;
         // Set before Avatar Optimizer runs when the avatar carries it; then no Arclight pass acts.
         internal bool AvatarOptimizerConflict;
         // The component was present and enabled, and Prepare let the build go ahead.

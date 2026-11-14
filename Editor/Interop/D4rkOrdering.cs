@@ -63,11 +63,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 : null;
         }
 
-        internal static bool IsD4rkOutput(UnityEngine.Object asset)
-        {
-            string path = asset ? AssetDatabase.GetAssetPath(asset) : "";
-            return TrashBin != null && path.StartsWith(TrashBin, StringComparison.Ordinal);
-        }
+        internal static bool IsD4rkOutput(UnityEngine.Object asset) => IsD4rkOutputPath(asset ? AssetDatabase.GetAssetPath(asset) : "");
+
+        internal static bool IsD4rkOutputPath(string path) =>
+            TrashBin != null && !string.IsNullOrEmpty(path) && path.StartsWith(TrashBin, StringComparison.Ordinal);
 
         // d4rk's TrashBin folder, worked out as d4rkAvatarOptimizer.GetTrashBinLocation does (an embedded package's folder, the
         // package folder under Assets, else Assets/d4rkAvatarOptimizer) but without calling it, as it creates that last folder.
@@ -88,6 +87,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // Whether d4rkAvatarOptimizer may optimize this avatar on upload: it has a d4rk component (enabled or not), or d4rk is
         // installed with its global "Always Optimize on Upload" setting, under which d4rk adds its own component at callback -15.
+        internal static bool Installed => D4rkType() != null;
+
+        // d4rk Fighting Actions declares/injects its parameters at the SDK stage, after NDMF, through a component in
+        // the global namespace. Matched by type name so a namespace rename alone cannot hide it (fail closed).
+        internal static bool ReadsParameters(Type type)
+        {
+            string full = type.FullName ?? string.Empty;
+            return full.IndexOf("d4rk", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   type.Name.IndexOf("Action", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         internal static bool MayRun(GameObject root) =>
             root.GetComponentsInChildren<Component>(true).Any(c => c && c.GetType().Name == "d4rkAvatarOptimizer") ||
             D4rkType() != null && GlobalOptimizeSetting();

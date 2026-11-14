@@ -14,9 +14,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // were saved again (different bytes) also merge when they decode to the same pixels, alpha kind and colour metadata
     // with identical import settings and imported size, the rule duplicate textures on materials merge under. The menu tree
     // is copied for the build first (the source menus are never edited); nothing changes when it cannot be read.
+    // maxIconSize > 0 additionally caps every icon's build copy (MenuIconOptimizer); 0 keeps the authored size.
     internal static class MenuIconMerger
     {
-        internal static int Run(GameObject root)
+        internal static int Run(GameObject root, int maxIconSize = 0)
         {
             var descriptor = root.GetComponents<Component>().FirstOrDefault(c => c && c.GetType().Name == "VRCAvatarDescriptor");
             if (!descriptor) return 0;
@@ -39,6 +40,23 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var same = kept.FirstOrDefault(k => TextureUsageScanner.SameDecodedPng(AssetDatabase.GetAssetPath(k), AssetDatabase.GetAssetPath(icon)));
                     if (same) keeper[icon] = same; else kept.Add(icon);
                 }
+            }
+            if (maxIconSize > 0)
+            {
+                var resized = new Dictionary<Texture2D, Texture2D>();
+                foreach (var icon in icons.Distinct().ToList())
+                {
+                    var copy = MenuIconOptimizer.Resize(icon, maxIconSize);
+                    if (copy) resized[icon] = copy;
+                }
+                if (resized.Count > 0)
+                {
+                    // Duplicates already point at a kept icon; both the duplicate and the kept icon move to the copy.
+                    foreach (var pair in keeper.ToList())
+                        if (resized.TryGetValue(pair.Value, out var copy)) keeper[pair.Key] = copy;
+                    foreach (var pair in resized) keeper[pair.Key] = pair.Value;
+                }
+                AudioMonoConverter.FlushUsage(); // One save for the whole pass, as the mono pass does.
             }
             if (keeper.Count == 0) return 0;
 

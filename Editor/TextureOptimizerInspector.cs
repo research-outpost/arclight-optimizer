@@ -23,6 +23,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 "Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.unifiedBounds)), new GUIContent("Unified Bounds",
                 "Give every skinned mesh the Hips as root bone and one bounding box sized to everything the avatar can reach, so meshes never vanish in close-ups and meshes that differed only by bounds can merge. Meshes in the Exclude list, and meshes whose reach is not fixed (constrained, stretching or scaled bones), keep their own."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.menuIconMaxSize)), new GUIContent("Menu Icon Size",
+                "Maximum size for expression-menu icon build copies (0 keeps the authored size). Icons are drawn small in VRChat's menu; 256 usually looks the same and cuts their bundle cost several-fold. Source files are never changed."));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.compressAudio)), new GUIContent("Compress Audio",
+                "Re-encode uncompressed (PCM) audio clips as Vorbis in the built avatar. Cuts music and voice lines by roughly an order of magnitude; the sound changes by the codec's loss. Only a copy whose measured bundle is smaller is used, and the source files are never changed."));
+            using (new EditorGUI.DisabledScope(!serializedObject.FindProperty(nameof(AvatarTextureOptimizer.compressAudio)).boolValue))
+                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.audioQuality)), new GUIContent("Vorbis Quality",
+                    "0.7 is a good size/quality trade; 1 is transparent for most material."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.exclude)), new GUIContent("Exclude",
                 "Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object."), true);
             serializedObject.ApplyModifiedProperties();
