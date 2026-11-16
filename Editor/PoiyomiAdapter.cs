@@ -15,11 +15,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // Lil Fur (10.0.22): UVs are interpolated inside each triangle, _FurMask is read at raw UV0 in the geometry
     // stage, and the fur fragment resets poiMesh.uv to raw mesh UVs after lighting setup, so later lookups skip
     // the global UV tiling/offset and the backface shift.
-    // Crop basis (TextureCropper): audited on the installed Toon 10.0.29 and 9.3.67 sources, every entry. Each CropAudited
+    // Crop basis (TextureCropper): audited on the installed Toon 10.0.29, 9.3.67 and 11.0.43 sources, every entry. Each CropAudited
     // field's <field>_ST and <field>_TexelSize appear only in poiUV(poiMesh.uv[<field>UV], <field>_ST) feeding that field's
     // own lookup. _MainTex_ST is also read by Video Effects screen UVs (_VideoEffectsEnable) and _MainTex_TexelSize by
-    // pixel mode (already refused) and sharpened alpha-to-coverage, so those keep the main texture uncropped. Only 10.0.x
-    // and 9.3.x labels, fragment mesh-UV paths with the field's own ST, an identity global UV stage, no backface shift
+    // pixel mode (already refused) and sharpened alpha-to-coverage, so those keep the main texture uncropped. Only 10.0.x,
+    // 9.3.x and 11.0.x labels, fragment mesh-UV paths with the field's own ST, an identity global UV stage, no backface shift
     // and no fur get a basis; locked shaders never do (Thry may bake the _ST into the code).
     internal sealed class PoiyomiAdapter : ITextureSamplingAdapter
     {
@@ -42,6 +42,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             "_VideoMaskTexture _VoronoiNoise _VoronoiMask _TruchetMask _ALDecalColorMask _VertexManipulationHeightMask _LookAtMask _VertexGlitchingMask _UzumoreMask _VertexBasicsMask " +
             "_GlobalMaskTexture0 _GlobalMaskTexture1 _GlobalMaskTexture2 _GlobalMaskTexture3 _DistortionMask _DistortionFlowTexture _DistortionFlowTexture1 _Heightmask _PPMask " +
             "_GrabPassBlendMap _FurMask _FurNoiseMask " +
+            // Fields read at poiUV(poiMesh.uv[<field>UV], <field>_ST), panned, through the _MainTex sampler (audited 2026-11-16 on
+            // every 11.0.43 Toon and Pro entry, and _AnisotropyDirectionMap/_ContactShadowsMask on 10.0.28): these were unaudited,
+            // not unmodelable. _AnisotropyDirectionMap is on 10.0 and 11.0, _ContactShadowsMask on Pro only, the rest 11.0 only.
+            // _PathingMaskMap is the exception: a fixed _linear_repeat sampler (see Repeat).
+            "_AnisotropyDirectionMap _OutlineEmissionMap _ContactShadowsMask _PathingMaskMap _PoiPBRMaskMap " +
+            "_BacklightColorTex__1 " +
             // Custom matcap normal maps: every 10.0.22 entry samples them only in calculateNormal, at poiUV(poiMesh.uv[<UV>], _ST) panned,
             // through the main sampler, like the other mesh-UV normal maps; only the matcap lookup after it is view-dependent.
             "_Matcap0NormalMap _Matcap1NormalMap _Matcap2NormalMap _Matcap3NormalMap");
@@ -57,10 +63,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             "_MochieMetallicMaps _MultilayerMathBlurMap _OutlineTexture _PPMask _ParallaxInternalMapMask _PathingColorMap _PathingMap " +
             "_RGBAMetallicMaps _RGBASmoothnessMaps _RGBMask _ReflectionColorTex _Rim2ColorTex _Rim2Mask _Rim2Tex _RimColorTex _RimMask _RimTex " +
             "_SSSThicknessMap _Set_HighColorMask _Set_Rim2LightMask _Set_RimLightMask _Shadow2ndColorTex _Shadow3rdColorTex _ShadowColorTex " +
-            "_ShadowStrengthMask _SkinThicknessMap _SmoothnessTex _VideoMaskTexture _VoronoiMask _VoronoiNoise");
+            "_ShadowStrengthMask _SkinThicknessMap _SmoothnessTex _VideoMaskTexture _VoronoiMask _VoronoiNoise " +
+            // Audited 2026-11-16 on 11.0.43 (and 10.0.28 for the two older fields): each _ST is read only by the field's own
+            // poiUV(poiMesh.uv[<field>UV], <field>_ST), and none has a _TexelSize read.
+            "_AnisotropyDirectionMap _OutlineEmissionMap _ContactShadowsMask _PathingMaskMap _PoiPBRMaskMap _BacklightColorTex__1");
         private static readonly HashSet<string> Normals = Set("_BumpMap _Bump2ndMap _BentNormalMap _DetailNormalMap _RgbNormalR _RgbNormalG _RgbNormalB _RgbNormalA " +
             "_Matcap0NormalMap _Matcap1NormalMap _Matcap2NormalMap _Matcap3NormalMap");
-        private static readonly HashSet<string> Repeat = Set("_LightDataSDFMap _ShadowBorderMask _SmoothnessTex _MetallicGlossMap _ReflectionColorTex _OutlineMask _DepthBulgeMask _DissolveDetailNoise _PathingMap _VertexManipulationHeightMask _LookAtMask _VertexGlitchingMask _UzumoreMask _VertexBasicsMask _Heightmask _FurMask _FurNoiseMask");
+        private static readonly HashSet<string> Repeat = Set("_LightDataSDFMap _ShadowBorderMask _SmoothnessTex _MetallicGlossMap _ReflectionColorTex _OutlineMask _DepthBulgeMask _DissolveDetailNoise _PathingMap _VertexManipulationHeightMask _LookAtMask _VertexGlitchingMask _UzumoreMask _VertexBasicsMask _Heightmask _FurMask _FurNoiseMask " +
+            // 11.0 samples the pathing mask through its own _linear_repeat sampler, not _MainTex's.
+            "_PathingMaskMap");
         private static readonly HashSet<string> ProRepeat = BuildProRepeat();
         private static readonly HashSet<string> VertexOnly = Set("_DepthBulgeMask _VertexManipulationHeightMask _LookAtMask _VertexGlitchingMask _UzumoreMask _VertexBasicsMask");
         private static readonly HashSet<string> VertexAndFragment = Set("_OutlineMask _DissolveNoiseTexture _DissolveDetailNoise");
@@ -86,6 +97,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             { "_DissolveDetailNoise", TextureChannels.R }, { "_FurNoiseMask", TextureChannels.R }, { "_ShadowStrengthMask", TextureChannels.R },
             { "_HighColor_Tex", TextureChannels.RGB }, { "_MultilayerMathBlurMap", TextureChannels.RGB },
             { "_DistortionFlowTexture", TextureChannels.R | TextureChannels.G }, { "_DistortionFlowTexture1", TextureChannels.R | TextureChannels.G },
+            // Anisotropy reads .rg as a tangent-space direction; the outline emission multiplies the colour by .rgb (both 10.0.28 and 11.0.43).
+            { "_AnisotropyDirectionMap", TextureChannels.R | TextureChannels.G }, { "_OutlineEmissionMap", TextureChannels.RGB },
         };
         // Fields whose only sample site in every Toon 10.0.22 entry is tex[<channel property>]: one channel
         // chosen by a material value (0-3 = R, G, B, A).
@@ -103,6 +116,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             { "_VoronoiNoise", "_VoronoiNoiseChannel" }, { "_VoronoiMask", "_VoronoiMaskChannel" },
             { "_TruchetMask", "_TruchetMaskChannel" }, { "_VertexManipulationHeightMask", "_VertexManipulationHeightMapChannel" },
             { "_UzumoreMask", "_UzumoreMaskChannel" }, { "_Heightmask", "_HeightmaskChannel" }, { "_DistortionMask", "_DistortionMaskChannel" },
+            // Pro 10.0.28 only; 11.0 keeps every channel.
+            { "_ContactShadowsMask", "_ContactShadowsMaskChannel" },
         };
 
         // Material values are read through MaterialInputs, so animating them is checked like any sampling input.
@@ -352,24 +367,30 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     throw new InvalidOperationException("Vertex wind samples the basics mask through world-space noise.");
                 if (property == "_SSAOColorMap" && On(material, "_SSAOAsRamp"))
                     throw new InvalidOperationException("SSAO color ramp mode samples this texture with a generated ramp coordinate.");
-                string uv = property == "_VertexBasicsMask" ? "VertexBasicsMaskUV" : property == "_FlipbookMask1" ? "_FlipbookMaskUV1" : property + "UV";
-                string pan = property == "_VertexBasicsMask" ? "_VertexBasicsMaskUVPan" : property == "_FlipbookMask1" ? "_FlipbookMaskPan1" : property + "Pan";
+                string uv = property == "_VertexBasicsMask" ? "VertexBasicsMaskUV" : property == "_FlipbookMask1" ? "_FlipbookMaskUV1" :
+                    property == "_BacklightColorTex__1" ? "_BacklightColorTexUV__1" : property + "UV";
+                string pan = property == "_VertexBasicsMask" ? "_VertexBasicsMaskUVPan" : property == "_FlipbookMask1" ? "_FlipbookMaskPan1" :
+                    property == "_BacklightColorTex__1" ? "_BacklightColorTexPan__1" : property + "Pan";
                 // 11.x reads the environment-rim and distortion masks through their own tiling/offset (10.x read them raw).
                 bool raw = Raw.Contains(property) && !eleven;
                 Vector4 st = raw ? new Vector4(1, 1, 0, 0) : TextureST(material, property);
                 // 11.x "Use Main Texture UV" rim colour: poiUV(POI_PAN_UV(poiUV(uv[_MainTexUV], _MainTex_ST), _MainTexPan), own ST).
+                // The path's transform then reads _MainTex_ST as well, so it has no crop basis: rewriting both field STs would
+                // apply this crop's mapping on top of the main texture's own.
+                bool foreignSt = false;
                 if (eleven && (property == "_RimColorTex" && On(material, "_RimUseMainTexUV") || property == "_Rim2ColorTex" && On(material, "_Rim2UseMainTexUV")))
                 {
                     if (Moving(material, "_MainTexPan")) throw new InvalidOperationException("The rim colour follows the panning main texture UV.");
                     Vector4 main = TextureST(material, "_MainTex");
                     st = new Vector4(main.x * st.x, main.y * st.y, main.z * st.x + st.z, main.w * st.y + st.w);
                     uv = "_MainTexUV";
+                    foreignSt = true;
                 }
                 string layer = Layer(property);
                 if (layer != null) st = Merge(st, Vector(material, "_RGBA" + layer + "ScaleOffset"));
                 var paths = new List<SamplingPath>();
                 AddPath(material, layout, property, paths, uv, pan, property + "Stochastic", st, VertexOnly.Contains(property), layout.Repeat.Contains(property), fur,
-                    layer == null && !raw ? CropBasis(material, version, property, fur) : null);
+                    layer == null && !raw && !foreignSt ? CropBasis(material, version, property, fur) : null);
                 if (layout.VertexAndFragment.Contains(property))
                     AddPath(material, layout, property, paths, uv, pan, null, st, true, true, fur);
                 if (fur && property == "_FurMask")
@@ -457,7 +478,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Describe); _RimEnviroMask and _DistortionMask apply their own _ST; _RimUseMainTexUV / _Rim2UseMainTexUV read the rim colour
         // textures through the main UV (modeled in Describe); _ALDecalMaskSpace 1 reads the AudioLink decal mask in decal space; the
         // outline texture adds an AudioLink offset and chrono scroll; Pro's _OutlineCurvatureUVs replaces poiMesh.uv[0] with a band
-        // coordinate in the outline pass; Pro "Triple Outline" adds outline layers (rejected by name). None of 11.x is cropped.
+        // coordinate in the outline pass; Pro "Triple Outline" adds outline layers (rejected by name). 11.x is cropped on the same
+        // CropAudited fields as 10.x (audited 2026-11-16 on every 11.0.43 entry).
         private static void Eleven(Material m, string property)
         {
             if (m.HasProperty("_OutlineCurvatureUVs") && Number(m, "_OutlineCurvatureUVs") >= 0.5f)
@@ -485,9 +507,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // The field whose own _ST the main lookup reads, when the class comment's crop audit covers it; else null.
+        // 11.0 joins 10.0 and 9.3: audited 2026-11-16 across every 11.0.43 Toon and Pro entry, no CropAudited field's _ST samples
+        // another texture, no lookup reads another field's _ST, and the non-lookup uses are the same precomputed own-UV locals and
+        // the _MainTex mip-level/video/screen uses the _MainTex guards below already cover.
         private static string CropBasis(Material m, string version, string property, bool fur)
         {
-            if (fur || !CropAudited.Contains(property) || !(version.StartsWith("10.0.", StringComparison.Ordinal) || version.StartsWith("9.3.", StringComparison.Ordinal)) ||
+            if (fur || !CropAudited.Contains(property) || !(version.StartsWith("10.0.", StringComparison.Ordinal) ||
+                version.StartsWith("9.3.", StringComparison.Ordinal) || version.StartsWith("11.0.", StringComparison.Ordinal)) ||
                 !ShaderAdapterRegistry.CropBasisAllowed)
                 return null;
             if (property == "_MainTex" && (On(m, "_VideoEffectsEnable") || On(m, "_AlphaSharpenedA2C") && On(m, "_AlphaToCoverage"))) return null;
@@ -502,8 +528,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             if (layout.RawUv0.Contains(property))
             {
-                if ((On(m, "_PoiParallax") || m.IsKeywordEnabled("POI_PARALLAX")) && Number(m, "_ParallaxUV") == 0)
-                    throw new InvalidOperationException("Parallax modifies the sampled UV channel.");
+                if (ParallaxDisplaces(m, 0))
+                    throw new InvalidOperationException("Parallax displaces the sampled UV channel; original retained.");
                 paths.Add(new SamplingPath { UvChannel = 0, FixedRepeat = true, Label = "Poiyomi raw UV0" });
                 return;
             }
@@ -519,8 +545,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 if (layout.GlobalUv && (Moving(m, "_UVSettingsPan" + uv) || Number(m, "_UVSettingsRotate" + uv) != 0 || Number(m, "_UVSettingsAngle" + uv) != 0))
                     throw new InvalidOperationException("Poiyomi global UV rotation/panning is not modeled.");
-                if ((On(m, "_PoiParallax") || m.IsKeywordEnabled("POI_PARALLAX")) && Number(m, "_ParallaxUV") == uv)
-                    throw new InvalidOperationException("Parallax modifies the sampled UV channel.");
+                if (ParallaxDisplaces(m, uv))
+                    throw new InvalidOperationException("Parallax displaces the sampled UV channel; original retained.");
                 if (layout.GlobalUv)
                 {
                     Vector4 tiling = Vector(m, "_UVSettingsTiling" + uv), shift = Vector(m, "_UVSettingsOffset" + uv);
@@ -579,6 +605,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             return value;
         }
         private static bool Moving(Material m, string p) => m.HasProperty(p) && (Vector(m, p).x != 0 || Vector(m, p).y != 0);
+        // Parallax rewrites poiMesh.uv[_ParallaxUV] before the lookups that read through that channel, so such a path is no
+        // longer at mesh UVs. A zero strength is the exception: the 9.3 and 10.x sources return early while
+        // parallaxStrength <= 0 and the 11.x ones compute depth = _HeightStrength * mask and return baseUV at depth <= 0,
+        // which is the plain lookup. A nonzero strength displaces by heightOffset * strength * tan/max(|tan.z|, 0.001) (up
+        // to 1000x the strength on 9.3/10.x, 30x the depth on 11.x), which no aligned crop cell could hold, so those
+        // paths stay retained rather than padded.
+        private static bool ParallaxDisplaces(Material m, int uv) =>
+            (On(m, "_PoiParallax") || m.IsKeywordEnabled("POI_PARALLAX")) && Number(m, "_HeightStrength") > 0 &&
+            Number(m, "_ParallaxUV") == uv;
         private static bool On(Material m, string p) => Number(m, p) != 0;
         private static SamplingDescription Unsupported(string reason) => ShaderAdapterRegistry.Unsupported(Id, reason);
         internal static string ExcludedReason(string property)
