@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // UnlitWF UnToon family (whiteflare, "UnlitWF/.../WF_UnToon_*": plain, Mobile, Outline, OutlineOnly, PowerCap, TriShade,
     // Transparent variants), audited 2026-11-16 on UnlitWF_Shader_20261101 (2.15.0; WF_UnToon, WF_UnToon_Function, _ShadowCaster,

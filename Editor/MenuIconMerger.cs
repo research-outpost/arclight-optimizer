@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Expression menu icons the texture scan never sees (they are not on materials). Outfits often carry the same icon file
     // under another name; every control then points at one of them and the copies are not uploaded. Only icons whose files

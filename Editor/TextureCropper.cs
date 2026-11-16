@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Shrinks textures whose sampled area (with the usual protected padding) fits in an aligned power-of-two part of the
     // image: the texture is cropped to that part and the tiling/offset that maps UVs onto it is rewritten, on build

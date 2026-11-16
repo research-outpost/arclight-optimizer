@@ -7,7 +7,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     internal static class LilToonSourceGuard
     {

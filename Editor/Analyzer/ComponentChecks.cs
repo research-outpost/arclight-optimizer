@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor.Analyzer
 {
     // Step 4: missing scripts, references to deleted things, and contact receivers whose parameter no animator has. Judged as
     // authored: the uploaded copy is built from it.

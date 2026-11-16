@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer
+namespace ResearchOutpost.AvatarTextureOptimizer
 {
     public sealed class TextureOptimizationManifest : ScriptableObject
     {

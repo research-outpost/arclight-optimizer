@@ -5,7 +5,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // A stereo clip whose two channels are sample-for-sample identical carries its sound twice. Played as mono it
     // comes out exactly 3 dB quieter (measured: Unity's 2D mixer with no pan, and the Oculus and Steam Audio

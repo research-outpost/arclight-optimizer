@@ -1,7 +1,7 @@
 using UnityEngine;
 using VRC.SDKBase.Editor.BuildPipeline;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Takes the pre-build asset snapshot before any other preprocess callback runs: VRCFury (-10000), Modular
     // Avatar's and NDMF's hooks (-1025) and d4rk (-15 or -1025) all start after this, so every asset they create is

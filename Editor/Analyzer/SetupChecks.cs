@@ -6,7 +6,7 @@ using UnityEditor.Animations;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor.Analyzer
 {
     // Operations that cannot work, read straight from the avatar's data (VRChat creator docs and SDK 3.10.5): conditions that
     // don't fit their parameter's type, face bindings to blendshapes the mesh lacks, writes to VRChat's read-only parameters,

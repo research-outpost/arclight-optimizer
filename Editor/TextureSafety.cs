@@ -1,10 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     internal static class TextureSafety
     {
@@ -154,7 +155,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // recipe, so verdicts decided under one setting are never reused under the other.
         internal static bool NarrowBc7;
 
-        public static TextureImporterFormat? Choose(TextureImporter importer, TextureChannels read)
+        // Textures the component's Exclude Textures From Narrowing list names, by asset GUID: the opt-in BC7 -> BC1 step
+        // skips them, so one texture whose gradients band keeps BC7 while the rest narrow. Set once per build from the
+        // component. The default DXT5 -> BC1 step is unaffected: it is exact for opaque colour. Callers pass the verdict in
+        // (narrowExcluded) because the importer they ask about is often a generated copy of the source the list names.
+        internal static HashSet<string> NarrowExcludedGuids;
+
+        internal static bool NarrowExcluded(Texture texture)
+        {
+            if (NarrowExcludedGuids == null || !texture || NarrowExcludedGuids.Count == 0) return false;
+            string guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(texture));
+            return !string.IsNullOrEmpty(guid) && NarrowExcludedGuids.Contains(guid);
+        }
+
+        public static TextureImporterFormat? Choose(TextureImporter importer, TextureChannels read, bool narrowExcluded = false)
         {
             if (importer.textureType != TextureImporterType.Default || (read & TextureChannels.A) != 0) return null;
             var format = Current(importer);
@@ -165,16 +179,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // BC7 is Unity's "Compressed (High Quality)" on PC: 8 bits per texel for opaque colour. BC1 carries the same colour
             // at 4 bits, so a texture whose alpha nothing reads halves. Opt-in (see NarrowBc7); the render comparison in
             // ChannelFormatTests bounds how much precision that costs.
-            if (format == TextureImporterFormat.BC7 && NarrowBc7) return redOnly ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
+            if (format == TextureImporterFormat.BC7 && NarrowBc7 && !narrowExcluded) return redOnly ? TextureImporterFormat.BC4 : TextureImporterFormat.DXT1;
             return null;
         }
 
         // True when the chosen format shrinks the stored size (a DXT5 source, an opted-in BC7 one, or an uncompressed source),
         // which alone can justify a replacement.
-        public static bool Shrinks(TextureImporter importer)
+        public static bool Shrinks(TextureImporter importer, bool narrowExcluded = false)
         {
             var format = Current(importer);
-            return format == TextureImporterFormat.DXT5 || format == TextureImporterFormat.BC7 && NarrowBc7 || Uncompressed(format);
+            return format == TextureImporterFormat.DXT5 || format == TextureImporterFormat.BC7 && NarrowBc7 && !narrowExcluded || Uncompressed(format);
         }
 
         private static bool Uncompressed(TextureImporterFormat format) =>

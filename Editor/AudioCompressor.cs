@@ -5,7 +5,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Opt-in: uncompressed (PCM) audio clips re-encoded as Vorbis in a generated copy. Music and voice-line avatars
     // can carry tens of megabytes of PCM that a codec cuts by roughly an order of magnitude; the source asset is

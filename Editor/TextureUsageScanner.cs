@@ -7,7 +7,7 @@ using nadena.dev.ndmf.animator;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     public sealed class TextureUsageRecord
     {

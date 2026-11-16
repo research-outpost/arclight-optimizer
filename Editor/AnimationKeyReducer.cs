@@ -5,7 +5,7 @@ using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Removes keyframes that change nothing about playback, in build-owned clips only:
     //  - a float key strictly inside a flat run: it, the kept key before it and the key after it hold the same value

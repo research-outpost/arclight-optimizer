@@ -4,7 +4,7 @@ using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Texture memory that only the user can remove, stated as facts with sizes; Arclight changes nothing here. Sizes are the
     // built avatar's imported textures for the active platform.

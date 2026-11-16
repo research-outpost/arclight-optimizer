@@ -6,7 +6,7 @@ using UnityEditor.Animations;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor.Analyzer
 {
     // Step 3: menu structure, objects that start differently in game than in the scene, and the synced-bit budget.
     internal static partial class AvatarAnalyzer

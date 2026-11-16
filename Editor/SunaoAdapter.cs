@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Sunao Shader 1.6.x (audited: 1.6.2), every entry. All passes (forward, outline, shadow caster) build
     // their UV as uv0 * _MainTex_ST; with UV animation and scrolling off, MainUV and SubUV are both that UV:

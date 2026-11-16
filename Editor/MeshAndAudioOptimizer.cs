@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Runs on the build avatar among the avatar-wide passes. Object references on the avatar's components are rewritten
     // through one replacement map. A reference this does not rewrite (an animation curve, an animator behaviour)

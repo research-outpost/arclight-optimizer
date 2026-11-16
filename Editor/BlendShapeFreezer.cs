@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Bakes blend shapes that nothing can change into the mesh, and drops shapes that move nothing.
     //  - Frozen: a shape no clip animates (or every clip only animates to the weight it already has) and VRChat does

@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Replaces a PhysBone chain's end bones with its Endpoint Position, so the avatar has fewer transforms and the solver
     // fewer real bones. An end bone only gives its parent a point to aim at; the endpoint is that same point, as a virtual

@@ -1,7 +1,7 @@
 using System;
 using System.Text;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Reads the input signature (ISGN/ISG1 chunk) of a compiled Direct3D shader stage, to tell which semantics it
     // declares, including system values such as SV_VertexID that Unity's attribute list leaves out.

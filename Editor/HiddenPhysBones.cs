@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // PhysBones that only move bones drawn by renderers inside one toggled object stop while that object is hidden.
     // The object's m_IsActive curves are copied onto the PhysBone's m_Enabled in the same clips, and the PhysBone

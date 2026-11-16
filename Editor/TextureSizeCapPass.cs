@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // The opt-in texture size cap, applied last: after generation (which clears and pads at the authored resolution, where
     // the pixel geometry lives) and after cropping (which cuts full-resolution pixels and often brings a texture under the
@@ -12,7 +12,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // the ones no other pass touched — which is why this is its own step and not part of the cropper.
     // A capped copy is a byte copy of the texture with its importer capped, so the source file and its importer are never
     // changed; the build's materials get a clone naming the copy, and the duplicate is registered like every other
-    // replacement. Left alone: textures within the cap, textures an animation names directly, and any texture this pass
+    // replacement. Left alone: textures within the cap, textures named in the component's Exclude Textures From Cap list,
+    // textures an animation names directly, and any texture this pass
     // cannot also repoint (held by a particle, trail or line renderer, by an excluded renderer, or by a material an
     // animation swaps in) — capping those on the mesh side alone would ship the source and the copy together. Also left
     // alone: everything while VRCFury has not built the avatar yet.
@@ -22,8 +23,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // previous: the texture pass's source -> final map, so a menu control that still names a source which the build
         // already replaced (generated, cropped) follows through to its capped copy.
+        // excluded: textures the component's Exclude Textures From Cap list names, left at their authored size. Capping one
+        // would also need its slot repointed, and the list exists so the user keeps a single texture sharp.
         internal static Result Run(GameObject root, AvatarAnalysis analysis, int cap, Action<Object, Object> register,
-            Dictionary<Texture, Texture> previous = null)
+            Dictionary<Texture, Texture> previous = null, HashSet<Texture> excluded = null)
         {
             var result = new Result();
             if (cap <= 0 || !analysis.Complete) return result;
@@ -37,7 +40,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var texture in audited.SelectMany(r => r.sharedMaterials).Where(m => m)
                          .SelectMany(m => m.GetTexturePropertyNames().Select(m.GetTexture)).OfType<Texture2D>().Distinct())
             {
-                if (!texture || exempt.Contains(texture) || Math.Max(texture.width, texture.height) <= cap) continue;
+                if (!texture || exempt.Contains(texture) || (excluded != null && excluded.Contains(texture)) ||
+                    Math.Max(texture.width, texture.height) <= cap) continue;
                 var copy = CappedCopy.Make(texture, cap, dropMips: false, narrowOpaque: false, CappedCopy.Folder, CappedCopy.Marker,
                     "cap", allowCacheSource: true, out long before, out long after);
                 if (!copy) continue;

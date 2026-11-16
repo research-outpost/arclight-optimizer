@@ -6,7 +6,7 @@ using UnityEditor.Rendering;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Removes tangents, vertex colours and UV1-UV7 from a mesh when no material that can ever render it uses them.
     // On PC, a stripped channel is read by the shader as Unity's default value, verified on Direct3D 11. On Android only

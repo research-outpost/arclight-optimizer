@@ -3,7 +3,7 @@ using System.Diagnostics;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // The native dialog pumps cancellation during synchronous editor work. Unity codec/import
     // calls finish before the next checkpoint; applying replacements is one non-cancellable step.

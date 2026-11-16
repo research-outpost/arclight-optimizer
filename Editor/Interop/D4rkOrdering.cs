@@ -6,7 +6,7 @@ using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Without Modular Avatar, d4rkAvatarOptimizer's upload hook and NDMF's Optimizing hook (where this tool
     // runs) share VRChat SDK callbackOrder -1025. The SDK runs its preprocess callbacks through a stable

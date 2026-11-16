@@ -1,7 +1,7 @@
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Expression-menu icons are drawn at a small size in VRChat's menu, but they are imported at their authored
     // resolution (commonly 512-1024 squared, BC3 with mips) and the texture pass never sees them because they are not

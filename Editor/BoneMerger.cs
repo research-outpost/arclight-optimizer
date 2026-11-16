@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Merges skinned bones that never move relative to their parent into the parent, so the avatar has fewer bones and
     // transforms. A vertex weighted to the bone stays weighted to the same slot; the slot now names the parent, and its

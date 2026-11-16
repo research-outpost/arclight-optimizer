@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.Animations;
 using UnityEngine.Rendering;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Unified Bounds: every skinned mesh gets the Hips as its root bone and one shared bounding box, with Update When
     // Offscreen off. Unity skips drawing a skinned mesh whenever its box is entirely off screen, so a box that is too small

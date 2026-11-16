@@ -5,7 +5,7 @@ using UnityEditor.Animations;
 using UnityEngine;
 using VRC.SDKBase.Editor.BuildPipeline;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // d4rkAvatarOptimizer is a VRChat SDK preprocess hook, not an NDMF plugin: it runs after NDMF finishes and
     // rewrites materials and clips, which can make previously different ones identical. So duplicates are merged

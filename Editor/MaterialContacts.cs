@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // VRChat's material-contact receivers (contact components that drive material properties) name the renderers they
     // drive, which used to put those renderers beyond merging entirely. This models them so the skinned mesh merger can
@@ -17,7 +17,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // The SDK ships as assemblies, so behaviour beyond the two structural property names below is never hard-coded:
     // each receiver's whole serialized data (minus its targets and its self/prefab plumbing) is the fingerprint that
     // decides whether two receivers are one contact. A receiver whose data cannot be read, and a material receiver in
-    // the Arclight Exclude list (whose references this pass must not rewrite), keeps its renderers apart; unreadable
+    // the Exclude Objects list (whose references this pass must not rewrite), keeps its renderers apart; unreadable
     // data fails closed, back to the old blocking behaviour.
     internal sealed class MaterialContacts
     {
@@ -101,7 +101,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (!receivers.TryGetValue(component, out var receiver)) return "another component references the renderer";
             if (!receiver.Readable) return "could not read its material contact components";
             if (!receiver.IsMaterial) return null; // Inert: it names the renderer but nothing can drive it.
-            if (Exclusions.Excluded(receiver.ReceiverComponent)) return "its material contact sits in the Arclight Exclude list";
+            if (Exclusions.Excluded(receiver.ReceiverComponent)) return "its material contact sits in the Exclude Objects list";
             return null;
         }
 

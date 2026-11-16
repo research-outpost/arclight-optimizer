@@ -4,7 +4,7 @@ using nadena.dev.ndmf;
 using nadena.dev.ndmf.localization;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // A build where Arclight did less than it could (it stood down, or a pass stopped part-way) is shown as a non-fatal
     // warning in NDMF's error window, not only as a Console line, so it is noticed. Outside a build NDMF just logs it.

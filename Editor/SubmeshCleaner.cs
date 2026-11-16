@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Fewer submeshes and material slots, so fewer draw calls, with the same pixels:
     //  - Empty submeshes (no indices) draw nothing; they and their slots go.

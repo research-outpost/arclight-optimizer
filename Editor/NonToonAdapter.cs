@@ -5,7 +5,7 @@ using System.Text;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // lilxyzw NonToon 0.1.3 on Shader Core 0.1.12 and NonToon 0.3.0 on Shader Core 0.3.0, built-in pipeline passes. Shader Core generates the
     // shader at import from the .scshader, its shader library and the modules enabled for it in

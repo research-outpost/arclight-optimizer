@@ -7,7 +7,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Merges skinned meshes that always render together into one SkinnedMeshRenderer, so the avatar skins and
     // counts one mesh instead of several. Only merges that keep every frame identical:
@@ -88,7 +88,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 else Why("several settings differ from its nearest partner", r);
             }
             if (anchorOrBounds)
-                result.Hints.Add("Some meshes differ from a partner only by their bounds setting or probe anchor (meshes in the Exclude list, or with Unified Bounds off). Unified Bounds, VRCFury's Bounding Box Fix or Modular Avatar's Mesh Settings give meshes one bounds so Arclight can merge them; that changes culling slightly, so it is your choice.");
+                result.Hints.Add("Some meshes differ from a partner only by their bounds setting or probe anchor (meshes in Exclude Objects, or with Unified Bounds off). Unified Bounds, VRCFury's Bounding Box Fix or Modular Avatar's Mesh Settings give meshes one bounds so Arclight can merge them; that changes culling slightly, so it is your choice.");
 
             // Merged members are destroyed as each group completes; their animation is retargeted even if a later group fails.
             try
@@ -291,7 +291,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (bindings.Count > 0 && (!canMoveAnimation || !UniquePath(renderer.transform, analysis.Root.transform) ||
                 bindings.Any(b => !Movable(b, analysis.Root)))) return "an animation on the renderer cannot be moved to the merged one";
             // Material contacts aim at renderers, but matching aim sets merge together (see MaterialContacts); a
-            // receiver that cannot be checked, or sits in the Exclude list, keeps its renderers apart.
+            // receiver that cannot be checked, or sits in Exclude Objects, keeps its renderers apart.
             foreach (var c in analysis.ReferencesTo(renderer))
             {
                 if (c.GetType().Name == "VRCAvatarDescriptor") continue;

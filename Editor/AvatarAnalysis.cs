@@ -8,7 +8,7 @@ using UnityEngine;
 using UnityEngine.Animations;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // One read-only model of what can change on the build avatar at runtime and what refers to what, shared by
     // every pass that needs a safety proof. Built from the avatar as it is when the pass runs; build it again after

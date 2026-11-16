@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Automatic removal of cached outputs that no recent build has used. Every cached PNG can be
     // regenerated from its source, so removal only costs a later rebuild. Only PNGs this optimizer

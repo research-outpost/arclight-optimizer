@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Lowers a particle system's Max Particles to the most particles it can ever have alive, so the setting never
     // limits it and nothing on screen changes. Particles alive at one moment were emitted within the last lifetime,

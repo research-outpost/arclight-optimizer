@@ -3,7 +3,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Meshes this build made (merged, stripped or otherwise copied) are created readable, so the uploaded avatar would keep a
     // second, CPU-side copy of each in memory that nothing on an avatar reads: skinning, blend shapes and drawing use the GPU

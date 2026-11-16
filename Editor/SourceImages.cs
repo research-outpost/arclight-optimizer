@@ -5,7 +5,7 @@ using System.Text;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Source images other than PNG (PSD, TGA, TIFF, BMP, JPEG). Unity flattens these itself, so the pixels are read
     // from an uncompressed copy imported with the source's own importer metadata: they are exactly the full-resolution

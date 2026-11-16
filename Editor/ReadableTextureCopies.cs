@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Read/Write-off build copies of readable source textures the texture pass keeps as they are (no changes needed, no
     // saving, or skipped by a safety check). A readable texture ships a CPU copy that every viewer holds in RAM and that

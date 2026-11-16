@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor.Analyzer
 {
     // Pick an avatar (or check every avatar in the open scenes), press Check, read the list. The avatar is only changed when you press
     // a card's fix button, and that can be undone.

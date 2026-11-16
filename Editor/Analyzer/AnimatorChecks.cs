@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor.Analyzer
 {
     // Step 2: Write Defaults, layers that never play, animation targets and parameter driver targets.
     internal static partial class AvatarAnalyzer

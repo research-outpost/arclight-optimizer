@@ -3,9 +3,9 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
-    // Objects every pass leaves alone: those in the Arclight Optimizer component's Exclude list, those under an Arclight
+    // Objects every pass leaves alone: those in the Arclight Optimizer component's Exclude Objects list, those under an Arclight
     // Exclude component (kept for avatars set up before the list existed), and everything under either. Modular Avatar
     // and VRCFury move an outfit's bones into the avatar's armature before Arclight runs, so everything under each
     // excluded object is also recorded in the Resolving phase, before they act; an object counts as excluded when it or

@@ -6,7 +6,7 @@ using UnityEditor.Animations;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // d4rk Avatar Optimizer adds the toggles it merges as one more layer at the top of the FX controller: a single Write
     // Defaults state playing a Direct blend tree. It runs after Arclight's own layer fold, so that fold never sees it. When

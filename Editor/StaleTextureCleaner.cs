@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // A material keeps every texture it was ever given, including slots its current shader does not declare (left over
     // from a previous shader), and keywords its shader does not have. The shader can never read either, but the upload

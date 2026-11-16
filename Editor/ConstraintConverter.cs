@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Animations;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // VRChat converts every Unity constraint on an avatar into a VRChat constraint when the avatar loads, and while a clip
     // animates the Unity one it copies the animated values across before the constraints run, every frame. Converting with

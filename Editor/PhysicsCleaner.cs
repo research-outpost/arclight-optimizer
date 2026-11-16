@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.Animations;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Small PhysBone and contact cleanups, each with no effect on what anyone sees or what any animator reads:
     //  - A PhysBone's parameter is cleared when no animator reads (a condition, blend tree, state parameter, behaviour field,
@@ -147,7 +147,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // enabled state, compared field by field) collide identically, so every PhysBone list entry for the second can name the
         // first and the second goes. Only colliders that no animation touches, that nothing but PhysBones references, whose
         // objects are active and can never be switched off (a collider collides only while its object is active), and that no
-        // PhysBone under Arclight Exclude lists (its list stays as it is).
+        // PhysBone under an Exclude Objects list (its list stays as it is).
         private static int MergeIdenticalColliders(List<Component> components, AvatarAnalysis analysis)
         {
             var physBones = components.Where(c => c.GetType().Name == "VRCPhysBone").ToList();

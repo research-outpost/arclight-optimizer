@@ -3,7 +3,7 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // What an avatar download carries for a texture is its compressed texture data inside the bundle (the imported
     // GPU format with mips, then the bundle's own compression), not the PNG. This builds a throwaway bundle holding

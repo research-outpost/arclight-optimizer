@@ -1,7 +1,7 @@
 using nadena.dev.ndmf;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer
+namespace ResearchOutpost.AvatarTextureOptimizer
 {
     // Opt-in resolution cap for build copies of the avatar's textures. Values are the pixel cap itself, so the
     // inspector's dropdown and the importer's maxTextureSize are the same number; Off keeps every authored size.
@@ -58,10 +58,14 @@ namespace Okarin.AvatarTextureOptimizer
         public System.Collections.Generic.List<Transform> exclude = new System.Collections.Generic.List<Transform>();
         [Tooltip("Cap build copies of the avatar's textures at 1024, 2048 or 4096 pixels, or keep the authored size (Off). Textures above the cap are resampled by Unity's importer in a build copy, so they look softer when displayed large; a copy is used only when its measured bundle is smaller.")]
         public TextureSizeCap textureSizeCap;
+        [Tooltip("Textures the Texture Size Cap keeps at their authored size. Use it for one texture that looks too soft once capped, without exempting the object it sits on: every other Arclight optimization still applies to it.")]
+        public System.Collections.Generic.List<Texture2D> textureSizeCapExclude = new System.Collections.Generic.List<Texture2D>();
         [Tooltip("Cap expression-menu icon build copies at 64, 128 or 256 pixels. Icons are drawn small in VRChat's menu, so a cap usually looks the same and cuts their bundle cost several-fold.")]
         public MenuIconCap menuIconCap;
         [Tooltip("Narrow opaque colour textures that Unity imports as BC7 (\"Compressed (High Quality)\") to BC1, at half their size. Very smooth gradients can band; look at the built avatar before uploading. Normal maps, textures whose alpha is read, and every other format are never narrowed.")]
         public bool narrowOpaqueTextures;
+        [Tooltip("Textures Narrow Opaque Textures keeps in BC7. Use it for one texture whose gradients band, without turning the option off for the avatar. The lossless DXT5 to BC1 step is unaffected.")]
+        public System.Collections.Generic.List<Texture2D> narrowOpaqueExclude = new System.Collections.Generic.List<Texture2D>();
         [Tooltip("Re-encode uncompressed (PCM) audio clips as Vorbis in the built avatar. Cuts music and voice lines by roughly an order of magnitude; the sound changes by the codec's loss.")]
         public bool compressAudio;
         [Range(0f, 1f)]

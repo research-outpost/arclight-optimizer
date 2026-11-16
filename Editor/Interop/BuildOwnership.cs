@@ -5,7 +5,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Which assets a pass may edit and save into. A build may only write what did not exist when it started: the
     // generated assets of NDMF, VRCFury, d4rk and any future tool, without naming their folders. The set is taken by

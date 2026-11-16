@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Unity Toon Shader (com.unity.toonshader, "Toon/Toon"), built-in pipeline subshader, audited 2026-11-16 on 0.16.1-preview
     // (BuiltIn/UCTS_DoubleShadeWithFeather, UCTS_ShadingGradeMap, UCTS_Outline, UCTS_ShadowCaster). Every pass sets Set_UV0 = uv0:

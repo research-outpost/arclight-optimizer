@@ -6,7 +6,7 @@ using nadena.dev.ndmf.animator;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Moves animation curves from one binding to another in every clip of the avatar. The map receives the object a
     // clip's paths start from and a binding, and returns the binding to move the curve to, or null to leave it.

@@ -7,7 +7,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Smaller vertex data with the same pixels:
     //  - Vertices identical in every input the vertex shader gets (every vertex stream byte, bone weights and every

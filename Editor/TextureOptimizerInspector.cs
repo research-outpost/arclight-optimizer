@@ -3,7 +3,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     [CustomEditor(typeof(AvatarTextureOptimizer))]
     internal sealed class TextureOptimizerInspector : UnityEditor.Editor
@@ -44,7 +44,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (EditorGUI.EndChangeCheck()) menuIconCap.enumValueIndex = capIndex;
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.narrowOpaqueTextures)), new GUIContent("Narrow Opaque Textures",
                 "PC only. Stores high-quality (BC7) opaque colour textures as BC1, half the size. Very smooth gradients can band; check close up before uploading. Normal maps and textures with used alpha are untouched."));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.exclude)), new GUIContent("Exclude",
+            using (new EditorGUI.DisabledScope(!serializedObject.FindProperty(nameof(AvatarTextureOptimizer.narrowOpaqueTextures)).boolValue))
+                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.narrowOpaqueExclude)), new GUIContent("Exclude Textures From Narrowing",
+                    "Textures Narrow Opaque Textures keeps in BC7. Use it for one texture whose gradients band; the exact DXT5 to BC1 step still applies."), true);
+            using (new EditorGUI.DisabledScope(textureSizeCap.enumValueIndex == (int)TextureSizeCap.Off))
+                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.textureSizeCapExclude)), new GUIContent("Exclude Textures From Cap",
+                    "Textures the Texture Size Cap keeps at their authored size. Use it for one texture that looks too soft once capped; every other optimization still applies to it."), true);
+            EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.exclude)), new GUIContent("Exclude Objects",
                 "Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object."), true);
             serializedObject.ApplyModifiedProperties();
             using (new EditorGUILayout.HorizontalScope())

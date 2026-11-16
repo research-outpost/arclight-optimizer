@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Empty containers with an identity transform: an object whose only component is its Transform, at local position 0,
     // rotation identity and scale 1 (compared exactly), always active, is a multiplication by the identity, so its children can sit on its

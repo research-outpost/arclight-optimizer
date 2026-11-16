@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Any Poiyomi shader whose shader_master_label reads Poiyomi 9.x.x-11.x.x is accepted, locked or unlocked
     // (owner decision: versions other than the audited ones are supported unaudited). The model is chosen by

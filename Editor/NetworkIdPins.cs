@@ -3,7 +3,7 @@ using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // VRChat syncs PhysBone grabbing and posing by network ID. The SDK numbers every network object (PhysBones on an
     // avatar) that has no ID in order of their hierarchy paths, in its AssignAvatarNetworkIDs build callback (order -1024), which runs

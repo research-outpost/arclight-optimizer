@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Points every renderer slot (and every material-swap curve in a build-owned clip) at one material when two
     // materials are identical in everything Unity serializes: shader, every property and texture reference,

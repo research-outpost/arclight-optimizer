@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Models float animation of a use's sampling inputs (e.g. tiling/offset) when every animated value
     // has a bounded range. The adapter is re-evaluated at the corners of the value box, at 0 and at the

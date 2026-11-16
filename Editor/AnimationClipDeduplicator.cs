@@ -7,7 +7,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // A per-avatar request from an NDMF pass to a late SDK hook of the same build. A domain reload mid-build
     // (a script recompiling, another tool importing) wipes statics, so membership is mirrored into SessionState

@@ -1,7 +1,7 @@
 using System;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // What the optional third-party optimizers mean for this avatar, answered once per call. This is the only type a
     // pass may ask: no pass names a rival, so the core optimizer builds and runs with neither package installed.

@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // The MeshRenderer counterpart of the skinned mesh merger: plain meshes that never move relative to each other and
     // render the same way are drawn by one renderer (fewer renderers; identical materials then share a submesh). The

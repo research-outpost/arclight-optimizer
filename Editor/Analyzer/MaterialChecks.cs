@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor.Analyzer
 {
     // Transparent materials set up so they render darker than they should in some worlds. Judged on the avatar as authored (the
     // build only clones materials). Both read the blend values lilToon, Poiyomi and most toon shaders save as _SrcBlend/_DstBlend.

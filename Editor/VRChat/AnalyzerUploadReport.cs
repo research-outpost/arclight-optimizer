@@ -1,10 +1,10 @@
 using System.Linq;
-using Okarin.AvatarTextureOptimizer.Editor.Analyzer;
+using ResearchOutpost.AvatarTextureOptimizer.Editor.Analyzer;
 using UnityEditor;
 using UnityEngine;
 using VRC.SDKBase.Editor.BuildPipeline;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Optional (Arclight Analyzer window): on upload, lists the avatar's problems in the console before any build step runs. It
     // never stops the upload or changes the avatar. Play Mode and the Analyzer's own build check are left alone.

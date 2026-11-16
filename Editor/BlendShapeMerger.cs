@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Blend shapes that move together are applied as one: a partner's deltas are added to the host's, scaled by the
     // constant ratio between their weights, and the partner goes (Unity blends one shape instead of two). Typical

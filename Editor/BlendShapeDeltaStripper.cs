@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Blend shape frames keep their normal and tangent deltas even when the mesh has no normals or tangents for them to
     // move (typically tangents, after the vertex stream stripper removed a channel no material reads). Such deltas

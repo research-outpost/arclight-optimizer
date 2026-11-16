@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Bones and PhysBones that change nothing anyone can see.
     //  - Zero-weight bones: a skinned renderer's bone that no vertex weights above zero contributes nothing to any

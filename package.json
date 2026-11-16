@@ -1,10 +1,10 @@
 {
   "name": "research-outpost.arclight-optimizer",
   "displayName": "Arclight Optimizer",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "unity": "2022.3",
   "description": "Optimizes VRChat avatars at build time without modifying source assets.",
-  "author": { "name": "Okarin" },
+  "author": { "name": "research-outpost" },
   "license": "MIT",
   "vpmDependencies": { "com.vrchat.base": ">=3.10.6", "nadena.dev.ndmf": ">=1.14.8 <2.0.0" },
   "dependencies": { "com.unity.modules.imageconversion": "1.0.0" }

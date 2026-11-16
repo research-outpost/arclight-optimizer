@@ -7,7 +7,7 @@ using UnityEditor;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Also removes, per controller, VRChat built-in parameters that controller declares but never reads itself (see Run).
     // Removes animator parameters whose name nothing else on the avatar mentions: no transition

@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.Animations;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Removes objects and components that can never have a visible, audible or behavioural effect, by mark and sweep
     // over the build avatar.

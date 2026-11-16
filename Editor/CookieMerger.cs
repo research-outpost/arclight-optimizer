@@ -3,7 +3,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Lights on an avatar can carry a cookie texture, and the texture scan walks renderer materials only, so a cookie is
     // never deduplicated: two lights whose cookie files are byte-identical with identical import settings import to the

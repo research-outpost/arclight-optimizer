@@ -6,9 +6,9 @@ using nadena.dev.ndmf.animator;
 using UnityEditor;
 using UnityEngine;
 
-[assembly: ExportsPlugin(typeof(Okarin.AvatarTextureOptimizer.Editor.TextureOptimizerPlugin))]
+[assembly: ExportsPlugin(typeof(ResearchOutpost.AvatarTextureOptimizer.Editor.TextureOptimizerPlugin))]
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     public sealed class TextureOptimizerPlugin : Plugin<TextureOptimizerPlugin>
     {
@@ -101,8 +101,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             state.MenuIconMaxSize = config.enabled ? (int)config.menuIconCap : 0;
             // Quest keeps every authored size: the cap is a new route and Android device testing is unavailable.
             state.TextureSizeCap = config.enabled && GeneratedTargetValidator.IsStandalone ? (int)config.textureSizeCap : 0;
+            state.TextureSizeCapExcluded = config.enabled && state.TextureSizeCap > 0
+                ? new HashSet<Texture>(config.textureSizeCapExclude.Where(t => t))
+                : null;
             // Opt-in, PC only: BC7 -> BC1 halves opaque colour textures, and the banding it can show is the avatar's call.
             ChannelFormats.NarrowBc7 = config.enabled && config.narrowOpaqueTextures && GeneratedTargetValidator.IsStandalone;
+            ChannelFormats.NarrowExcludedGuids = config.enabled && config.narrowOpaqueTextures
+                ? new HashSet<string>(config.narrowOpaqueExclude.Where(t => t)
+                    .Select(t => AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(t))).Where(guid => guid.Length > 0))
+                : null;
 
             state.KeepMmdShapes = config.keepMmdShapes;
             state.UnifiedBounds = config.unifiedBounds;
@@ -640,7 +647,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (!state.Enabled || state.TextureSizeCap <= 0 || state.VrcfuryPending) return;
             BuildTimings.Step("TextureSizeCap");
             TextureSizeCapPass.Result result;
-            try { result = TextureSizeCapPass.Run(ctx.AvatarRootObject, AvatarAnalysis.Build(ctx), state.TextureSizeCap, ReplacementRegistry.Register, state.FinalTextures); }
+            try { result = TextureSizeCapPass.Run(ctx.AvatarRootObject, AvatarAnalysis.Build(ctx), state.TextureSizeCap, ReplacementRegistry.Register, state.FinalTextures, state.TextureSizeCapExcluded); }
             catch (Exception e)
             {
                 Debug.LogException(e);
@@ -766,6 +773,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal int MenuIconMaxSize;
         // Opt-in resolution cap for build copies of the avatar's textures (0 = authored size); PC only.
         internal int TextureSizeCap;
+        // Textures the cap leaves at their authored size (the component's Exclude Textures From Cap list).
+        internal HashSet<Texture> TextureSizeCapExcluded;
         // Opt-in Vorbis re-encode of uncompressed clips (see AudioCompressor).
         internal bool CompressAudio;
         internal float AudioQuality = .7f;

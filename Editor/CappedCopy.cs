@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // A build copy of an existing texture whose *importer* is changed rather than its pixels: an optional size cap
     // (Unity's own resampling), mipmaps dropped for a texture drawn at one size, and an opaque texture narrowed from
@@ -27,6 +27,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             before = after = 0;
             if (!source || maxSize < 0) return null;
             bool cap = maxSize > 0 && (source.width > maxSize || source.height > maxSize);
+            // The component's Exclude Textures From Narrowing list names this source: keep BC7, still take the exact
+            // DXT5 -> BC1 step.
+            bool narrowExcluded = ChannelFormats.NarrowExcluded(source);
             if (!cap && !dropMips && !narrowOpaque) return null;
             string path = AssetDatabase.GetAssetPath(source);
             if (string.IsNullOrEmpty(path) || !AssetDatabase.IsMainAsset(source) ||
@@ -39,7 +42,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (!cap && !mips && !narrowOpaque) return null;
             string hash = FingerprintService.Hash(System.Text.Encoding.UTF8.GetBytes(
                 FingerprintService.FileHash(path) + "|" + TextureSafety.SettingsFingerprint(importer) + "|" + effectiveMax + "|" +
-                (mips ? "nomips" : "mips") + "|" + (narrowOpaque ? "narrow" : "keep") + "|" + (ChannelFormats.NarrowBc7 ? "bc7narrow" : "bc7keep") + "|" + marker));
+                (mips ? "nomips" : "mips") + "|" + (narrowOpaque ? "narrow" : "keep") + "|" +
+                (ChannelFormats.NarrowBc7 ? (narrowExcluded ? "bc7narrow-skip" : "bc7narrow") : "bc7keep") + "|" + marker));
             AutomaticTextureOptimizer.EnsureFolder(folder);
             // "<name>_<hash>_<suffix><ext>", as the audio passes name their copies.
             string output = GeneratedFiles.OutputPath(folder, GeneratedFiles.SafeName(Path.GetFileNameWithoutExtension(path)), hash, "_" + suffix + Path.GetExtension(path));
@@ -83,7 +87,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             // DXT1 for an opaque texture: exact only when every texel's alpha is 1, which the GPU's decode confirms.
             if (narrowOpaque && GeneratedTargetValidator.IsStandalone &&
-                ChannelFormats.Choose(copy, TextureChannels.RGB) is TextureImporterFormat narrowed)
+                ChannelFormats.Choose(copy, TextureChannels.RGB, narrowExcluded) is TextureImporterFormat narrowed)
             {
                 copy = SetReadable(output, true);
                 var pixels = AssetDatabase.LoadAssetAtPath<Texture2D>(output)?.GetPixels32();

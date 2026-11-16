@@ -8,7 +8,7 @@ using UnityEditor.Animations;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Fewer animator layers with the same animated values. A layer that is nothing but one always-playing state is
     // folded into a shared Direct blend tree layer (each such layer becomes a child weighted by a parameter that is

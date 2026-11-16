@@ -7,7 +7,7 @@ using UnityEngine.Animations;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // A skinned mesh whose every vertex follows one bone at full weight needs no skinning: it becomes a plain
     // MeshRenderer on a new object under that bone, with the mesh baked into the bone's space, so every vertex lands

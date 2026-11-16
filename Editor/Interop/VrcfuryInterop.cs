@@ -2,7 +2,7 @@ using System;
 using System.Linq;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // VRCFury's presence and build state, read without referencing its package. VRCFury's builder runs on an avatar
     // exactly when the avatar carries one of its components (its ShouldRun gate), so no component means VRCFury

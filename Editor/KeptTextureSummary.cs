@@ -13,7 +13,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Totals why textures were kept across every avatar in the open scenes. Each avatar is built on a
     // temporary clone in a preview scene through NDMF, exactly as Play Mode does, so Modular Avatar merges,

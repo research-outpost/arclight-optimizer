@@ -2,7 +2,7 @@ using System;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Compatibility inference from a distinctive lilToon property inventory, not shader-source certification.
     // No VRCFury API, package version, generated filename hash or exact source match is required.

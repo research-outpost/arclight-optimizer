@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Mochie Uber and Uber (Outline), audited 2026-11-16 on Uber v1.35.2 (Mochie Unity Shaders 1.78: USPass, USFunctions, USBRDF,
     // USLighting). Every texture is read at a mesh UV built in the vertex stage or from i.rawUV (raw uv0):

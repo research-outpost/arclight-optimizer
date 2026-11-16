@@ -1,7 +1,7 @@
 using System;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     /// <summary>Copies original protected edge values into the extra resolution-based padding band.</summary>
     internal static class EdgeValueExtender

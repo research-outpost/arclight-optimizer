@@ -5,7 +5,7 @@ using nadena.dev.ndmf;
 using nadena.dev.ndmf.localization;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Arclight does not run alongside Avatar Optimizer (AAO). NDMF has no way to declare one plugin
     // incompatible with another, so an avatar carrying any AAO component gets a blocking build error instead, and no

@@ -41,7 +41,7 @@ Manual install: extract `research-outpost.arclight-optimizer-<version>.zip` from
 2. **Add Component → Arclight → Arclight Optimizer**.
 3. Build or upload as usual, or enter Play Mode to preview (needs Reload Scene on, in Project Settings → Editor).
 
-Settings are explained under **Optional settings** below. **Exclude** lists objects (and their children) that Arclight leaves alone. Disable the component to skip it.
+Settings are explained under **Optional settings** below. **Exclude Objects** lists objects (and their children) that Arclight leaves alone. Disable the component to skip it.
 
 **Open last report** on the component shows what the last build saved, changed and kept.
 
@@ -53,9 +53,9 @@ Each of these trades some quality for size, so it's off until you choose it. Che
 - **MMD Support** (on by default): keeps the blend shapes MMD dance worlds use. Turn it off to let Arclight bake them; the face then won't move in those worlds.
 - **Unified Bounds**: gives every skinned mesh one shared bounding box, so nothing vanishes up close and more meshes can merge. Meshes may draw when just off screen.
 - **Compress Audio**: re-encodes uncompressed clips as Vorbis at the chosen **Audio Quality**, about a tenth of the size, with some quality loss.
-- **Texture Size Cap** (PC only): shrinks textures above 1024, 2048 or 4096 px in the build, so they look softer when displayed large. Textures also used by particles, trails, lines, excluded objects or animation-swapped materials keep full size.
+- **Texture Size Cap** (PC only): shrinks textures above 1024, 2048 or 4096 px in the build, so they look softer when displayed large. Textures also used by particles, trails, lines, excluded objects or animation-swapped materials keep full size, and **Exclude Textures From Cap** names single textures to keep at full size while the rest are capped.
 - **Menu Icon Cap**: shrinks menu icons above 64, 128 or 256 px, so they look slightly softer when the menu is displayed large.
-- **Narrow Opaque Textures** (PC only): stores opaque colour textures that Unity compresses as BC7 (High Quality) in BC1 instead, half the size. Smooth gradients can band: typical error 1.1–1.3 levels of 255, 99% within 4–5 levels, under 0.001% more than 32 off, and still visible close up on a real avatar. Normal maps and textures whose alpha is used are never narrowed.
+- **Narrow Opaque Textures** (PC only): stores opaque colour textures that Unity compresses as BC7 (High Quality) in BC1 instead, half the size. Smooth gradients can band: typical error 1.1–1.3 levels of 255, 99% within 4–5 levels, under 0.001% more than 32 off, and still visible close up on a real avatar. Normal maps and textures whose alpha is used are never narrowed, and **Exclude Textures From Narrowing** keeps single textures at BC7 while the rest narrow.
 
 ## Other optimizers
 

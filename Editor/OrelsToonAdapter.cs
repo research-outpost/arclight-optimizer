@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // ORL Toon v1 and v2 (sh.orels.shaders 7.3, audited against the generator's module sources; gated on the generator
     // package version, see GeneratorVersion). Every variant

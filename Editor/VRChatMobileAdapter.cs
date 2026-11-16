@@ -6,7 +6,7 @@ using System.Text;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // VRChat SDK mobile shaders (com.vrchat.base, Sample Assets/Shaders/Mobile), audited from SDK 3.10.5.
     // Each entry is pinned to a hash of its shader file and the include files it uses, so an SDK update that

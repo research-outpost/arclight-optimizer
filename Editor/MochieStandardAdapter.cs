@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Mochie Standard, Standard Lite and Standard Mobile (StandardInput.cginc). Every texture is read through
     // _DefaultSampler's sampler state. InitializeUVs builds each UV as

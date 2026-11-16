@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // This is deliberately a bounded, conservative view of animation. It records the values
     // needed by texture scanning and keeps the virtual index alive for the later substitution pass.

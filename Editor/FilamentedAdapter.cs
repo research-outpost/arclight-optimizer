@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Silent's Filamented ("Silent/Filamented" and its Roughness, Specular and Cloth setups), audited 2026-11-16 on commit c60c974e
     // (2026-06-23; UnityStandardInput, UnityStandardCore, UnityStandardShadow; meta and deferred are Unity Standard's own passes).

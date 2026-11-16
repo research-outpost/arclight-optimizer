@@ -7,7 +7,7 @@ using UnityEditor.Animations;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor.Analyzer
 {
     // One-click fixes for findings whose fix is unambiguous. They run only when the user presses the button, and every one can be
     // undone with Edit > Undo. Each returns a sentence saying what it did.

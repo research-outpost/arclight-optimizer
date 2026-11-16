@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using UnityEditor;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Mono's file APIs in the editor are not long-path aware even when Windows is, so a project or package file whose
     // full path reaches MAX_PATH (Unity itself imports such files) cannot be opened by name. The \\?\ form lifts that
@@ -132,6 +132,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 writer.Write(group.RepairsPadding);
                 // The BC7 narrowing is opt-in: a verdict decided with it on must never be reused with it off.
                 writer.Write(ChannelFormats.NarrowBc7);
+                // ...and a texture the Exclude Textures From Narrowing list names keeps BC7, so its verdict differs from
+                // the same texture unlisted. Written only when the option is on, so default recipes are unchanged.
+                if (ChannelFormats.NarrowBc7) writer.Write(ChannelFormats.NarrowExcluded(group.Source));
                 // Code constants a cached "retained" outcome depends on: changing either revisits those textures.
                 writer.Write(RetainedException.MinimumUnusedTexels);
                 writer.Write(AvatarTextureOptimizer.GetPaddingPixels(group.Source.width, group.Source.height));

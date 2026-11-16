@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Wall-clock time per Arclight step on one avatar build, for the report's timing line. Measures only; changes nothing.
     // Step(name) ends the running step and starts the next, so every moment between two Step calls belongs to one step.

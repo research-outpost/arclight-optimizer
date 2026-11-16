@@ -5,7 +5,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // What compiling a shader variant told us (vertex inputs, uniforms read, vertex ID use), kept across editor sessions
     // in Library/AvatarTextureOptimizer/shader-facts.txt. Compiling lilToon's variants takes minutes per avatar, and the

@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // One scan's mesh reads. Validation, recipes and coverage read the same submesh UVs repeatedly.
     internal sealed class MeshSnapshotCache

@@ -4,7 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     internal sealed class NoTextureChangesException : InvalidOperationException
     {
@@ -253,12 +253,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var channels = group.ActiveUses.Aggregate((TextureChannels)0, (read, use) => read | use.Sampling.Channels);
             // opaque: the texture written has alpha 255 in every texel. DXT5 then decodes alpha to exactly 1 at every mip level, as
             // DXT1 does, so a shader reading alpha sees the same value and the alpha read no longer blocks DXT1.
+            // The component's Exclude Textures From Narrowing list names the SOURCE; the importer asked about below is
+            // usually the written copy, so the verdict is taken here and passed in.
+            bool narrowExcluded = ChannelFormats.NarrowExcluded(source);
             TextureImporterFormat? ChannelFormat(TextureImporter importer, bool opaque) =>
-                GeneratedTargetValidator.IsStandalone ? ChannelFormats.Choose(importer, opaque && !normal && importer.alphaSource != TextureImporterAlphaSource.FromGrayScale ? channels & ~TextureChannels.A : channels) : null;
+                GeneratedTargetValidator.IsStandalone ? ChannelFormats.Choose(importer, opaque && !normal && importer.alphaSource != TextureImporterAlphaSource.FromGrayScale ? channels & ~TextureChannels.A : channels, narrowExcluded) : null;
             // A texture with (almost) nothing to clear can still shrink through its format alone (texels kept as they are decide
             // whether it stays opaque).
             bool keptOpaque = Enumerable.Range(0, pixels.Length).All(i => !mask[i] || pixels[i].a == 255);
-            bool formatOnly = ChannelFormat(sourceImporter, keptOpaque) != null && ChannelFormats.Shrinks(sourceImporter);
+            bool formatOnly = ChannelFormat(sourceImporter, keptOpaque) != null && ChannelFormats.Shrinks(sourceImporter, narrowExcluded);
             TextureImporterFormat? standaloneFormat = null;
             var candidates = repair ? new[] { BackgroundValueDetector.DetectUsed(pixels, sampled).Value }
                 : normal ? new[] { new Color32(128, 128, 255, 255) }

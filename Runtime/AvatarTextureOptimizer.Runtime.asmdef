@@ -1,6 +1,6 @@
 {
   "name": "AvatarTextureOptimizer.Runtime",
-  "rootNamespace": "Okarin.AvatarTextureOptimizer",
+  "rootNamespace": "ResearchOutpost.AvatarTextureOptimizer",
   "references": ["nadena.dev.ndmf.runtime"],
   "autoReferenced": true
 }

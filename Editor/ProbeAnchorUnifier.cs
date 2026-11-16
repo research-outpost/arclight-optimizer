@@ -1,7 +1,7 @@
 using System.Linq;
 using UnityEngine;
 
-namespace Okarin.AvatarTextureOptimizer.Editor
+namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 {
     // Gives every mesh renderer of the avatar one anchor override: the Chest bone, else Spine, else Hips. Unity samples a
     // renderer's light probes and reflection probe at its anchor, or at its bounds centre when it has none, so meshes with
