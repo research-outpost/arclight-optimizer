@@ -46,6 +46,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Set by an adapter whose crop basis is withheld by a gate of its own (a version range, a locked shader) rather than by
         // the lookup: the reason the build report gives for not cropping the texture. Null otherwise.
         public string CropReason;
+        // Set by an adapter whose shader treats a texture as missing below some size (an _TexelSize test): the smallest
+        // imported width and height, in texels, a crop of this texture may have. TextureCropper stops cutting before either
+        // axis would go below it. Zero means no limit beyond the crop's own 4-texel blocks.
+        public Vector2Int MinCropSize;
         public TextureSemantics Semantics = TextureSemantics.Unknown;
         public TextureChannels Channels = TextureChannels.All;
         public List<SamplingPath> Paths;
@@ -73,7 +77,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     public static class ShaderAdapterRegistry
     {
         private static readonly List<ITextureSamplingAdapter> Adapters =
-            new List<ITextureSamplingAdapter> { new KnownUnityShaderAdapter(), new StandardShaderAdapter(), new LilToonAdapter(), new SpsLilToonAdapter(), new PoiyomiAdapter(), new NonToonAdapter(), new VRChatMobileAdapter(), new SunaoAdapter(), new OrelsToonAdapter(), new MochieStandardAdapter() };
+            new List<ITextureSamplingAdapter> { new KnownUnityShaderAdapter(), new StandardShaderAdapter(), new LilToonAdapter(), new SpsLilToonAdapter(), new PoiyomiAdapter(), new NonToonAdapter(), new VRChatMobileAdapter(), new SunaoAdapter(), new OrelsToonAdapter(), new MochieStandardAdapter(), new MochieUberAdapter(), new UnityToonAdapter(), new UnlitWFAdapter(), new FilamentedAdapter() };
 
         private static readonly Dictionary<string, string> pinnedSourceFailures = new Dictionary<string, string>(System.StringComparer.Ordinal);
 

@@ -115,7 +115,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     AdapterId = baseline.AdapterId, Supported = baseline.Supported, UnsafeOverride = baseline.UnsafeOverride,
                     OverrideExcluded = baseline.OverrideExcluded, NotSampled = baseline.NotSampled,
-                    Reason = baseline.Reason,
+                    Reason = baseline.Reason, MinCropSize = baseline.MinCropSize,
                     Semantics = baseline.Semantics, Channels = channels, MaterialInputs = baseline.MaterialInputs, Paths = paths
                 };
                 return null;

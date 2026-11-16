@@ -14,12 +14,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // sampling move or widen lookups, so those materials are retained.
     //  - uv0.zw (_UVDetail*, _DetailMainTex_ST) through _DefaultDetailSampler: the detail maps (SampleDetailTexture). Standard
     //    2.13's shadow pass also reads the detail packed map at uv0.xy (2.14.1 reads uv0.zw), so that map unions both.
-    // Audited on Standard 2.13 and 2.14.1 (Mochie Unity Shaders 1.77.1); the shader names do not tell them apart, so every rule
-    // holds for both.
+    // Audited on Standard 2.13 and 2.14.1 (Mochie Unity Shaders 1.77.1), channels also on 2.14.2 (1.78); the shader names do not
+    // tell them apart, so every rule holds for all of them. Support is gated on the inspector's version label (see VersionLabel):
+    // only 2.13 and 2.14.x are described; older releases and an unreadable label retain every texture.
     // Crop basis (TextureCropper): audited on Standard 2.14.2 (Mochie Unity Shaders 1.78.0); every 2.14.x release is accepted
     // (owner decision, 2026-11-13: 2.14.0, 2.14.1 and other 2.14 patch releases are supported unaudited). The release is read from the shader's
-    // own inspector, Mochie.StandardEditor's versionLabel ("v2.14.2"), since neither the shader names nor _MochieMaterialVersion
-    // tell Standard releases apart; when that class or field is missing or renamed, no texture gets a basis (fails closed).
+    // own inspector, Mochie.StandardEditor's versionLabel ("v2.14.2"), since the shader names never tell Standard releases apart and
+    // _MochieMaterialVersion exists only from 2.14.2 (17800); when that class or field is missing or renamed, no texture gets a basis (fails closed).
     // Every path above is exactly uv * ST with
     // rotation and scroll refused, and the ST is read elsewhere only by triplanar and parallax (refused above) and alpha mip
     // rescaling, which reads _MainTex_TexelSize/_AlphaMask_TexelSize (CutoutAlpha, _ALPHATEST_ON only), so a cutout material
@@ -72,7 +73,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // Detail maps: base colour RGB, scalar maps R (the float4 is truncated); alpha only as BlendColorsAlpha /
-        // BlendScalarsAlpha's "Alpha" blend weight (blend type 1, an int cast of the float). The packed map is read at
+        // BlendScalarsAlpha's "Alpha" blend weight (blend type 1, an int cast of the float). The packed map is read at its own alpha too under that blend (2.14.2), and at
         // the three selected channels in both the surface and the shadow pass.
         private static TextureChannels DetailChannels(Material material, string property)
         {
@@ -82,7 +83,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 case "_DetailMetallicMap": return TextureChannels.R | BlendAlpha(material, "_DetailMetallicBlend");
                 case "_DetailRoughnessMap": return TextureChannels.R | BlendAlpha(material, "_DetailRoughnessBlend");
                 case "_DetailOcclusionMap": return TextureChannels.R | BlendAlpha(material, "_DetailOcclusionBlend");
-                case "_DetailPackedMap": return Channel(material, "_DetailMetallicChannel") | Channel(material, "_DetailRoughnessChannel") | Channel(material, "_DetailOcclusionChannel");
+                // 2.14.2 blends each packed channel with BlendScalarsAlpha(..., detailPackedMap.a), so the Alpha blend (1)
+                // on any of the three reads the packed map's alpha too (surface and shadow pass).
+                case "_DetailPackedMap": return Channel(material, "_DetailMetallicChannel") | Channel(material, "_DetailRoughnessChannel") | Channel(material, "_DetailOcclusionChannel") |
+                    BlendAlpha(material, "_DetailMetallicBlend") | BlendAlpha(material, "_DetailRoughnessBlend") | BlendAlpha(material, "_DetailOcclusionBlend");
                 default: return TextureChannels.All;
             }
         }
@@ -107,6 +111,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var stale = ShaderAdapterRegistry.StaleProperty(Id, material, property);
             if (stale != null) return stale;
+            if (!IsSupportedLabel(VersionLabel()))
+                return Unsupported("Only Mochie Standard 2.13 and 2.14 are supported, and Mochie's version label reads " +
+                    (VersionLabel() ?? "nothing readable") + "; original retained.");
             foreach (string keyword in ModeKeywords)
                 if (material.IsKeywordEnabled(keyword))
                     return Unsupported(keyword + " moves or widens texture lookups; original retained.");
@@ -152,25 +159,33 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     Label = "Mochie " + uv + " UV", Basis = basis ? stProperty : null, Dependencies = basis ? new[] { stProperty } : null } } };
         }
 
-        // A Standard 2.14.x release, the line the crop basis covers (class comment). Read once per domain from Mochie's inspector.
-        private static bool? cropAudited;
-        internal static bool CropAudited()
+        // Mochie's inspector label ("v2.14.2"), read once per domain; null when Mochie.StandardEditor or its versionLabel field is
+        // missing, renamed or unconstructible.
+        private static bool labelRead;
+        private static string versionLabel;
+        private static string VersionLabel()
         {
-            if (cropAudited == null)
+            if (!labelRead)
             {
-                bool accepted = false;
+                labelRead = true;
                 try
                 {
                     var editor = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType("Mochie.StandardEditor")).FirstOrDefault(t => t != null);
                     var field = editor?.GetField("versionLabel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-                    if (field != null && field.FieldType == typeof(string) && field.GetValue(Activator.CreateInstance(editor)) is string label)
-                        accepted = System.Text.RegularExpressions.Regex.IsMatch(label, @"\Av2\.14(\.\d+)?\z"); // 2.14.0 may label itself "v2.14".
+                    if (field != null && field.FieldType == typeof(string))
+                        versionLabel = field.GetValue(Activator.CreateInstance(editor)) as string;
                 }
-                catch (Exception) { accepted = false; } // Renamed or unconstructible inspector: no basis.
-                cropAudited = accepted;
+                catch (Exception) { versionLabel = null; }
             }
-            return cropAudited.Value;
+            return versionLabel;
         }
+
+        // The audited releases: Standard 2.13 and 2.14.x (2.14.0 may label itself "v2.14"). Older releases (2.7-2.11.1 in the past
+        // year) and an unreadable label are retained (fails closed).
+        internal static bool IsSupportedLabel(string label) => label != null && System.Text.RegularExpressions.Regex.IsMatch(label, @"\Av2\.1[34](\.\d+)?\z");
+        // A Standard 2.14.x release, the line the crop basis covers (class comment).
+        internal static bool IsCropLabel(string label) => label != null && System.Text.RegularExpressions.Regex.IsMatch(label, @"\Av2\.14(\.\d+)?\z");
+        internal static bool CropAudited() => IsCropLabel(VersionLabel());
 
         private static TextureChannels Channel(Material material, string property)
         {

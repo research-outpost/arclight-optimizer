@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
-    // Sunao Shader 1.6.x (audited: 1.6.2), every entry except Fur. All passes (forward, outline, shadow caster) build
+    // Sunao Shader 1.6.x (audited: 1.6.2), every entry. All passes (forward, outline, shadow caster) build
     // their UV as uv0 * _MainTex_ST; with UV animation and scrolling off, MainUV and SubUV are both that UV:
     //  - _MainTex, _MetallicGlossMap (own samplers) and _SubTex, _AlphaMask, _OcclusionMap, _ShadeMask, _LightMask,
     //    _RimLitMask, _MatCapMask, _OutLineTexture (the main texture's sampler) read it directly.
@@ -18,6 +18,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // fragment path that is exactly uv0 * _MainTex_ST names _MainTex. No _TexelSize of these fields is read. The normal map
     // applies the main transform twice and the outline mask is read in vertex stages, so neither gets a basis; the emission
     // maps get one only while their own ST is identity.
+    // Fur (audited 2026-11-16 on 1.6.2): its two non-fur passes and shadow caster build from the same Core/SC sources as the other
+    // entries; the two fur passes (SunaoShader_FR + SunaoShader_Geom) emit shells from edge midpoints of each triangle, so their
+    // UVs stay inside the triangle (uv0 * _MainTex_ST, UV animation guarded above). _FurMask is read there with tex2Dlod at that
+    // UV (own sampler, MonoColor of .rgb). _FurShapeTex is read at frac(MainUV * width) (a tiled pattern) and is retained;
+    // _FurTex and _FurDirection are declared but never read. The fur pattern (frac(dot(MainUV, ...))) and shell roughness
+    // (frac(dot(uv, ...))) take the transformed UV as a coordinate, so a Fur material is never cropped.
     internal sealed class SunaoAdapter : ITextureSamplingAdapter
     {
         private const string Id = "sunao-1.6-static-v1";
@@ -27,8 +33,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         public SamplingDescription Describe(Material material, string property)
         {
-            if (material.shader.name == "Sunao Shader/Fur" || material.shader.name.EndsWith("/Fur", StringComparison.Ordinal))
-                return Unsupported("Sunao Fur shells are not modeled; original retained.");
+            bool fur = material.shader.name == "Sunao Shader/Fur" || material.shader.name.EndsWith("/Fur", StringComparison.Ordinal);
             if (!material.HasProperty("_VersionH") || Value(material, "_VersionH") != 1 || Value(material, "_VersionM") != 6)
                 return Unsupported("Only Sunao Shader 1.6.x is supported; original retained.");
             var stale = ShaderAdapterRegistry.StaleProperty(Id, material, property);
@@ -37,7 +42,16 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return Unsupported("Sunao UV animation or scrolling moves sampling over time; original retained.");
 
             Vector2 mainScale = MaterialInputs.Scale(material, "_MainTex"), mainOffset = MaterialInputs.Offset(material, "_MainTex");
-            bool croppable = Value(material, "_DecalEnable") == 0;
+            bool croppable = Value(material, "_DecalEnable") == 0 && !fur;
+            if (fur)
+                switch (property)
+                {
+                    case "_FurMask": return Path(material, TextureSemantics.Data, mainScale, mainOffset, false, TextureChannels.RGB);
+                    case "_FurShapeTex": return Unsupported("Sunao fur shape tiles across the whole texture; original retained.");
+                    case "_FurTex": case "_FurDirection":
+                        return new SamplingDescription { AdapterId = Id, Supported = true, NotSampled = true,
+                            Reason = "Declared by Sunao Fur but never read by its 1.6.2 source." };
+                }
             switch (property)
             {
                 case "_MainTex": return Path(material, TextureSemantics.Color, mainScale, mainOffset, false, TextureChannels.All, croppable);

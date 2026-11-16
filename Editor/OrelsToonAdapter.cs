@@ -5,7 +5,8 @@ using UnityEngine;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
-    // ORL Toon v1 and v2 (sh.orels.shaders 7.3, audited against the generator's module sources). Every variant
+    // ORL Toon v1 and v2 (sh.orels.shaders 7.3, audited against the generator's module sources; gated on the generator
+    // package version, see GeneratorVersion). Every variant
     // (Main, Cutout, Transparent, Transparent PrePass, LTCGI, UV Discard) builds from the same modules.
     //  - GLOBAL_uv = uv[_MainTexUVSet] * _MainTex_ST (UV1-UV4). _MainTex (own sampler), _AlphaTex and _EmissionMap
     //    read it through the main sampler.
@@ -16,6 +17,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     //  - Bicubic normal/alpha sampling reaches two texels, well inside the smallest protected padding.
     // Only opaque entries (no NEED_ALBEDO_ALPHA) ignore the main texture's alpha. Matcaps, decals, ramps, the DFG LUT
     // and AudioLink maps are retained.
+    // Crop basis (TextureCropper), audited 2026-11-16 on the 7.4.0-dev.4 generator modules every v1 and v2 entry includes
+    // (7.3.0/7.3.1 differ there only in the UV-set clamp): _MainTex_ST is read only to build GLOBAL_uv, and GLOBAL_uv only
+    // feeds texture lookups, except v2 Emission's UV-tile mask (inside its emission-map branch) and AudioLink, whose mask and
+    // UV-based effect take GLOBAL_uv as a coordinate (both block cropping while on). So the albedo transform is a basis for _MainTex, _AlphaTex, emission
+    // and the "Synced With Albedo" maps at tiling 1, while AudioLink is off. Bicubic sampling sizes its grid with GetDimensions,
+    // which a crop keeps texel-aligned. The v2 own-ST masks and detail normals read their _ST only for their own lookup. The v2
+    // emission map is skipped when _EmissionMap_TexelSize.w <= 16 and metallic maps count as missing when
+    // _MetallicGlossMap_TexelSize.z <= 8, so their crops keep at least 17 texels of height and 9 of width (MinCropSize; ORL
+    // textures never take the one-colour collapse). Not cropped: synced maps at another tiling (the rewritten offset would be
+    // scaled with them); "Independent", outline and v1 detail lookups (no _ST).
+    // Ramps, matcaps and the DFG LUT read lighting or view coordinates only, so they stay uncropped without blocking the rest.
     internal sealed class OrelsToonAdapter : ITextureSamplingAdapter
     {
         private const string Id = "orels-toon-7.3-v1";
@@ -32,38 +44,73 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             name.StartsWith("orels1/Toon/v2/", StringComparison.Ordinal) ? (V2.Contains(name.Substring(15)) ? 2 : 0)
             : name.StartsWith("orels1/Toon/", StringComparison.Ordinal) && V1.Contains(name.Substring(12)) ? 1 : 0;
 
+        // The generator package builds every ORL shader from its module sources, so its version is the shader's.
+        // 7.3.0 is the audited line; 7.3.1 changed only LTCGI and 7.4.0-dev.1-dev.4 only clamped UV-set indices, added an
+        // occlusion power and moved the specular mask to intensity (same selectors). 7.0-7.2 read the v2 decal, matcap and
+        // detail-normal masks through their own samplers and are retained. Later 7.x releases are accepted unaudited.
+        private const string GeneratorPackage = "Packages/sh.orels.shaders.generator/package.json";
+        private static bool generatorRead;
+        private static string generatorVersion;
+        internal static string GeneratorVersion()
+        {
+            if (!generatorRead)
+            {
+                generatorRead = true;
+                try { generatorVersion = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(GeneratorPackage)?.version; }
+                catch (Exception) { generatorVersion = null; }
+            }
+            return generatorVersion;
+        }
+
+        internal static bool IsSupportedGenerator(string version)
+        {
+            var match = version == null ? null : System.Text.RegularExpressions.Regex.Match(version, @"\A7\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?\z");
+            if (match == null || !match.Success || !int.TryParse(match.Groups[1].Value, out int minor) || !int.TryParse(match.Groups[2].Value, out int patch))
+                return false;
+            // A 7.3.0 prerelease predates the audited release.
+            return minor > 3 || minor == 3 && (patch > 0 || !match.Groups[3].Success);
+        }
+
         public SamplingDescription Describe(Material material, string property)
         {
             var stale = ShaderAdapterRegistry.StaleProperty(Id, material, property);
             if (stale != null) return stale;
+            if (!IsSupportedGenerator(GeneratorVersion()))
+                return Unsupported("ORL Toon is supported from ORL Shader Generator 7.3.0 (7.x); installed generator is " +
+                    (GeneratorVersion() ?? "not found") + ". Original retained.");
             bool v2 = Version(material.shader.name) == 2;
             int mainSet = Index(material, "_MainTexUVSet");
             if (mainSet < 0 || mainSet > 3) return Unsupported("Main texture UV set is outside UV1-UV4; original retained.");
             Vector2 mainScale = MaterialInputs.Scale(material, "_MainTex"), mainOffset = MaterialInputs.Offset(material, "_MainTex");
             var global = new SamplingPath { UvChannel = mainSet, Scale = mainScale, Offset = mainOffset, Label = "ORL GLOBAL_uv" };
+            string block = !ShaderAdapterRegistry.CropBasisAllowed ? "ORL Toon cropping is proven on PC builds only; original retained on this target."
+                : material.HasProperty("AL_MODE") && MaterialInputs.Float(material, "AL_MODE") != 0
+                    ? "ORL AudioLink reads the albedo UV as an effect coordinate, so ORL Toon is not cropped while AudioLink is on."
+                : v2 && material.HasProperty("_EmissionMaskByUVTile") && MaterialInputs.Float(material, "_EmissionMaskByUVTile") != 0
+                    ? "ORL emission Mask By UV Tile reads the albedo UV as a coordinate, so ORL Toon is not cropped while it is on." : null;
 
             switch (property)
             {
                 case "_MainTex":
                     return Result(TextureSemantics.Color,
                         Opaque.Contains(material.shader.name) && !ShaderAdapterRegistry.FallbackReadsAlpha(material) ? TextureChannels.RGB : TextureChannels.All,
-                        global, null);
-                case "_AlphaTex": return Result(TextureSemantics.Data, TextureChannels.R, global, Main(material));
+                        global, null, Crop(block, "_MainTex"));
+                case "_AlphaTex": return Result(TextureSemantics.Data, TextureChannels.R, global, Main(material), Crop(block, "_MainTex"));
                 case "_EmissionMap":
                     return Result(TextureSemantics.Color, v2 ? Selected(material, "_EmissionMapChannel") : TextureChannels.RGB,
-                        global, Main(material));
+                        global, Main(material), Crop(block, "_MainTex", v2 ? EmissionMin : default));
                 case "_OcclusionMap": case "_OcclusionDetail":
                     return Tiled(material, property == "_OcclusionMap" ? "_Occlusion" : "_OcclusionDetail", global, TextureSemantics.Data,
                         v2 ? Channel(material, property == "_OcclusionMap" ? "_OcclusionChannel" : "_OcclusionDetailChannel") : TextureChannels.R,
-                        Main(material));
+                        Main(material), block);
                 case "_SpecularMap":
                     // v2 Specular.orlsource 98-100: each of three selectors reads specMap[min(c, 3)] unless it is above 3.
                     return Tiled(material, "_Specular", global, TextureSemantics.Data,
-                        v2 ? Union(material, true, "_SpecIntensityChannel", "_SpecRoughnessChannel", "_SpecAlbedoTintChannel") : TextureChannels.RGB, Main(material));
+                        v2 ? Union(material, true, "_SpecIntensityChannel", "_SpecRoughnessChannel", "_SpecAlbedoTintChannel") : TextureChannels.RGB, Main(material), block);
                 case "_SpecularMask":
                     return Tiled(material, "_SpecularMask", global, TextureSemantics.Data,
-                        v2 ? Channel(material, "_SpecularMaskChannel") : TextureChannels.R, Main(material));
-                case "_BumpMap": return Tiled(material, "_BumpMap", global, TextureSemantics.Normal, TextureChannels.All, null);
+                        v2 ? Channel(material, "_SpecularMaskChannel") : TextureChannels.R, Main(material), block);
+                case "_BumpMap": return Tiled(material, "_BumpMap", global, TextureSemantics.Normal, TextureChannels.All, null, block);
                 case "_OutlineMask": return Result(TextureSemantics.Data, TextureChannels.R, Raw(), null);
                 case "_OutlineTex": return Result(TextureSemantics.Color, TextureChannels.RGB, Raw(), v2 ? Main(material) : null);
             }
@@ -72,9 +119,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 switch (property)
                 {
                     case "_MetallicGlossMap":
-                        return Tiled(material, "_MetallicGlossMap", global, TextureSemantics.Data, TextureChannels.R | TextureChannels.A, Main(material));
+                        return Tiled(material, "_MetallicGlossMap", global, TextureSemantics.Data, TextureChannels.R | TextureChannels.A, Main(material),
+                            block, MetallicMin);
                     case "_ReflectivityMask":
-                        return Tiled(material, "_ReflectivityMask", global, TextureSemantics.Data, TextureChannels.R, Main(material));
+                        return Tiled(material, "_ReflectivityMask", global, TextureSemantics.Data, TextureChannels.R, Main(material), block);
                     case "_DetailNormalMap": case "_DetailNormalMask":
                     {
                         bool mask = property == "_DetailNormalMask";
@@ -91,34 +139,50 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 switch (property)
                 {
                     case "_MetallicGlossMap":
-                        return Result(TextureSemantics.Data, TextureChannels.R | TextureChannels.A, Own(material, property, 0), Main(material));
+                        return Result(TextureSemantics.Data, TextureChannels.R | TextureChannels.A, Own(material, property, 0), Main(material), Crop(block, property, MetallicMin));
                     case "_ReflectionMask":
-                        return OwnSet(material, property, "_ReflectionMaskUVSet", TextureSemantics.Data, Channel(material, "_ReflectionMaskChannel"), Main(material));
+                        return OwnSet(material, property, "_ReflectionMaskUVSet", TextureSemantics.Data, Channel(material, "_ReflectionMaskChannel"), Main(material), block);
                     // Decals.orlsource 322 (maskTexture[maskChannel] per decal), Matcaps.orlsource 262-301 and Normals.orlsource
                     // 198-240 (mask[<layer's channel>]): the union of the four layers' selectors.
                     // A layer's channel matters only while its mask strength (lerp(1, mask, strength)) and, for matcaps, its strength
                     // (the product with _MatcapNStrength) are not 0.
                     case "_DecalsMask":
-                        return OwnSet(material, property, property + "UVSet", TextureSemantics.Data, LiveLayers(material, i => "_Decal" + i, "_Decal{0}MaskStrength"), Main(material));
+                        return OwnSet(material, property, property + "UVSet", TextureSemantics.Data, LiveLayers(material, i => "_Decal" + i, "_Decal{0}MaskStrength"), Main(material), block);
                     case "_MatcapsMask":
                         return OwnSet(material, property, property + "UVSet", TextureSemantics.Data,
-                            LiveLayers(material, i => "_Matcap" + i, "_Matcap{0}MaskStrength", "_Matcap{0}Strength"), Main(material));
+                            LiveLayers(material, i => "_Matcap" + i, "_Matcap{0}MaskStrength", "_Matcap{0}Strength"), Main(material), block);
                     case "_DetailNormalsMask":
                         return OwnSet(material, property, "_DetailNormalsMaskUVSet", TextureSemantics.Data,
-                            LiveLayers(material, i => "_DetailNormals" + i, "_DetailNormals{0}MaskStrength"), Bump(material));
+                            LiveLayers(material, i => "_DetailNormals" + i, "_DetailNormals{0}MaskStrength"), Bump(material), block);
                     case "_DetailNormals0Map": case "_DetailNormals1Map": case "_DetailNormals2Map": case "_DetailNormals3Map":
-                        return OwnSet(material, property, property.Replace("Map", "UVSet"), TextureSemantics.Normal, TextureChannels.All, Bump(material));
+                        return OwnSet(material, property, property.Replace("Map", "UVSet"), TextureSemantics.Normal, TextureChannels.All, Bump(material), block);
                 }
             }
-            return Unsupported(property.IndexOf("Matcap", StringComparison.OrdinalIgnoreCase) >= 0 ? "Matcaps are sampled by view-space normals; original retained."
+            var unsupported = Unsupported(property.IndexOf("Matcap", StringComparison.OrdinalIgnoreCase) >= 0 ? "Matcaps are sampled by view-space normals; original retained."
                 : property.StartsWith("_Decal", StringComparison.Ordinal) ? "Decals use their own placed and rotated coordinates; original retained."
                 : property.IndexOf("Ramp", StringComparison.Ordinal) >= 0 || property == "_DFG" ? "Lookup textures are sampled by lighting, not mesh UVs; original retained."
                 : "Unverified ORL Toon texture property; original retained.");
+            unsupported.ReadsNoOtherTransform = LightingLookups.Contains(property);
+            return unsupported;
         }
 
+        // Read only at lighting, view or normal-derived coordinates (class comment): left uncropped without blocking the material.
+        private static readonly HashSet<string> LightingLookups = new HashSet<string>(StringComparer.Ordinal)
+            { "_Ramp", "_CustomGIDiffuseRamp", "_LTCGIRamp", "_Matcap", "_Matcap0Tex", "_Matcap1Tex", "_Matcap2Tex", "_Matcap3Tex", "_DFG" };
+
+        // _EmissionMap_TexelSize.w > 16 (v2) and _MetallicGlossMap_TexelSize.z > 8: the smallest size that still counts as present.
+        private static readonly Vector2Int EmissionMin = new Vector2Int(0, 17), MetallicMin = new Vector2Int(9, 0);
+
+        // A crop decision for one lookup: the texture whose _ST it may rewrite (Basis) and the smallest crop allowed, or why it gets none.
+        private sealed class CropRef { public string Basis, Reason; public Vector2Int Min; }
+        private static CropRef Crop(string block, string basis, Vector2Int min = default) =>
+            block == null ? new CropRef { Basis = basis, Min = min } : new CropRef { Reason = block };
+        private static CropRef NoCrop(string reason) => new CropRef { Reason = reason };
+
         // lerp(GLOBAL_uv * tiling, uv0 * tiling, mode): mode 0 follows the albedo transform, 1 is raw uv0.
+        // block: why the albedo transform may not be rewritten for this lookup (null when it may).
         private static SamplingDescription Tiled(Material material, string prefix, SamplingPath global, TextureSemantics semantics,
-            TextureChannels channels, SamplerRef sampler)
+            TextureChannels channels, SamplerRef sampler, string block, Vector2Int min = default)
         {
             // v2 specular has no _SpecularTilingMode property; the uniform stays 0 (synced).
             float mode = material.HasProperty(prefix + "TilingMode") ? MaterialInputs.Float(material, prefix + "TilingMode") : 0;
@@ -130,15 +194,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var path = mode == 0
                 ? new SamplingPath { UvChannel = global.UvChannel, Scale = global.Scale * tiling, Offset = global.Offset * tiling, Label = "ORL GLOBAL_uv * tiling" }
                 : new SamplingPath { UvChannel = 0, Scale = new Vector2(tiling, tiling), Label = "ORL uv0 * tiling" };
-            return Result(semantics, channels, path, sampler);
+            var crop = mode != 0 ? null : tiling != 1 ? NoCrop(prefix + "Tiling is not 1, so the albedo transform cannot be rewritten for it.")
+                : Crop(block, "_MainTex", min);
+            return Result(semantics, channels, path, sampler, crop);
         }
 
         private static SamplingDescription OwnSet(Material material, string property, string setProperty, TextureSemantics semantics,
-            TextureChannels channels, SamplerRef sampler)
+            TextureChannels channels, SamplerRef sampler, string block)
         {
             int set = Index(material, setProperty);
             if (set < 0 || set > 3) return Unsupported(setProperty + " is outside UV1-UV4; original retained.");
-            return Result(semantics, channels, Own(material, property, set), sampler);
+            return Result(semantics, channels, Own(material, property, set), sampler, Crop(block, property));
         }
 
         private static SamplingPath Own(Material material, string property, int set) => new SamplingPath
@@ -151,11 +217,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static SamplerRef Main(Material material) => new SamplerRef { Texture = material.GetTexture("_MainTex") };
         private static SamplerRef Bump(Material material) => new SamplerRef { Texture = material.GetTexture("_BumpMap") };
 
-        private static SamplingDescription Result(TextureSemantics semantics, TextureChannels channels, SamplingPath path, SamplerRef sampler)
+        private static SamplingDescription Result(TextureSemantics semantics, TextureChannels channels, SamplingPath path, SamplerRef sampler,
+            CropRef crop = null)
         {
             if (sampler != null) { path.SamplerTexture = sampler.Texture; path.FixedRepeat = !sampler.Texture; }
+            if (crop?.Basis != null) { path.Basis = crop.Basis; path.Dependencies = new[] { crop.Basis }; }
             return new SamplingDescription { AdapterId = Id, Supported = true, Semantics = semantics, Channels = channels,
-                Paths = new List<SamplingPath> { path } };
+                CropReason = crop?.Reason, MinCropSize = crop?.Min ?? default, Paths = new List<SamplingPath> { path } };
         }
 
         private static int Index(Material material, string property)

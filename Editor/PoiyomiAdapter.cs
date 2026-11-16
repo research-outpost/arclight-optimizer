@@ -6,7 +6,7 @@ using UnityEngine;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
-    // Any Poiyomi shader whose shader_master_label reads Poiyomi 9.x.x-12.x.x is accepted, locked or unlocked
+    // Any Poiyomi shader whose shader_master_label reads Poiyomi 9.x.x-11.x.x is accepted, locked or unlocked
     // (owner decision: versions other than the audited ones are supported unaudited). The model is chosen by
     // layout: shaders with the global _UVSettings* stage use the Toon 10.0.22 model; shaders without it use
     // the 9.x model audited from Pro 9.3.64 (9.3.67 Toon shares its raw-UV0 and Repeat-sampler rules). Entry
@@ -25,7 +25,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     {
         private const string Id = "poiyomi-toon-static-v2";
         private const string ProId = "poiyomi-9x-static-v2";
-        private const string VersionReason = "Poiyomi 9.x-12.x shaders are supported; this shader has no Poiyomi 9-12 version label. Original retained.";
+        private const string VersionReason = "Poiyomi 9.x-11.x shaders are supported; this shader has no Poiyomi 9-11 version label. Original retained.";
         private static HashSet<string> Set(string fields) => new HashSet<string>(fields.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
         internal static readonly HashSet<string> ModeledFields = Set(
             "_MainTex _BumpMap _AlphaMask _MainColorAdjustTexture _MainTintTexture _Bump2ndMap _Bump2ndScaleMask _BentNormalMap " +
@@ -77,12 +77,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             { "_SmoothnessTex", TextureChannels.R }, { "_MetallicGlossMap", TextureChannels.R }, { "_DissolveNoiseTexture", TextureChannels.R },
             { "_DissolveMask", TextureChannels.R }, { "_VertexGlitchingMask", TextureChannels.R },
             { "_DetailMask", TextureChannels.R | TextureChannels.G }, { "_LightDataSDFMap", TextureChannels.R | TextureChannels.G },
-            { "_DetailTex", TextureChannels.RGB }, { "_BacklightColorTex", TextureChannels.RGB },
+            // _BacklightColorTex is not listed: from Toon 10.0.26 the backlight multiplies by the texture's alpha
+            // (backlightAmount * backlightColor.a), so it keeps every channel.
+            { "_DetailTex", TextureChannels.RGB },
             { "_GlitterColorMap", TextureChannels.RGB }, { "_DepthTexture", TextureChannels.RGB },
             // Checked on all seven Toon 10.0.23 entries: detail noise and fur noise .r, shadow strength mask .r only, the
             // specular map into a half3, blur map .r/.g/.b, border mask .r/.g/.b/.rgb/.rgbr, flow textures .xy.
             { "_DissolveDetailNoise", TextureChannels.R }, { "_FurNoiseMask", TextureChannels.R }, { "_ShadowStrengthMask", TextureChannels.R },
-            { "_HighColor_Tex", TextureChannels.RGB }, { "_MultilayerMathBlurMap", TextureChannels.RGB }, { "_ShadowBorderMask", TextureChannels.RGB },
+            { "_HighColor_Tex", TextureChannels.RGB }, { "_MultilayerMathBlurMap", TextureChannels.RGB },
             { "_DistortionFlowTexture", TextureChannels.R | TextureChannels.G }, { "_DistortionFlowTexture1", TextureChannels.R | TextureChannels.G },
         };
         // Fields whose only sample site in every Toon 10.0.22 entry is tex[<channel property>]: one channel
@@ -109,9 +111,32 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // (locked ones keep the name) qualify: Pro 9.x was not audited, and SPS-patched copies hide which one they came from.
         private static readonly Dictionary<string, TextureChannels> NineToonChannels = new Dictionary<string, TextureChannels>(StringComparer.Ordinal)
             { { "_SkinThicknessMap", TextureChannels.R }, { "_DissolveMask", TextureChannels.R }, { "_SmoothnessTex", TextureChannels.R } };
+        // 9.3 Toon only (audited 2026-11-16 on all seven 9.3.67 Toon entries; 9.3.63 and 9.3.64 have the same lookup lines): every
+        // sample site of these fields swizzles the sample itself, so no other channel reaches the shader. _RimEnviroMask is read
+        // only as tex[_RimEnviroChannel].
+        private static readonly Dictionary<string, TextureChannels> NineThreeToonChannels = new Dictionary<string, TextureChannels>(StringComparer.Ordinal)
+        {
+            { "_AlphaMask", TextureChannels.R }, { "_DissolveNoiseTexture", TextureChannels.R }, { "_MetallicGlossMap", TextureChannels.R },
+            { "_SDFShadingTexture", TextureChannels.R }, { "_DetailMask", TextureChannels.R | TextureChannels.G },
+            { "_LightDataSDFMap", TextureChannels.R | TextureChannels.G }, { "_DetailTex", TextureChannels.RGB },
+            { "_BacklightColorTex", TextureChannels.RGB }, { "_GlitterColorMap", TextureChannels.RGB }, { "_DepthTexture", TextureChannels.RGB },
+        };
 
-        private static TextureChannels NineChannelsRead(Material material, string property) =>
-            material.shader.name.IndexOf("Poiyomi Toon", StringComparison.Ordinal) >= 0 && NineToonChannels.TryGetValue(property, out var read) ? read : TextureChannels.All;
+        // Pro 9.3 (audited 2026-11-16 on all eighteen 9.3.67 Pro entries, Geom/Tessellated/Particle/Fur included) reads every one
+        // of these fields, and the three above, with the same fixed swizzle, so 9.3 Pro shares both sets. Pro 9.0-9.2 is not audited.
+        private static TextureChannels NineChannelsRead(Material material, string version, string property)
+        {
+            bool nineThree = version.StartsWith("9.3.", StringComparison.Ordinal);
+            bool toon = material.shader.name.IndexOf("Poiyomi Toon", StringComparison.Ordinal) >= 0;
+            bool pro = nineThree && material.shader.name.IndexOf("Poiyomi Pro", StringComparison.Ordinal) >= 0;
+            if (!toon && !pro) return TextureChannels.All;
+            if (NineToonChannels.TryGetValue(property, out var read)) return read;
+            if (!nineThree) return TextureChannels.All;
+            if (NineThreeToonChannels.TryGetValue(property, out read)) return read;
+            if (property == "_RimEnviroMask")
+                return material.HasProperty("_RimEnviroChannel") ? ChannelOf(Number(material, "_RimEnviroChannel")) : TextureChannels.All;
+            return TextureChannels.All;
+        }
 
         // Checked on all seven Toon 10.0.23 entries: fields read at channels several material values pick. Raw: tex[<selector>]
         // (0-3, anything else undefined). Clamped: tex[min(<selector>, 3)]. Guarded: read only while the selector is below 4.
@@ -202,6 +227,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         Toggle(material, "_LookAt" + color + "Alpha")) read |= channel;
                 return read;
             }
+            // Border mask: .r/.g/.b/.rgb in every 10.x entry. From Toon 10.0.26 the "Packed RGBA" channel mode
+            // (_ShadowBorderMaskMode 1) also reads .a, weighted by lerp(1, .a, _ShadowBorderMaskStrengthA). Older
+            // versions have neither property, which counts as on, so they keep alpha.
+            if (property == "_ShadowBorderMask")
+                return TextureChannels.RGB | (Toggle(material, "_ShadowBorderMaskMode") && Toggle(material, "_ShadowBorderMaskStrengthA") ? TextureChannels.A : 0);
             // Rim masks: tex[<channel>] plus .a as the bias.
             if (property == "_RimMask" || property == "_Rim2Mask")
                 return TextureChannels.A | Pick(material, property == "_RimMask" ? "_RimMaskChannel" : "_Rim2MaskChannel", false, false);
@@ -287,6 +317,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         public SamplingDescription Describe(Material material, string property)
         {
+            // Toon 10.0.29 added URP entries (".poiyomi/Poiyomi Toon URP", "... URP Grab Pass", "... URP + Lil Fur",
+            // "... URP World"; locked copies keep the name). They were not audited and avatars use the built-in pipeline.
+            if (material.shader.name.IndexOf("Poiyomi Toon URP", StringComparison.Ordinal) >= 0)
+                return Unsupported("Poiyomi URP entries are not audited; original retained.");
+            // Pro "Triplanar Projection" (10.0.28) replaces poiMesh.uv[0] with an object-space projection, so nothing it reads is
+            // at mesh UVs (audited 2026-11-16).
+            if (material.shader.name.IndexOf("Triplanar Projection", StringComparison.Ordinal) >= 0)
+                return Unsupported("Poiyomi Triplanar Projection samples at projected positions, not mesh UVs; original retained.");
+            // Pro 11 "Triple Outline" compiles POI_OUTLINE_LAYERS: each outline layer reads its own UV, tiling and mask selectors.
+            if (material.shader.name.IndexOf("Triple Outline", StringComparison.Ordinal) >= 0)
+                return Unsupported("Poiyomi Triple Outline layers are not modeled; original retained.");
             if (material.shader.name.StartsWith("Hidden/Locked/", StringComparison.Ordinal))
                 return DescribeLocked(material, property);
             string version = Version(material.shader);
@@ -296,8 +337,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string id = layout.Id + "/" + version;
             if (!layout.Fields.Contains(property))
                 return Unsupported(id, layout.Excluded(property));
+            bool eleven = version.StartsWith("11.", StringComparison.Ordinal);
             try
             {
+                if (eleven) Eleven(material, property);
                 if (property == "_MainTex" && (On(material, "_MainPixelMode") || On(material, "_VideoPixelateToResolution")))
                     throw new InvalidOperationException("Main texture pixel/grid sampling is not modeled.");
                 if (property.StartsWith("_EmissionMap", StringComparison.Ordinal) &&
@@ -311,12 +354,22 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     throw new InvalidOperationException("SSAO color ramp mode samples this texture with a generated ramp coordinate.");
                 string uv = property == "_VertexBasicsMask" ? "VertexBasicsMaskUV" : property == "_FlipbookMask1" ? "_FlipbookMaskUV1" : property + "UV";
                 string pan = property == "_VertexBasicsMask" ? "_VertexBasicsMaskUVPan" : property == "_FlipbookMask1" ? "_FlipbookMaskPan1" : property + "Pan";
-                Vector4 st = Raw.Contains(property) ? new Vector4(1, 1, 0, 0) : TextureST(material, property);
+                // 11.x reads the environment-rim and distortion masks through their own tiling/offset (10.x read them raw).
+                bool raw = Raw.Contains(property) && !eleven;
+                Vector4 st = raw ? new Vector4(1, 1, 0, 0) : TextureST(material, property);
+                // 11.x "Use Main Texture UV" rim colour: poiUV(POI_PAN_UV(poiUV(uv[_MainTexUV], _MainTex_ST), _MainTexPan), own ST).
+                if (eleven && (property == "_RimColorTex" && On(material, "_RimUseMainTexUV") || property == "_Rim2ColorTex" && On(material, "_Rim2UseMainTexUV")))
+                {
+                    if (Moving(material, "_MainTexPan")) throw new InvalidOperationException("The rim colour follows the panning main texture UV.");
+                    Vector4 main = TextureST(material, "_MainTex");
+                    st = new Vector4(main.x * st.x, main.y * st.y, main.z * st.x + st.z, main.w * st.y + st.w);
+                    uv = "_MainTexUV";
+                }
                 string layer = Layer(property);
                 if (layer != null) st = Merge(st, Vector(material, "_RGBA" + layer + "ScaleOffset"));
                 var paths = new List<SamplingPath>();
                 AddPath(material, layout, property, paths, uv, pan, property + "Stochastic", st, VertexOnly.Contains(property), layout.Repeat.Contains(property), fur,
-                    layer == null && !Raw.Contains(property) ? CropBasis(material, version, property, fur) : null);
+                    layer == null && !raw ? CropBasis(material, version, property, fur) : null);
                 if (layout.VertexAndFragment.Contains(property))
                     AddPath(material, layout, property, paths, uv, pan, null, st, true, true, fur);
                 if (fur && property == "_FurMask")
@@ -345,7 +398,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                 false, layout.PbrMaskRepeat, fur);
                 return new SamplingDescription { AdapterId = id, Supported = true,
                     Semantics = Normals.Contains(property) ? TextureSemantics.Normal : TextureSemantics.Data, Paths = paths,
-                    Channels = layout == Toon10 ? ToonChannelsRead(material, property) : NineChannelsRead(material, property) };
+                    // 11.x passes most masks through PoiMaskLevels4 before picking channels; its channel reads are not audited.
+                    Channels = eleven ? TextureChannels.All : layout == Toon10 ? ToonChannelsRead(material, property) : NineChannelsRead(material, version, property) };
             }
             catch (InvalidOperationException e)
             {
@@ -360,7 +414,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // records the original shader in material tags. Sampling is therefore the original model evaluated
         // with the stored values. Properties marked animated stay real properties; renamed ones are reached
         // by animation under a per-material name that cannot be mapped back here. The original shader must be
-        // installed to describe the material, and the locked code must carry a 9-12 label too. The two labels
+        // installed to describe the material, and the locked code must carry a 9-11 label too. The two labels
         // may differ (a material shipped locked with another release); that is accepted unaudited.
         private SamplingDescription DescribeLocked(Material material, string property)
         {
@@ -386,14 +440,39 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             finally { UnityEngine.Object.DestroyImmediate(copy); }
         }
 
-        // "x.y.z" from a shader_master_label of Poiyomi 9.x.x through 12.x.x, else null.
+        // "x.y.z" from a shader_master_label of Poiyomi 9.x.x through 11.x.x, else null. 11.x follows the 10.x model with the
+        // differences listed at Eleven (audited on 11.0.43, Pro and the Toon entries it bundles); no 12.x exists.
         internal static string Version(Shader shader)
         {
             int index = shader.FindPropertyIndex("shader_master_label");
             if (index < 0) return null;
             var match = System.Text.RegularExpressions.Regex.Match(shader.GetPropertyDescription(index), @"Poiyomi (\d+)\.(\d+)\.(\d+)");
-            return match.Success && int.TryParse(match.Groups[1].Value, out int major) && major >= 9 && major <= 12
+            return match.Success && int.TryParse(match.Groups[1].Value, out int major) && major >= 9 && major <= 11
                 ? match.Groups[1].Value + "." + match.Groups[2].Value + "." + match.Groups[3].Value : null;
+        }
+
+        // Poiyomi 11 differences from the 10.x model, audited 2026-11-16 on 11.0.43 (all seven Toon entries and all twenty Pro entries;
+        // Pro 11.0.50 was the newest release then). UV construction (applyUVSettings, vertexUV, poiUV) is unchanged and every other
+        // modeled lookup keeps its 10.x UV. Changed: most masks now pass the whole texel through PoiMaskLevels4 (channels kept, see
+        // Describe); _RimEnviroMask and _DistortionMask apply their own _ST; _RimUseMainTexUV / _Rim2UseMainTexUV read the rim colour
+        // textures through the main UV (modeled in Describe); _ALDecalMaskSpace 1 reads the AudioLink decal mask in decal space; the
+        // outline texture adds an AudioLink offset and chrono scroll; Pro's _OutlineCurvatureUVs replaces poiMesh.uv[0] with a band
+        // coordinate in the outline pass; Pro "Triple Outline" adds outline layers (rejected by name). None of 11.x is cropped.
+        private static void Eleven(Material m, string property)
+        {
+            if (m.HasProperty("_OutlineCurvatureUVs") && Number(m, "_OutlineCurvatureUVs") >= 0.5f)
+                throw new InvalidOperationException("Outline curvature UVs replace UV0 in the outline pass.");
+            if (property == "_ALDecalColorMask" && Number(m, "_ALDecalMaskSpace") >= 0.5f)
+                throw new InvalidOperationException("The AudioLink decal mask follows the spectrum's coordinates.");
+            if (property == "_OutlineTexture" && (Any(m, "_AudioLinkOutlineTextureOffset") || Any(m, "_AudioLinkOutlineTextureChronoSpeed")))
+                throw new InvalidOperationException("AudioLink offsets or scrolls the outline texture.");
+        }
+
+        private static bool Any(Material m, string property)
+        {
+            if (!m.HasProperty(property)) return false;
+            Vector4 v = Vector(m, property);
+            return v.x != 0 || v.y != 0 || v.z != 0 || v.w != 0;
         }
 
         // Thry tags a property "<name>Animated" = "2" to rename it on lock; UV/Pan selectors are never renamed.

@@ -1,6 +1,6 @@
 # Arclight Optimizer
 
-Smaller, lighter VRChat avatars, optimized on a copy at build time. Nothing looks, sounds or behaves differently, apart from the accepted differences below.
+Smaller, lighter VRChat avatars, optimized on a copy at build time. By default you shouldn't see or hear a difference; settings that can change how the avatar looks or sounds stay off until you turn them on.
 
 ## What it does
 
@@ -45,36 +45,21 @@ Manual install: extract `research-outpost.arclight-optimizer-<version>.zip` from
 2. **Add Component → Arclight → Arclight Optimizer**.
 3. Build or upload as usual, or enter Play Mode to preview (needs Reload Scene on, in Project Settings → Editor).
 
-Options:
-- **Unsupported Shaders** (off by default): guesses on unknown shaders. See Limitations.
-- **MMD Support** (on by default): keeps the blend shapes MMD dance worlds use.
-- **Unified Bounds** (off by default): see Accepted differences.
-- **Texture Size Cap** (off by default, PC only): caps textures at 1024, 2048 or 4096 px.
-- **Menu Icon Cap** (off by default): caps menu icons at 64, 128 or 256 px.
-- **Narrow Opaque Textures** (off by default, PC only): half-size format for opaque colour textures; the one setting that can visibly band.
-- **Compress Audio** (off by default): compresses uncompressed clips, only if smaller.
-- **Exclude**: objects (and their children) Arclight leaves alone.
-
-Disable the component to skip it.
+Settings are explained under **Optional settings** below. **Exclude** lists objects (and their children) that Arclight leaves alone. Disable the component to skip it.
 
 **Open last report** on the component shows what the last build saved, changed and kept.
 
-## Accepted differences
+## Optional settings
 
-- **Generated textures**: pixels next to cleared areas can round differently when compressed.
-- **Opaque colour textures** (PC builds): a texture Unity imports as DXT5, whose alpha nothing reads, ships as BC1 (DXT1) at half the size. BC1 stores the same colour as DXT5, so this is not visible.
-- **Narrow Opaque Textures** (off by default, PC only): opaque colour textures stored as BC7 (High Quality) ship as BC1, half the size. Smooth gradients can band: typical error 1.1–1.3 levels of 255, 99% within 4–5 levels, under 0.001% more than 32 off. Still visible close up on a real avatar, so it's opt-in. Normal maps and textures whose alpha is used are never narrowed.
-- **Merged meshes and bones**: colours can differ by at most 1/255 per channel.
-- **Cropped textures**: only far-away detail (the smallest mips) can differ, where a part covers a few pixels on screen.
-- **Paused PhysBones**: restart from rest when shown again.
-- **Mono audio**: level within 0.05%.
-- **Compressed audio** (off by default): uncompressed clips are re-encoded as Vorbis at the chosen quality, so the sound changes by the codec's loss; a clip is only replaced when its measured bundle is smaller.
-- **Menu icons**: every expression-menu icon gets a build copy — mipmaps are dropped (the menu draws an icon at one size, so no mip is sampled) and an opaque icon compresses as DXT1 instead of DXT5. With **Menu Icon Cap** set, icons above 64, 128 or 256 pixels are also resampled, so they look slightly softer when the menu is displayed large.
-- **Texture Size Cap** (off by default, PC only): textures above the cap get a smaller build copy, so they look softer when displayed large. Textures also used by particles, trails, lines, excluded objects or animation-swapped materials keep full size. In a build the copy is used only if smaller; in Play Mode, always. To see it, check the built avatar or the report.
-- **Folded animator layers**: a rotation can differ by one float step.
-- **Unified Bounds** (off by default): meshes may draw when just off screen.
-- **Shared lighting point**: every mesh takes its lighting from the Chest (or Spine, or Hips), so lighting shifts slightly on meshes that had another point or none. Exclude keeps a mesh's own.
-- **Cropping on Poiyomi, Sunao and Mochie Standard** (PC builds only; Quest keeps the previous behaviour): Poiyomi accepts 10.0.x and 9.3.x, audited on 10.0.29 and 9.3.67 only; Mochie Standard accepts every 2.14 release, audited on 2.14.2 only; Sunao is audited on 1.6.2. A patch release that changes how the shader reads textures could make cropping show wrong colours. Mochie turns cropping off when its own version label cannot be read, and locked Poiyomi materials are never cropped.
+Each of these trades some quality for size, so it's off until you choose it. Check the built avatar before uploading.
+
+- **Unsupported Shaders**: also optimizes textures on shaders Arclight doesn't recognize, by guessing how they're mapped. A wrong guess can show seams.
+- **MMD Support** (on by default): keeps the blend shapes MMD dance worlds use. Turn it off to let Arclight bake them; the face then won't move in those worlds.
+- **Unified Bounds**: gives every skinned mesh one shared bounding box, so nothing vanishes up close and more meshes can merge. Meshes may draw when just off screen.
+- **Compress Audio**: re-encodes uncompressed clips as Vorbis at the chosen **Audio Quality**, about a tenth of the size, with some quality loss.
+- **Texture Size Cap** (PC only): shrinks textures above 1024, 2048 or 4096 px in the build, so they look softer when displayed large. Textures also used by particles, trails, lines, excluded objects or animation-swapped materials keep full size.
+- **Menu Icon Cap**: shrinks menu icons above 64, 128 or 256 px, so they look slightly softer when the menu is displayed large.
+- **Narrow Opaque Textures** (PC only): stores opaque colour textures that Unity compresses as BC7 (High Quality) in BC1 instead, half the size. Smooth gradients can band: typical error 1.1–1.3 levels of 255, 99% within 4–5 levels, under 0.001% more than 32 off, and still visible close up on a real avatar. Normal maps and textures whose alpha is used are never narrowed.
 
 ## Other optimizers
 
@@ -85,7 +70,7 @@ Disable the component to skip it.
 
 **Texture clearing.** Used pixels are kept, padding is rebuilt from them, and the rest is filled with a flat colour. A texture is only replaced when its estimated compressed size gets smaller.
 
-**Smaller formats (PC only).** DXT5 becomes DXT1 when alpha is never read or always opaque, and red-only linear masks become BC4 (R8 when uncompressed). Only for shaders whose source has been checked: Unity Standard and Unlit/Texture, lilToon 2.x, Poiyomi 10–12, VRChat mobile shaders, NonToon, Sunao, ORL Toon and Mochie Standard. BC7, crunched and Quest textures keep their format unless **Narrow Opaque Textures** is turned on.
+**Smaller formats (PC only).** DXT5 becomes DXT1 when alpha is never read or always opaque, and red-only linear masks become BC4 (R8 when uncompressed). Only for shaders whose source has been checked: Unity Standard and Unlit/Texture, lilToon 2.x, Poiyomi 10 and 9.3 Toon and Pro (three red-only masks on other 9.x Toon), VRChat mobile shaders, NonToon, Sunao, ORL Toon and Mochie Standard. BC7, crunched and Quest textures keep their format unless **Narrow Opaque Textures** is turned on.
 
 **Mono audio.** Identical-channel stereo is stored as mono at +3 dB (same level and balance), only when it can't clip and every source is spatialized or plain 2D without pan.
 
@@ -94,12 +79,16 @@ Disable the component to skip it.
 | Shader | Support |
 | --- | --- |
 | lilToon 2.x | All variants |
-| Poiyomi 9.x–12.x | Locked and unlocked |
+| Poiyomi 9.x–11.x | Locked and unlocked (not Triplanar Projection, Triple Outline or URP) |
 | VRChat mobile shaders | Toon Standard, Toon Lit, Standard Lite and others |
 | NonToon 0.1.3 and 0.3.0 | Default modules |
-| Sunao 1.6 | All except Fur |
-| ORL Toon v1 and v2 | All variants |
+| Sunao 1.6 | All variants (Fur is not cropped) |
+| ORL Toon v1 and v2 (7.3 and later) | All variants |
 | Mochie Standard 2.13 and 2.14 | Standard, Lite and Mobile |
+| Mochie Uber 1.35 | Uber and Uber (Outline); not cropped |
+| Unity Toon Shader 0.16 | Toon/Toon (built-in pipeline); not cropped |
+| UnlitWF 2.15 | UnToon family except Tessellation and Custom; not cropped |
+| Silent's Filamented | Standard, Roughness, Specular and Cloth setups; not cropped |
 | Unity | Standard and Unlit/Texture |
 
 ## Limitations
@@ -108,7 +97,9 @@ Disable the component to skip it.
 - Sources: 8- or 16-bit PNG, PSD, TGA, TIFF, BMP and JPEG, for normal maps too. Other formats (EXR/HDR, DDS/KTX, animated PNG, cubemaps and texture arrays) are kept.
 - Matcaps, ramps, unknown sampling and untrackable texture animation are kept.
 - Quest textures keep their formats; Quest builds are untested on a device.
-- **Unsupported Shaders** guesses texture mapping for unrecognized shaders and may cause artifacts. Test before uploading.
+- PhysBones on a hidden outfit are paused, so they restart from their rest pose when it's shown.
+- Poiyomi is checked on Toon 10.0.20–10.0.29 and 9.3.63–9.3.67 and Pro 11.0.43, 10.0.28 and 9.3.67. Other 11.x, 10.x and 9.x releases are accepted without being checked. Poiyomi 11 keeps every channel and is not cropped. The URP, Triplanar Projection and Triple Outline entries aren't supported.
+- Cropping on Poiyomi, Sunao, Mochie Standard and ORL Toon (PC only) is checked against Poiyomi Toon 10.0.20–10.0.29 and 9.3.63–9.3.67, Mochie Standard 2.14.2, Sunao 1.6.2 and ORL 7.3–7.4.0-dev.4, but Poiyomi Pro and other 10.0.x, 9.3.x, 2.14 and 7.x releases are cropped too. ORL Toon is not cropped while AudioLink or emission Mask By UV Tile is on. NonToon, Sunao Fur, Mochie Uber, Unity Toon Shader, UnlitWF and Filamented are never cropped (NonToon's textures have no tiling/offset to rewrite, and Sunao Fur's fur pattern reads the main UV). A patch that changes how the shader reads textures could show wrong colours. Locked Poiyomi materials are never cropped: the lock bakes each texture's tiling/offset into the shader.
 
 ## License
 

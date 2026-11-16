@@ -502,6 +502,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return null;
             int periodX = 12, periodY = 12;
             var sizes = new List<(int W, int H)>();
+            // Imported size and the smallest size any use of the texture allows (SamplingDescription.MinCropSize).
+            var limits = new List<(int W, int H, int MinW, int MinH)>();
             foreach (var texture in textures)
             {
                 string path = AssetDatabase.GetAssetPath(texture);
@@ -545,23 +547,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     wrapX ? x1 : (double)(mx1 + 1) / info.Width, wrapY ? y1 : (double)(my1 + 1) / info.Height);
                 sizes.Add((info.Width, info.Height));
                 sizes.Add((texture.width, texture.height)); // The imported size must also divide.
+                var minimums = groups[texture].Uses.Select(u => u.Sampling.MinCropSize).ToList();
+                limits.Add((texture.width, texture.height, minimums.Count == 0 ? 0 : minimums.Max(m => m.x), minimums.Count == 0 ? 0 : minimums.Max(m => m.y)));
             }
-            int Depth(double a, double b, Func<(int W, int H), int> size)
+            // Every texture keeps 4-texel blocks and stays at or above its uses' minimum size on that axis.
+            bool Fits(int k, bool x) => sizes.All(s => (x ? s.W : s.H) >> k >= 4) && limits.All(l => (x ? l.W >> k >= l.MinW : l.H >> k >= l.MinH));
+            int Depth(double a, double b, bool x)
             {
                 int k = 0;
-                // Deeper while the next level still holds [a, b] in one cell and every texture keeps 4-texel blocks.
-                while (k < 12 && Math.Floor(a * (1 << (k + 1))) == Math.Floor((b - 1e-9) * (1 << (k + 1))) &&
-                       sizes.All(s => size(s) >> (k + 1) >= 4)) k++;
+                // Deeper while the next level still holds [a, b] in one cell and every texture still fits.
+                while (k < 12 && Math.Floor(a * (1 << (k + 1))) == Math.Floor((b - 1e-9) * (1 << (k + 1))) && Fits(k + 1, x)) k++;
                 return k;
             }
-            // A repeating axis: as deep as every texture repeats and keeps 4-texel blocks; cell 0.
-            int Periodic(int period, Func<(int W, int H), int> size)
+            // A repeating axis: as deep as every texture repeats and still fits; cell 0.
+            int Periodic(int period, bool x)
             {
                 int k = 0;
-                while (k < period && sizes.All(s => size(s) >> (k + 1) >= 4)) k++;
+                while (k < period && Fits(k + 1, x)) k++;
                 return k;
             }
-            var crop = new Crop { Kx = wrapX ? Periodic(periodX, s => s.W) : Depth(x0, x1, s => s.W), Ky = wrapY ? Periodic(periodY, s => s.H) : Depth(y0, y1, s => s.H),
+            var crop = new Crop { Kx = wrapX ? Periodic(periodX, true) : Depth(x0, x1, true), Ky = wrapY ? Periodic(periodY, false) : Depth(y0, y1, false),
                 Px = wrapX, Py = wrapY };
             // A wrapping axis that does not repeat keeps the whole texture (no crop of the other axis alone).
             if (crop.Kx == 0 && crop.Ky == 0 || wrapX && crop.Kx == 0 || wrapY && crop.Ky == 0) return null;

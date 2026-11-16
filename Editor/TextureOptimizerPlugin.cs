@@ -398,7 +398,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (shapes.Merged > 0)
                     {
                         analysis = AvatarAnalysis.Build(ctx); // Merged shapes' curves were removed.
-                        string summary = "Merged " + OptimizationLog.Plural(shapes.Merged, "blend shape") + " into others that always hold the same weight, on " + OptimizationLog.Plural(shapes.Meshes, "mesh", "meshes") + ".";
+                        string summary = "Merged " + OptimizationLog.Plural(shapes.Merged, "blend shape") + " into others that always move together (the same weight, or a fixed ratio of it), on " + OptimizationLog.Plural(shapes.Meshes, "mesh", "meshes") + ".";
                         Announce(ctx, state, summary);
                     }
                     WhyNotLine(state, "renderer whose animated blend shapes were not considered for merging", "renderers whose animated blend shapes were not considered for merging", shapes.RendererWhyNot);
