@@ -24,9 +24,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (importer.convertToNormalmap)
                     throw new InvalidOperationException("Heightmap-to-normal conversion is unsupported; original retained.");
                 if (importer.sRGBTexture)
-                    throw new InvalidOperationException("Normal maps require linear import settings; original retained.");
+                    throw new InvalidOperationException("Normal map is imported as colour; turn off sRGB in import settings to optimize it.");
                 if (importer.alphaIsTransparency)
-                    throw new InvalidOperationException("Normal maps with Alpha Is Transparency enabled are unsupported; original retained.");
+                    throw new InvalidOperationException("Normal map has Alpha Is Transparency on; turn it off in import settings to optimize it.");
             }
             if (source.wrapModeU == TextureWrapMode.MirrorOnce || source.wrapModeV == TextureWrapMode.MirrorOnce)
                 throw new InvalidOperationException("Mirror Once coverage is implemented, but PC/Android sampler equivalence is not certified.");

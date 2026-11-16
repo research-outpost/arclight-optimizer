@@ -47,7 +47,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var bindings = analysis.BindingsOn(renderer, p => p == "blendShape." + shape).ToList();
             // A summed curve (additive, or a non-normalized Direct tree) adds its value, so only 0 leaves the weight unchanged.
             return bindings.Count > 0 && bindings.All(b => b.FloatCurve != null && b.FloatCurve.keys.Length > 0 && (!b.Summed || weight == 0) &&
-                b.FloatCurve.keys.All(k => k.value == weight && AnimatorLayerMerger.Flat(k.inTangent) && AnimatorLayerMerger.Flat(k.outTangent)));
+                b.FloatCurve.keys.All(k => k.value == weight && CurveFacts.Flat(k.inTangent) && CurveFacts.Flat(k.outTangent)));
         }
 
         // keepMmdShapes: keep the MMD world shape names on the root "Body" mesh (the component's MMD Support setting).

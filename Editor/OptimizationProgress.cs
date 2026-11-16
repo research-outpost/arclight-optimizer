@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using UnityEditor;
 using UnityEngine;
@@ -67,7 +67,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             nextUpdate = clock.ElapsedMilliseconds + 100;
             string detail = texture ? (total > 0 ? $"Texture {index + 1}/{total}: " : "") + texture.name + "\n" : "";
             detail += stage + $" ({clock.Elapsed.TotalSeconds:F0}s elapsed)";
-            if (cancellable) detail += "\nCancel skips this optimization pass.";
             shown = true;
             if (display(detail, fraction, cancellable) && cancellable)
             {

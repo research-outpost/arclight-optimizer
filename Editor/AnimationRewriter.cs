@@ -20,6 +20,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Copies float curves onto further bindings in the same clip; the map returns the bindings to copy to (or null).
         internal abstract void Copy(Func<Transform, EditorCurveBinding, IEnumerable<EditorCurveBinding>> map);
 
+        // Drops the float and object curves the map returns true for (a merged blend shape's own curve goes, because
+        // the shape it named no longer exists on the mesh).
+        internal abstract void Remove(Func<Transform, EditorCurveBinding, bool> drop);
+
         // Transform paths the layers' Avatar Masks name, with the transform they are relative to.
         internal abstract IEnumerable<(Transform Owner, string Path)> MaskPaths();
 
@@ -109,6 +113,25 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 finally { ControllerCommit.Preserving(context.AvatarRootObject, () => context.DeactivateExtensionContext<VirtualControllerContext>()); }
             }
 
+            internal override void Remove(Func<Transform, EditorCurveBinding, bool> drop)
+            {
+                var controllers = context.ActivateExtensionContext<VirtualControllerContext>();
+                try
+                {
+                    foreach (var entry in controllers.Controllers)
+                    {
+                        if (entry.Value == null || !LiveOwner(entry.Key)) continue;
+                        var owner = entry.Key is Animator animator && animator ? animator.transform : context.AvatarRootObject.transform;
+                        foreach (var clip in entry.Value.AllReachableNodes().OfType<VirtualClip>().Where(c => !c.IsMarkerClip).Distinct())
+                        {
+                            foreach (var b in clip.GetFloatCurveBindings().Where(b => drop(owner, b)).ToList()) clip.SetFloatCurve(b, null);
+                            foreach (var b in clip.GetObjectCurveBindings().Where(b => drop(owner, b)).ToList()) clip.SetObjectCurve(b, null);
+                        }
+                    }
+                }
+                finally { ControllerCommit.Preserving(context.AvatarRootObject, () => context.DeactivateExtensionContext<VirtualControllerContext>()); }
+            }
+
             internal override void Rewrite(Func<Transform, EditorCurveBinding, EditorCurveBinding?> map)
             {
                 var controllers = context.ActivateExtensionContext<VirtualControllerContext>();
@@ -175,6 +198,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     foreach (var binding in AnimationUtility.GetCurveBindings(clip))
                         foreach (var to in map(owner, binding) ?? Enumerable.Empty<EditorCurveBinding>())
                             AnimationUtility.SetEditorCurve(clip, to, AnimationUtility.GetEditorCurve(clip, binding));
+            }
+
+            internal override void Remove(Func<Transform, EditorCurveBinding, bool> drop)
+            {
+                foreach (var (owner, clip) in clips)
+                {
+                    foreach (var b in AnimationUtility.GetCurveBindings(clip).Where(b => drop(owner, b)).ToList())
+                        AnimationUtility.SetEditorCurve(clip, b, null);
+                    foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip).Where(b => drop(owner, b)).ToList())
+                        AnimationUtility.SetObjectReferenceCurve(clip, b, null);
+                }
             }
 
             internal override void Rewrite(Func<Transform, EditorCurveBinding, EditorCurveBinding?> map)

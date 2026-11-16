@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -123,7 +123,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             const int RevisionSuffix = 4; // AssetDatabase.GenerateUniqueAssetPath appends " 1", " 2", ...
             string hash = "_" + recipe.Substring(0, 8);
-            string safeName = new string(sourceName.Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_').Take(36).ToArray());
+            string safeName = GeneratedFiles.SafeName(sourceName);
             int budget = 259 - RevisionSuffix - Path.GetFullPath(folder + "/" + hash + ".png.writing").Length;
             if (budget < 0)
                 throw new IOException("The cache folder path is too long for generated textures; move the project to a shorter path. Original retained.");
@@ -234,7 +234,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         throw new InvalidOperationException("Non-opaque normal PNG alpha is unsupported; original retained.");
                 }
 
-            progress?.Stage("Calculating UV coverage");
+            progress?.Stage("Finding used areas");
             checkCancelled?.Invoke();
             bool repair = !normal && group.RepairsPadding;
             var mask = UvCoverageRasterizer.Build(group, info.Width, info.Height, out var sampled, coverageCache, checkCancelled, pad: !repair);
@@ -414,7 +414,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if ((i & 0xffff) == 0) checkCancelled?.Invoke();
                     attempt[i] = mask[i] ? pixels[i] : candidate;
                 }
-                progress?.Stage("Extending padding");
+                progress?.Stage("Fixing edges");
                 EdgeValueExtender.Extend(pixels, attempt, mask, info.Width, info.Height, radiusX, radiusY, repeatX, repeatY, checkCancelled, extenderScratch);
                 // Unchanged pixels are still worth writing for a smaller format, which only the estimate can show.
                 if (!(formatOnly && estimate) && attempt.SequenceEqual(pixels)) { unchanged = true; continue; }

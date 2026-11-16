@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -47,7 +47,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (group.Warning == null) continue;
                     // Count each texture once, under the first specific reason of its active uses.
                     var use = group.ActiveUses.FirstOrDefault(u => u.Warning != null) ?? group.ActiveUses.First();
-                    string reason = use.Warning ?? group.Warning.Replace("Skipped; original texture retained for all its assignments.", "");
+                    string reason = use.Warning ?? group.Warning.Replace(OptimizationLog.SkippedPrefix, "");
                     var shader = use.Material ? use.Material.shader : null;
                     result.Kept.Add((Normalize(reason), shader ? shader.name : "(missing)", group.Source ? CostHints.Bytes(group.Source) : 0));
                 }

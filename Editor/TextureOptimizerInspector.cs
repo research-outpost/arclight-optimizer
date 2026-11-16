@@ -18,32 +18,32 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     ". Arclight Optimizer does not work alongside Avatar Optimizer, so the build will stop with an error. Remove Avatar Optimizer's components or this one.", MessageType.Error);
             var allowUnsupported = serializedObject.FindProperty("allowUnsupportedShaders");
             EditorGUILayout.PropertyField(allowUnsupported, new GUIContent("Unsupported Shaders",
-                "Attempt texture fields of shaders Arclight does not recognize, assuming UV0 and the property's tiling/offset. Never overrides what a recognized shader (lilToon, Poiyomi and the others) keeps. Can cause visible seams; test before uploading."));
+                "Also optimizes textures on unknown shaders by guessing how they're mapped. A wrong guess can show seams; test before uploading. Known shaders are never affected."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.keepMmdShapes)), new GUIContent("MMD Support",
-                "Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to let Arclight bake them when nothing else animates them."));
+                "Keep the blend shapes MMD dance worlds animate on the Body mesh, so the face still moves in those worlds. Turn off to freeze them when nothing else animates them; the face then won't move in MMD worlds."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.unifiedBounds)), new GUIContent("Unified Bounds",
-                "Give every skinned mesh the Hips as root bone and one bounding box sized to everything the avatar can reach, so meshes never vanish in close-ups and meshes that differed only by bounds can merge. Meshes in the Exclude list, and meshes whose reach is not fixed (constrained, stretching or scaled bones), keep their own."));
+                "Gives all skinned meshes one shared bounding box, so nothing vanishes up close and more meshes can merge. Cost: meshes may draw when just off screen. Excluded meshes and meshes on stretching, scaled or constrained bones keep their own."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.compressAudio)), new GUIContent("Compress Audio",
-                "Re-encode uncompressed (PCM) audio clips as Vorbis in the built avatar. Cuts music and voice lines by roughly an order of magnitude; the sound changes by the codec's loss. Only a copy whose measured bundle is smaller is used, and the source files are never changed."));
+                "Compresses uncompressed audio in the build to about a tenth of the size, with some quality loss."));
             using (new EditorGUI.DisabledScope(!serializedObject.FindProperty(nameof(AvatarTextureOptimizer.compressAudio)).boolValue))
-                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.audioQuality)), new GUIContent("Vorbis Quality",
-                    "0.7 is a good size/quality trade; 1 is transparent for most material."));
+                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.audioQuality)), new GUIContent("Audio Quality",
+                    "0 = smallest, 1 = best. 0.7 is a good balance; at 1 most clips sound like the original."));
             // Hand-built popups instead of enum PropertyFields only for the "1024 px" style labels; the widget is the same control.
             var textureSizeCap = serializedObject.FindProperty(nameof(AvatarTextureOptimizer.textureSizeCap));
             EditorGUI.BeginChangeCheck();
             int sizeIndex = EditorGUILayout.Popup(new GUIContent("Texture Size Cap",
-                    "Cap build copies of the avatar's textures at 1024, 2048 or 4096 pixels, or keep the authored size (Off). Textures above the cap are resampled by Unity's importer in a build copy, so they look softer when displayed large; the source files are never changed and a copy is used only when its measured bundle is smaller."),
+                    "PC only. Shrinks larger textures to this size in the build; they look softer when displayed large. Off keeps full size."),
                 textureSizeCap.hasMultipleDifferentValues ? -1 : textureSizeCap.enumValueIndex, TextureSizeCapLabels);
             if (EditorGUI.EndChangeCheck()) textureSizeCap.enumValueIndex = sizeIndex;
 
             var menuIconCap = serializedObject.FindProperty(nameof(AvatarTextureOptimizer.menuIconCap));
             EditorGUI.BeginChangeCheck();
             int capIndex = EditorGUILayout.Popup(new GUIContent("Menu Icon Cap",
-                    "Cap expression-menu icon build copies at 64, 128 or 256 pixels, or keep the authored size (Off). Icons are drawn small in VRChat's menu, so a cap usually looks the same and cuts their bundle cost several-fold. A copy is used only when its measured bundle is smaller, and source files are never changed."),
+                    "Cap expression-menu icon build copies at 64, 128 or 256 pixels, or keep the authored size (Off). Icons are drawn small in VRChat's menu, so a cap usually looks the same and cuts their size several-fold."),
                 menuIconCap.hasMultipleDifferentValues ? -1 : menuIconCap.enumValueIndex, MenuIconCapLabels);
             if (EditorGUI.EndChangeCheck()) menuIconCap.enumValueIndex = capIndex;
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.narrowOpaqueTextures)), new GUIContent("Narrow Opaque Textures",
-                "Ship opaque colour textures that Unity imports as BC7 (\"Compressed (High Quality)\") as BC1, at half their size. Very smooth gradients can band; check the built avatar close up before uploading. Normal maps, textures whose alpha is read, and every other format are left exactly as authored. Source files are never changed."));
+                "PC only. Stores high-quality (BC7) opaque colour textures as BC1, half the size. Very smooth gradients can band; check close up before uploading. Normal maps and textures with used alpha are untouched."));
             EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AvatarTextureOptimizer.exclude)), new GUIContent("Exclude",
                 "Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object."), true);
             serializedObject.ApplyModifiedProperties();
@@ -90,8 +90,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string folder = AutomaticTextureOptimizer.CacheFolder;
             var plan = CacheCleanup.Prepare(folder, unusedDays: -1); // -1: every entry counts as unused.
             if (plan.IsEmpty) { EditorUtility.DisplayDialog("Clear cache", "The cache is already empty.", "OK"); return; }
-            if (!EditorUtility.DisplayDialog("Clear cache", "Move " + plan.Assets.Count + " cached file(s) (" + EditorUtility.FormatBytes(plan.Bytes) +
-                ") to the trash? Later builds generate them again.", "Clear", "Cancel")) return;
+            if (!EditorUtility.DisplayDialog("Clear cache", "Cached files: " + plan.Assets.Count + " (" + EditorUtility.FormatBytes(plan.Bytes) +
+                "). Move to the trash? They're rebuilt on the next build.", "Clear", "Cancel")) return;
             CacheCleanup.Apply(plan, folder);
         }
     }

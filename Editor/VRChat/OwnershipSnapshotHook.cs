@@ -13,7 +13,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         public bool OnPreprocessAvatar(GameObject avatar)
         {
             var config = avatar ? avatar.GetComponent<AvatarTextureOptimizer>() : null;
-            if (config && config.enabled) BuildOwnership.Begin(avatar);
+            if (config && config.enabled) BuildOwnership.Begin();
             return true;
         }
     }

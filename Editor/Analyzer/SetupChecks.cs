@@ -57,7 +57,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             }
             var wrong = new List<string>();
             foreach (var layer in controller.layers)
-                foreach (var machine in Machines(layer.stateMachine))
+                foreach (var machine in ControllerWalk.Machines(layer.stateMachine))
                 {
                     var transitions = machine.anyStateTransitions.Cast<AnimatorTransitionBase>().Concat(machine.entryTransitions)
                         .Concat(machine.states.Where(s => s.state).SelectMany(s => s.state.transitions))
@@ -234,7 +234,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 findings.Add(new Finding
                 {
                     Severity = Severity.Broken, Key = "playaudio|", Playable = first.Name, Target = first.Controller,
-                    Title = N(audio.Count, "Play Audio behaviour") + " " + (audio.Count == 1 ? "chooses" : "choose") + " clips by a parameter that isn't an Expression Parameter",
+                    Title = N(audio.Count, "Play Audio behaviour") + " always " + (audio.Count == 1 ? "plays" : "play") + " the first clip",
                     Detail = "With Playback Order set to Parameter, VRChat reads the clip number from an Expression Parameter. Without one it always plays the first clip:\n" + Bullets(audio),
                     Fix = "Add the parameter (Int) to Expression Parameters, or set Playback Order to Random, Unique Random or Roundabout.",
                     Identity = string.Join("\n", audio)
@@ -261,7 +261,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 findings.Add(new Finding
                 {
                     Severity = Severity.WorthChecking, Key = "layer0|", Playable = firstBase.Name, Target = firstBase.Controller,
-                    Title = N(baseLayer.Count, "Animator Layer Control") + " " + (baseLayer.Count == 1 ? "changes" : "change") + " the weight of layer 0",
+                    Title = N(baseLayer.Count, "Animator Layer Control") + " " + (baseLayer.Count == 1 ? "targets" : "target") + " layer 0, which can't be faded",
                     Detail = "Unity always plays the first layer of a controller at full weight, so this changes nothing:\n" + Bullets(baseLayer),
                     Fix = "Point the Layer Control at the layer you meant (layers count from 0 at the top), or move what should fade into its own layer.",
                     Identity = string.Join("\n", baseLayer)

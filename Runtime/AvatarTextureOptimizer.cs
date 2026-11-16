@@ -56,13 +56,13 @@ namespace Okarin.AvatarTextureOptimizer
         public bool unifiedBounds;
         [Tooltip("Objects Arclight leaves alone, with everything under them: no renderer, mesh, material, texture, bone, PhysBone, contact, particle or audio change or removal. Use it if an automatic decision is ever wrong for an object.")]
         public System.Collections.Generic.List<Transform> exclude = new System.Collections.Generic.List<Transform>();
-        [Tooltip("Cap build copies of the avatar's textures at 1024, 2048 or 4096 pixels, or keep the authored size (Off). Textures above the cap are resampled by Unity's importer in a build copy, so they look softer when displayed large; the source files are never changed and a copy is used only when its measured bundle is smaller.")]
+        [Tooltip("Cap build copies of the avatar's textures at 1024, 2048 or 4096 pixels, or keep the authored size (Off). Textures above the cap are resampled by Unity's importer in a build copy, so they look softer when displayed large; a copy is used only when its measured bundle is smaller.")]
         public TextureSizeCap textureSizeCap;
-        [Tooltip("Cap expression-menu icon build copies at 64, 128 or 256 pixels. Icons are drawn small in VRChat's menu, so a cap usually looks the same and cuts their bundle cost several-fold. A copy is used only when its measured bundle is smaller. Source files are never changed.")]
+        [Tooltip("Cap expression-menu icon build copies at 64, 128 or 256 pixels. Icons are drawn small in VRChat's menu, so a cap usually looks the same and cuts their bundle cost several-fold.")]
         public MenuIconCap menuIconCap;
-        [Tooltip("Narrow opaque colour textures that Unity imports as BC7 (\"Compressed (High Quality)\") to BC1, at half their size. Very smooth gradients can band; look at the built avatar before uploading. Normal maps, textures whose alpha is read, and every other format are never narrowed. Source files are never changed.")]
+        [Tooltip("Narrow opaque colour textures that Unity imports as BC7 (\"Compressed (High Quality)\") to BC1, at half their size. Very smooth gradients can band; look at the built avatar before uploading. Normal maps, textures whose alpha is read, and every other format are never narrowed.")]
         public bool narrowOpaqueTextures;
-        [Tooltip("Re-encode uncompressed (PCM) audio clips as Vorbis in the built avatar. Cuts music and voice lines by roughly an order of magnitude; the sound changes by the codec's loss. The source files are never changed.")]
+        [Tooltip("Re-encode uncompressed (PCM) audio clips as Vorbis in the built avatar. Cuts music and voice lines by roughly an order of magnitude; the sound changes by the codec's loss.")]
         public bool compressAudio;
         [Range(0f, 1f)]
         [Tooltip("Vorbis quality for Compress Audio. 0.7 is a good size/quality trade; 1 is transparent for most material.")]

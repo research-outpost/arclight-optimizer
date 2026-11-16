@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using nadena.dev.ndmf;
@@ -31,7 +31,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     RivalState.EnsureOrderingBeforeLate();
                     // Play Mode never runs the SDK preprocess hook that snapshots source assets, so take the snapshot
                     // here (conservative: anything VRCFury already generated counts as pre-existing).
-                    if (EditorApplication.isPlayingOrWillChangePlaymode) BuildOwnership.Begin(ctx.AvatarRootObject);
+                    if (EditorApplication.isPlayingOrWillChangePlaymode) BuildOwnership.Begin();
                     Exclusions.Record(ctx.AvatarRootObject);
                     ctx.GetState<SubstitutionState>().SourceMeshes = MeshReadWrite.Record(ctx.AvatarRootObject);
                     var config = ctx.AvatarRootObject.GetComponent<AvatarTextureOptimizer>();
@@ -169,9 +169,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var anchored = ProbeAnchorUnifier.Run(ctx.AvatarRootObject);
                     if (anchored.Changed > 0)
                     {
-                        string summary = "Gave " + anchored.Changed + " renderer(s) the same light and reflection probe anchor (" + anchored.Anchor + "), so every mesh is lit from one point and meshes can merge.";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Gave " + OptimizationLog.Plural(anchored.Changed, "mesh", "meshes") + " the same lighting point (" + anchored.Anchor + "), so they're lit alike and can merge.";
+                        Announce(ctx, state, summary);
                     }
                 }
                 BuildTimings.Step("First avatar analysis");
@@ -190,19 +189,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     var unified = BoundsUnifier.Run(analysis);
                     if (unified.Changed > 0)
                     {
-                        string summary = "Gave " + unified.Changed + " skinned mesh(es) the Hips as root bone and one " + unified.Size.ToString("0.00") +
-                            " m bounding box that covers every pose, so nothing visible is culled and meshes can merge." +
-                            (unified.Kept.Count > 0 ? " Kept their own bounds: " + string.Join(", ", unified.Kept.Take(20)) + (unified.Kept.Count > 20 ? ", ..." : "") + "." : "");
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Gave " + OptimizationLog.Plural(unified.Changed, "skinned mesh", "skinned meshes") + " one " + unified.Size.ToString("0.00") +
+                            " m box covering every pose, so nothing vanishes up close and meshes can merge; meshes may draw when just off screen." +
+                            (unified.Kept.Count > 0 ? " Kept their own bounds: " + OptimizationLog.FirstNames(unified.Kept, 20) + "." : "");
+                        Announce(ctx, state, summary);
                     }
                     else if (unified.Kept.Count > 0)
                     {
                         // The setting is on and nothing moved: say why, or it looks as if the setting did not run.
-                        string summary = "Unified Bounds changed nothing: " + unified.Kept.Count + " skinned mesh(es) keep their own bounds: " +
-                            string.Join(", ", unified.Kept.Take(20)) + (unified.Kept.Count > 20 ? ", ..." : "") + ".";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Unified Bounds changed nothing: " + OptimizationLog.Plural(unified.Kept.Count, "skinned mesh keeps", "skinned meshes keep") + " their own bounds: " +
+                            OptimizationLog.FirstNames(unified.Kept, 20) + ".";
+                        Announce(ctx, state, summary);
                     }
                 }
                 if (state.OptimizeMeshes && !vrcfuryPending)
@@ -212,11 +209,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (constraints.Converted > 0)
                     {
                         analysis = AvatarAnalysis.Build(ctx); // Components and curves changed.
-                        string summary = "Converted " + constraints.Converted + " Unity constraint(s) to VRChat constraints with the SDK's converter (" + constraints.Curves +
-                            " animation curve(s) moved), as VRChat does when the avatar loads, so it no longer converts them or copies their animation each frame." +
+                        string summary = "Converted " + OptimizationLog.Plural(constraints.Converted, "Unity constraint") + " to VRChat constraints with the SDK's converter (" + OptimizationLog.Plural(constraints.Curves, "animation curve") +
+                            " moved), as VRChat does when the avatar loads, so it no longer converts them or copies their animation each frame." +
                             (constraints.Kept.Count > 0 ? " Kept " + constraints.Kept.Count + " for VRChat to convert: " + string.Join(", ", constraints.Kept.Take(10)) + "." : "");
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        Announce(ctx, state, summary);
                     }
                 }
                 if (state.OptimizeMeshes)
@@ -229,12 +225,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         // A removed Animator no longer marks its bones as moving; only a full rebuild refreshes that (Fable final review).
                         if (ctx.AvatarRootObject.GetComponentsInChildren<Animator>(true).Length < animators) analysis = AvatarAnalysis.Build(ctx);
                         else analysis.RescanReferences();
-                        string summary = "Removed " + removed.GameObjects + " object(s) and " + removed.Components +
-                            " component(s) that can never be seen, heard or used: " + string.Join(", ", removed.Names.Take(20)) +
-                            (removed.Names.Count > 20 ? ", ..." : "") + ".";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
-                        state.Report?.Refresh(ctx.AvatarRootObject, state);
+                        string summary = "Removed " + OptimizationLog.Plural(removed.GameObjects, "object") + " and " + OptimizationLog.Plural(removed.Components, "component") +
+                            " that can never be seen, heard or used: " + OptimizationLog.FirstNames(removed.Names, 20) + ".";
+                        Announce(ctx, state, summary, refresh: true);
                     }
                     var controllers = ctx.ActivateExtensionContext<VirtualControllerContext>();
                     ParameterCleaner.Result unusedParameters;
@@ -262,15 +255,20 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         physics = vrcfuryPending ? new PhysicsCleaner.Result() : PhysicsCleaner.Run(analysis, reads,
                             PhysicsCleaner.ExpressionParameters(ctx.AvatarRootObject).ToList());
                         BuildTimings.Step("ParameterCleaner");
-                        unusedParameters = vrcfuryPending ? new ParameterCleaner.Result() : ParameterCleaner.Run(ctx.AvatarRootObject, controllers.Controllers.Values, analysis, ReplacementRegistry.Register);
+                        unusedParameters = vrcfuryPending ? new ParameterCleaner.Result() : ParameterCleaner.Run(ctx.AvatarRootObject, controllers.Controllers.Values, analysis);
                     }
                     finally { ControllerCommit.Preserving(ctx.AvatarRootObject, () => ctx.DeactivateExtensionContext<VirtualControllerContext>()); }
                     if (physics.Parameters + physics.Receivers + physics.EmptyShapes + physics.Colliders + physics.NotAnimated + physics.MergedColliders > 0)
                     {
-                        string physicsSummary = "Cleared " + physics.Parameters + " PhysBone parameter(s) no animator reads, removed " + physics.Receivers +
-                            " contact receiver(s) whose parameter nothing reads, removed " + physics.EmptyShapes +
-                            " contact receiver(s) whose shape encloses no volume, merged " + physics.MergedColliders + " PhysBone collider(s) identical to another and removed " + physics.Colliders + " empty or repeated PhysBone collider entr(ies), and turned off Is Animated on " +
-                            physics.NotAnimated + " PhysBone(s) whose bones nothing else moves.";
+                        string physicsSummary = string.Join(" ", new[]
+                        {
+                            physics.Parameters > 0 ? "Cleared " + OptimizationLog.Plural(physics.Parameters, "PhysBone parameter") + " no animator reads." : null,
+                            physics.Receivers > 0 ? "Removed " + OptimizationLog.Plural(physics.Receivers, "contact receiver") + " whose parameter nothing reads." : null,
+                            physics.EmptyShapes > 0 ? "Removed " + OptimizationLog.Plural(physics.EmptyShapes, "contact receiver") + " with no volume." : null,
+                            physics.MergedColliders > 0 ? "Merged " + OptimizationLog.Plural(physics.MergedColliders, "duplicate PhysBone collider") + "." : null,
+                            physics.Colliders > 0 ? "Removed " + OptimizationLog.Plural(physics.Colliders, "empty or repeated collider entry", "empty or repeated collider entries") + "." : null,
+                            physics.NotAnimated > 0 ? "Turned off Is Animated on " + OptimizationLog.Plural(physics.NotAnimated, "PhysBone") + " nothing else moves." : null,
+                        }.Where(part => part != null));
                         Debug.Log("Arclight Optimizer: " + physicsSummary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, physicsSummary);
                     }
@@ -282,47 +280,42 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         if (swept.GameObjects + swept.Components > 0)
                         {
                             analysis.RescanReferences();
-                            string summary = "Removed " + swept.GameObjects + " object(s) and " + swept.Components + " component(s) nothing used once the physics cleanup ran: " +
-                                string.Join(", ", swept.Names.Take(20)) + (swept.Names.Count > 20 ? ", ..." : "") + ".";
-                            Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                            state.Report?.Add(null, summary);
+                            string summary = "Removed " + OptimizationLog.Plural(swept.GameObjects, "object") + " and " + OptimizationLog.Plural(swept.Components, "component") + " nothing used once the physics cleanup ran: " +
+                                OptimizationLog.FirstNames(swept.Names, 20) + ".";
+                            Announce(ctx, state, summary);
                         }
                     }
-                    WhyNotLine(state, "animator layer(s) not folded", layerMerge.WhyNot);
+                    WhyNotLine(state, "animator layer not merged", "animator layers not merged", layerMerge.WhyNot);
                     if (layerMerge.Inert > 0)
                     {
-                        string inertSummary = "Removed or emptied " + layerMerge.Inert + " animator layer(s) that can change nothing (weight 0 with nothing shared, or animating only objects the avatar does not have).";
+                        string inertSummary = "Removed or emptied " + OptimizationLog.Plural(layerMerge.Inert, "animator layer") + " that can change nothing (weight 0 with nothing shared, or animating only objects the avatar does not have).";
                         Debug.Log("Arclight Optimizer: " + inertSummary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, inertSummary);
                     }
                     if (layerMerge.FrozenTime > 0)
                     {
-                        string frozenSummary = "Gave " + layerMerge.FrozenTime + " motion-time state(s) whose time parameter nothing ever changes the one pose they always show (their clip's first frame).";
+                        string frozenSummary = "Set " + OptimizationLog.Plural(layerMerge.FrozenTime, "animator state that never moves", "animator states that never move") + " past the first frame to that frame.";
                         Debug.Log("Arclight Optimizer: " + frozenSummary + " (" + ctx.AvatarRootObject.name + ")");
                         state.Report?.Add(null, frozenSummary);
                     }
                     if (layerMerge.Merged > 0)
                     {
-                        string summary = (layerMerge.Toggles > 0 ? "Converted " + layerMerge.Toggles + " toggle state machine(s) to blend trees that switch in the same frame. " : "") +
-                            "Folded " + layerMerge.Merged + " animator layer(s) into a shared Direct blend tree layer" +
-                            (layerMerge.Removed == layerMerge.Merged ? " and removed them" : layerMerge.Removed > 0 ? "; removed " + layerMerge.Removed + " and left " + (layerMerge.Merged - layerMerge.Removed) + " empty below a layer a layer control names by index" : " (left empty, as layer controls refer to layers by index)") + "." +
-                            (layerMerge.MergedClips > 0 ? " Joined " + layerMerge.MergedClips + " single-clip layer(s) into one clip inside it." : "");
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = (layerMerge.Toggles > 0 ? "Converted " + OptimizationLog.Plural(layerMerge.Toggles, "toggle state machine") + " to blend trees that switch in the same frame. " : "") +
+                            "Merged " + OptimizationLog.Plural(layerMerge.Merged, "animator layer") + " into one" +
+                            (layerMerge.Removed == layerMerge.Merged ? "" : layerMerge.Removed > 0 ? "; left " + (layerMerge.Merged - layerMerge.Removed) + " empty (a Layer Control refers to them by number)" : " (left empty: a Layer Control refers to them by number)") + "." +
+                            (layerMerge.MergedClips > 0 ? " Merged " + OptimizationLog.Plural(layerMerge.MergedClips, "single-clip layer") + " into one clip." : "");
+                        Announce(ctx, state, summary);
                     }
                     if (deadDrivers > 0)
                     {
-                        string summary = "Removed " + deadDrivers + " parameter driver write(s) into parameters nothing reads (not expression or built-in parameters).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Removed " + OptimizationLog.Plural(deadDrivers, "parameter driver write") + " into parameters nothing reads (not expression or built-in parameters).";
+                        Announce(ctx, state, summary);
                     }
                     if (unusedParameters.Animator > 0)
                     {
                         string summary = "Removed " +
-                            unusedParameters.Animator + " animator parameter(s) that nothing reads: " + string.Join(", ", unusedParameters.Names.Take(20)) +
-                            (unusedParameters.Names.Count > 20 ? ", ..." : "") + ".";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                            OptimizationLog.Plural(unusedParameters.Animator, "animator parameter") + " that nothing reads: " + OptimizationLog.FirstNames(unusedParameters.Names, 20) + ".";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("MenuIconMerger");
                     var icons = vrcfuryPending ? new MenuIconMerger.Result() : MenuIconMerger.Run(ctx.AvatarRootObject, state.MenuIconMaxSize);
@@ -333,33 +326,30 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         if (icons.Merged > 0) parts.Add(icons.Merged + " merged onto an identical icon or texture");
                         if (icons.Capped > 0) parts.Add(icons.Capped + " capped at " + state.MenuIconMaxSize + " px");
                         if (icons.Optimized - icons.Capped > 0)
-                            parts.Add((icons.Optimized - icons.Capped) + " optimized without resizing (mips dropped, DXT1 when opaque)");
-                        string summary = "Pointed the expressions menu at " + icons.Total + " build copy/copies: " + string.Join("; ", parts) + ".";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                            parts.Add((icons.Optimized - icons.Capped) + " optimized without resizing (lighter format)");
+                        string summary = "Pointed the expressions menu at " + OptimizationLog.Plural(icons.Total, "build copy", "build copies") + ": " + string.Join("; ", parts) + ".";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("CookieMerger");
                     int cookies = vrcfuryPending ? 0 : CookieMerger.Run(ctx.AvatarRootObject);
                     if (cookies > 0)
                     {
-                        string summary = "Pointed " + cookies + " light cookie(s) at an identical copy already on the avatar (same file and import settings).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Pointed " + OptimizationLog.Plural(cookies, "light cookie") + " at an identical copy already on the avatar (same file and import settings).";
+                        Announce(ctx, state, summary);
                     }
                     // What the animator passes did, as counts next to the measured savings (each also has its own line below).
                     state.Report?.AddSavings(OptimizationLog.AnimatorCategory, 0,
-                        OptimizationLog.Count(layerMerge.Merged, "layer(s) folded") + OptimizationLog.Count(layerMerge.Inert, "inert layer(s) removed or emptied") +
-                        OptimizationLog.Count(unusedParameters.Animator, "unread parameter(s) removed") + OptimizationLog.Count(deadDrivers, "dead driver write(s) removed") +
-                        OptimizationLog.Count(physics.Parameters, "PhysBone parameter(s) cleared") +                        OptimizationLog.Count(icons.Merged + icons.Optimized, "menu icon copy/copies pointed at"));
+                        OptimizationLog.Count(layerMerge.Merged, "layer folded", "layers folded") + OptimizationLog.Count(layerMerge.Inert, "inert layer removed or emptied", "inert layers removed or emptied") +
+                        OptimizationLog.Count(unusedParameters.Animator, "unread parameter removed", "unread parameters removed") + OptimizationLog.Count(deadDrivers, "dead driver write removed", "dead driver writes removed") +
+                        OptimizationLog.Count(physics.Parameters, "PhysBone parameter cleared", "PhysBone parameters cleared") +                        OptimizationLog.Count(icons.Merged + icons.Optimized, "menu icon copy pointed at", "menu icon copies pointed at"));
                     BuildTimings.Step("StaleTextureCleaner");
                     var stale = StaleTextureCleaner.Run(analysis, ReplacementRegistry.Register, AnimationRewriter.For(ctx));
                     if (stale.Materials > 0)
                     {
                         analysis = AvatarAnalysis.Build(ctx); // Material swaps now name the cleaned copies.
-                        string summary = "Cleared " + stale.Textures + " texture(s), " + stale.Values + " value(s) and " + stale.Keywords + " keyword(s) left on " + stale.Materials +
-                            " material(s) that the shader never reads (left from earlier shaders, in switched-off lilToon features, or on materials whose shader is missing); they would otherwise be uploaded.";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Cleared " + OptimizationLog.Plural(stale.Textures, "texture") + ", " + OptimizationLog.Plural(stale.Values, "value") + " and " + OptimizationLog.Plural(stale.Keywords, "keyword") + " left on " + OptimizationLog.Plural(stale.Materials, "material") +
+                            " that the shader never reads (left from earlier shaders, in switched-off lilToon features, or on materials whose shader is missing); they would otherwise be uploaded.";
+                        Announce(ctx, state, summary);
                     }
                 }
                 BuildTimings.Step("BlendShapeFreezer");
@@ -371,7 +361,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     ? SkinnedMeshMerger.Run(analysis, ReplacementRegistry.Register, AnimationRewriter.For(ctx))
                     : new SkinnedMeshMerger.Result();
                 if (mergedSkinned.Merged > 0) analysis = AvatarAnalysis.Build(ctx); // Renderers and their animation moved.
-                WhyNotLine(state, "skinned mesh(es) not merged", mergedSkinned.WhyNot);
+                WhyNotLine(state, "skinned mesh not merged", "skinned meshes not merged", mergedSkinned.WhyNot);
                 AnalyzerBuildNotes.SkinnedWhyNot = mergedSkinned.WhyNot;
                 foreach (string hint in mergedSkinned.Hints) state.Report?.Add(null, "You could: " + hint);
                 // Unlocked Poiyomi: Arclight reads the full, unspecialized shader, which keeps data the locked one would not need.
@@ -380,8 +370,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     .Where(m => m && poiyomi.Matches(m) && !m.shader.name.StartsWith("Hidden/Locked/", StringComparison.Ordinal))
                     .Select(m => m.name.Replace("(Clone)", "")).Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
                 if (unlocked.Count > 0)
-                    state.Report?.Add(null, "You could: lock " + unlocked.Count + " Poiyomi material(s) in Poiyomi's inspector before building (" +
-                        string.Join(", ", unlocked.Take(10)) + (unlocked.Count > 10 ? ", ..." : "") + "). Unlocked, Arclight reads the full Poiyomi shader, " +
+                    state.Report?.Add(null, "You could: lock " + OptimizationLog.Plural(unlocked.Count, "Poiyomi material") + " in Poiyomi's inspector before building (" +
+                        OptimizationLog.FirstNames(unlocked, 10) + "). Unlocked, Arclight reads the full Poiyomi shader, " +
                         "so it keeps textures and values the locked shader would never use. If d4rk merges these materials, it prefers them unlocked " +
                         "(it bakes its own constants), except materials with Rename Animated properties, which should stay locked.");
                 // VRCFury copies a texture whose mipmaps are on but Streaming Mipmaps is off (the SDK requires it) into its build
@@ -398,7 +388,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             AssetImporter.GetAtPath(p) is TextureImporter importer && importer.mipmapEnabled && !importer.streamingMipmaps))
                     .Where(p => p != null).Distinct().OrderBy(p => p, StringComparer.Ordinal).ToList();
                 if (vrcfuryCopies.Count > 0)
-                    state.Report?.Add(null, "You could: turn on Streaming Mipmaps in the import settings of " + vrcfuryCopies.Count + " texture(s) (" +
+                    state.Report?.Add(null, "You could: turn on Streaming Mipmaps in the import settings of " + OptimizationLog.Plural(vrcfuryCopies.Count, "texture") + " (" +
                         string.Join(", ", vrcfuryCopies.Take(10).Select(System.IO.Path.GetFileNameWithoutExtension)) + (vrcfuryCopies.Count > 10 ? ", ..." : "") +
                         "). VRChat requires it, so VRCFury uploads an already compressed copy of each instead, which Arclight cannot optimize; with it on, Arclight optimizes the original images.");
                 if (state.OptimizeMeshes)
@@ -408,10 +398,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (shapes.Merged > 0)
                     {
                         analysis = AvatarAnalysis.Build(ctx); // Merged shapes' curves were removed.
-                        string summary = "Merged " + shapes.Merged + " blend shape(s) into others that always hold the same weight, on " + shapes.Meshes + " mesh(es).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Merged " + OptimizationLog.Plural(shapes.Merged, "blend shape") + " into others that always hold the same weight, on " + OptimizationLog.Plural(shapes.Meshes, "mesh", "meshes") + ".";
+                        Announce(ctx, state, summary);
                     }
+                    WhyNotLine(state, "renderer whose animated blend shapes were not considered for merging", "renderers whose animated blend shapes were not considered for merging", shapes.RendererWhyNot);
+                    WhyNotLine(state, "blend shape animated like another but not merged into it", "blend shapes animated like another but not merged into it", shapes.ShapeWhyNot);
                     BuildTimings.Step("BoneCleaner");
                     var bonesResult = BoneCleaner.Run(analysis, ReplacementRegistry.Register, physBones: !vrcfuryPending);
                     if (bonesResult.Bones + bonesResult.PhysBones + bonesResult.Constraints > 0)
@@ -419,52 +410,46 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         BuildTimings.Step("UnusedObjectRemover");
                         var swept = UnusedObjectRemover.Run(analysis);
                         analysis.RescanReferences();
-                        string summary = "Removed " + bonesResult.Bones + " zero-weight bone(s) from skinned meshes and " + bonesResult.PhysBones +
-                            " PhysBone(s)" + (bonesResult.Constraints > 0 ? " and " + bonesResult.Constraints + " constraint(s)" : "") + " that move nothing visible" + (swept.GameObjects > 0 ? ", then " + swept.GameObjects + " object(s) nothing used any more" : "") + ".";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Removed " + OptimizationLog.Plural(bonesResult.Bones, "zero-weight bone") + " from skinned meshes and " + OptimizationLog.Plural(bonesResult.PhysBones, "PhysBone") +
+                            (bonesResult.Constraints > 0 ? " and " + OptimizationLog.Plural(bonesResult.Constraints, "constraint") : "") + " that move nothing visible" + (swept.GameObjects > 0 ? ", then " + OptimizationLog.Plural(swept.GameObjects, "object") + " nothing used any more" : "") + ".";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("BoneMerger");
                     var mergedBones = BoneMerger.Run(analysis, ReplacementRegistry.Register);
                     if (mergedBones.Bones > 0)
                     {
-                        string summary = "Merged " + mergedBones.Bones + " bone(s) that never move relative to their parent into it (vertices may round by at most 1/255 per colour channel).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Merged " + OptimizationLog.Plural(mergedBones.Bones, "bone") + " that never move relative to their parent into it (colours may differ by at most 1/255).";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("EndBoneReplacer");
                     var endBones = EndBoneReplacer.Run(analysis);
                     if (endBones.Bones > 0)
                     {
-                        string summary = "Replaced " + endBones.Bones + " PhysBone end bone(s) on " + endBones.PhysBones + " PhysBone(s) with their Endpoint Position (the same virtual end point).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Replaced " + OptimizationLog.Plural(endBones.Bones, "PhysBone end bone") + " on " + OptimizationLog.Plural(endBones.PhysBones, "PhysBone") + " with their Endpoint Position (the same virtual end point).";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("ContainerFlattener");
                     var containers = ContainerFlattener.Run(analysis, AnimationRewriter.For(ctx));
                     if (containers.Containers > 0)
                     {
                         analysis = AvatarAnalysis.Build(ctx); // Curve paths moved.
-                        string summary = "Removed " + containers.Containers + " empty container object(s) with an identity transform; their children sit on the parent with the same world transforms.";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Removed " + OptimizationLog.Plural(containers.Containers, "empty container object") + " with an identity transform; their children sit on the parent with the same world transforms.";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("RigidAccessoryConverter");
                     var rigid = RigidAccessoryConverter.Run(analysis, ReplacementRegistry.Register);
                     if (rigid.Converted > 0)
                     {
                         analysis.RescanReferences();
-                        string summary = "Converted " + rigid.Converted + " single-bone skinned mesh(es) into plain meshes under their bone (no skinning).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Converted " + OptimizationLog.Plural(rigid.Converted, "single-bone skinned mesh", "single-bone skinned meshes") + " into plain meshes under their bone (no skinning).";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("StaticMeshMerger");
                     var staticMerge = StaticMeshMerger.Run(analysis, ReplacementRegistry.Register);
                     if (staticMerge.Merged > 0)
                     {
-                        string summary = "Merged " + staticMerge.Merged + " plain mesh renderer(s) into " + staticMerge.Into + " that never move apart from them.";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Merged " + OptimizationLog.Plural(staticMerge.Merged, "plain mesh renderer") + " into " + staticMerge.Into + " that never move apart from them.";
+                        Announce(ctx, state, summary);
                     }
                     analysis.RescanReferences();
                     BuildTimings.Step("HiddenPhysBones");
@@ -472,39 +457,35 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (hidden.PhysBones > 0)
                     {
                         analysis = AvatarAnalysis.Build(ctx); // The PhysBones are animated now.
-                        string summary = "Turned off " + hidden.PhysBones + " PhysBone(s) while the " + hidden.Objects +
-                            " object(s) whose meshes they move are hidden; a chain restarts from its rest pose when shown again.";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Turned off " + OptimizationLog.Plural(hidden.PhysBones, "PhysBone") + " while the " + OptimizationLog.Plural(hidden.Objects, "object they move is", "objects they move are") +
+                            " hidden; a chain restarts from its rest pose when shown again.";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("DegenerateTriangleRemover");
                     var flat = DegenerateTriangleRemover.Run(analysis, ReplacementRegistry.Register);
                     if (flat.Triangles > 0)
                     {
                         analysis.RescanReferences();
-                        string summary = "Removed " + flat.Triangles + " triangle(s) that can never cover a pixel from " + flat.Meshes + " mesh(es).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Removed " + OptimizationLog.Plural(flat.Triangles, "triangle") + " that can never cover a pixel from " + OptimizationLog.Plural(flat.Meshes, "mesh", "meshes") + ".";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("SubmeshCleaner");
                     var slots = SubmeshCleaner.Run(analysis, ReplacementRegistry.Register, AnimationRewriter.For(ctx));
                     if (slots.Removed + slots.Merged > 0)
                     {
                         analysis = AvatarAnalysis.Build(ctx); // Material slots and their animation were renumbered.
-                        string summary = "Removed " + slots.Removed + " empty or undrawn submesh(es) and merged " + slots.Merged +
-                            " submesh(es) into others drawn with an identical opaque material (fewer draw calls).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Removed " + OptimizationLog.Plural(slots.Removed, "empty or undrawn submesh", "empty or undrawn submeshes") + " and merged " + OptimizationLog.Plural(slots.Merged, "submesh", "submeshes") +
+                            " into others drawn with an identical opaque material (fewer draw calls).";
+                        Announce(ctx, state, summary);
                     }
                     BuildTimings.Step("UnusedVertexRemover");
                     var unusedVertices = UnusedVertexRemover.Run(analysis, ReplacementRegistry.Register);
                     if (unusedVertices.Meshes > 0)
                     {
                         analysis.RescanReferences();
-                        string summary = "Removed " + unusedVertices.Vertices + " vertex(es) that no triangle uses or that exactly repeat another from " +
-                            unusedVertices.Meshes + " mesh(es).";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        string summary = "Removed " + OptimizationLog.Plural(unusedVertices.Vertices, "vertex", "vertices") + " that no triangle uses or that exactly repeat another from " +
+                            OptimizationLog.Plural(unusedVertices.Meshes, "mesh", "meshes") + ".";
+                        Announce(ctx, state, summary);
                     }
                 }
                 var monoVetoed = AudioSettingsAnimated(analysis);
@@ -532,11 +513,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     {
                         analysis.RescanReferences();
                         var parts = new List<string>();
-                        if (deltas.Frames > 0) parts.Add("dropped normal or tangent deltas that move nothing from " + deltas.Frames + " frame(s)");
-                        if (deltas.DroppedFrames > 0) parts.Add("dropped " + deltas.DroppedFrames + " frame(s) that only repeated their neighbours' interpolation");
-                        string summary = "Blend shapes on " + deltas.Meshes + " mesh(es): " + string.Join("; ", parts) + ".";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        state.Report?.Add(null, summary);
+                        if (deltas.Frames > 0) parts.Add("removed normal or tangent deltas that move nothing from " + OptimizationLog.Plural(deltas.Frames, "frame"));
+                        if (deltas.DroppedFrames > 0) parts.Add("removed " + OptimizationLog.Plural(deltas.DroppedFrames, "frame") + " that only repeated their neighbours' interpolation");
+                        string summary = "Blend shapes on " + OptimizationLog.Plural(deltas.Meshes, "mesh", "meshes") + ": " + string.Join("; ", parts) + ".";
+                        Announce(ctx, state, summary);
                     }
                     // Vertices that differed only in a channel or delta just dropped are exact repeats now: weld again.
                     if (stripped.Meshes + deltas.Meshes > 0 && !vrcfuryPending)
@@ -546,9 +526,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         if (welded.Meshes > 0)
                         {
                             analysis.RescanReferences();
-                            string summary = "Welded " + welded.Vertices + " more vertex(es) that became exact repeats once unread data was removed, in " + welded.Meshes + " mesh(es).";
-                            Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                            state.Report?.Add(null, summary);
+                            string summary = "Merged " + OptimizationLog.Plural(welded.Vertices, "more duplicate vertex", "more duplicate vertices") + " once unread data was removed, in " + OptimizationLog.Plural(welded.Meshes, "mesh", "meshes") + ".";
+                            Announce(ctx, state, summary);
                         }
                     }
                     BuildTimings.Step("ParticleUpperBound");
@@ -556,12 +535,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (particles.Systems + particles.Removed + particles.Trails + particles.Collisions > 0)
                     {
                         string summary = "Particles: total Max Particles " + particles.Before + " -> " + particles.After + " (" +
-                            (OptimizationLog.Count(particles.Systems, "system(s) lowered to their reachable peak") +
-                             OptimizationLog.Count(particles.Removed, "system(s) that can never emit removed") +
-                             OptimizationLog.Count(particles.Trails, "zero-lifetime trail module(s) off") +
-                             OptimizationLog.Count(particles.Collisions, "collision module(s) that can hit nothing off")).TrimEnd(',', ' ') + ").";
-                        Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                        if (state.Report != null) { state.Report.Add(null, summary); state.Report.Refresh(ctx.AvatarRootObject, state); }
+                            (OptimizationLog.Count(particles.Systems, "system lowered to its reachable peak", "systems lowered to their reachable peak") +
+                             OptimizationLog.Count(particles.Removed, "system that can never emit removed", "systems that can never emit removed") +
+                             OptimizationLog.Count(particles.Trails, "zero-lifetime trail module off", "zero-lifetime trail modules off") +
+                             OptimizationLog.Count(particles.Collisions, "collision module that can hit nothing off", "collision modules that can hit nothing off")).TrimEnd(',', ' ') + ").";
+                        Announce(ctx, state, summary, refresh: true);
                     }
                 }
                 if (result.Changed)
@@ -569,14 +547,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (state.Report != null && result.Changed)
                 {
                     state.Report.AddSavings("Audio", result.AudioBytes, OptimizationLog.Count(result.MonoAudio, "made mono") +
-                        OptimizationLog.Count(result.AudioClips, "duplicate(s) merged") +
+                        OptimizationLog.Count(result.AudioClips, "duplicate merged", "duplicates merged") +
                         OptimizationLog.Count(result.CompressedAudio, "re-encoded as Vorbis"), result.AudioUnmeasured);
-                    state.Report.AddSavings("Meshes", result.MeshBytes, OptimizationLog.Count(result.Meshes, "duplicate(s) merged") +
-                        OptimizationLog.Count(result.Compacted, "index buffer(s) halved") +
+                    state.Report.AddSavings("Meshes", result.MeshBytes, OptimizationLog.Count(result.Meshes, "duplicate merged", "duplicates merged") +
+                        OptimizationLog.Count(result.Compacted, "index buffer halved", "index buffers halved") +
                         OptimizationLog.Count(result.Stripped, "with unused vertex channels removed") +
-                        OptimizationLog.Count(result.FrozenShapes, "blend shape(s) baked or removed") +
+                        OptimizationLog.Count(result.FrozenShapes, "blend shape baked or removed", "blend shapes baked or removed") +
                         (result.MergedSkinned > 0 ? result.MergedSkinned + " skinned meshes merged into " + result.MergedInto +
-                            (mergedSkinned.Contacts > 0 ? " (" + mergedSkinned.Contacts + " material contact(s) followed the merge)" : "") + ", " : ""));
+                            (mergedSkinned.Contacts > 0 ? " (" + OptimizationLog.Plural(mergedSkinned.Contacts, "material contact") + " followed the merge)" : "") + ", " : ""));
                     state.Report.Refresh(ctx.AvatarRootObject, state);
                 }
                 if (monoAudio || state.CompressAudio) CacheCleanup.Schedule(AutomaticTextureOptimizer.CacheFolder);
@@ -596,13 +574,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // Crops generated and original textures to the aligned part their meshes sample, after texture generation.
         // "Why not" lines: what kept meshes apart or layers unfolded, most common reason first, for the user to act on.
         internal static string WhyNotText(string what, Dictionary<string, List<string>> reasons) =>
-            "Why not: " + reasons.Values.Sum(n => n.Count) + " " + what + ": " + string.Join("; ", reasons.OrderByDescending(p => p.Value.Count)
-                .Select(p => p.Value.Count + " x " + p.Key + " (" + string.Join(", ", p.Value.Distinct().Take(6)) + (p.Value.Distinct().Count() > 6 ? ", ..." : "") + ")")) + ".";
+            "Why not: " + reasons.Values.Sum(n => n.Count) + " " + what + ". " + string.Join("; ", reasons.OrderByDescending(p => p.Value.Count)
+                .Select(p => p.Value.Count + " because " + p.Key + " (" + string.Join(", ", p.Value.Distinct().Take(6)) + (p.Value.Distinct().Count() > 6 ? ", ..." : "") + ")")) + ".";
 
-        private static void WhyNotLine(SubstitutionState state, string what, Dictionary<string, List<string>> reasons)
+        private static void WhyNotLine(SubstitutionState state, string one, string many, Dictionary<string, List<string>> reasons)
         {
             if (state.Report == null || reasons == null || reasons.Count == 0) return;
-            state.Report.Add(null, WhyNotText(what, reasons));
+            state.Report.Add(null, WhyNotText(reasons.Values.Sum(n => n.Count) == 1 ? one : many, reasons));
         }
 
         private static void Crop(BuildContext ctx)
@@ -617,7 +595,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // Like every other pass: not when Arclight is off, removed, or declined (Avatar Optimizer, Play Mode without scene reload).
                 int unreadable = ctx.GetState<SubstitutionState>().Enabled
                     ? MeshReadWrite.Run(ctx.AvatarRootObject, ctx.GetState<SubstitutionState>().SourceMeshes) : 0;
-                if (unreadable > 0) ctx.GetState<SubstitutionState>().Report?.Add(null, "Turned off Read/Write on " + unreadable + " mesh(es) this build made, so the avatar does not keep a second copy of them in memory.");
+                if (unreadable > 0) ctx.GetState<SubstitutionState>().Report?.Add(null, "Turned off Read/Write on " + OptimizationLog.Plural(unreadable, "mesh", "meshes") + " this build made, so the avatar does not keep a second copy of them in memory.");
             }
             catch (Exception e)
             {
@@ -663,12 +641,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return;
             }
             if (result.Textures == 0) return;
-            string summary = "Downscaled " + result.Textures + " texture(s) to at most " + state.TextureSizeCap +
-                " px in build copies (" + result.Materials + " material(s)" +
-                (result.MenuIcons > 0 ? ", " + result.MenuIcons + " menu icon(s)" : "") + " repointed); source files unchanged.";
+            string summary = "Capped " + OptimizationLog.Plural(result.Textures, "texture") + " at " + state.TextureSizeCap +
+                " px in build copies (" + OptimizationLog.Plural(result.Materials, "material") +
+                (result.MenuIcons > 0 ? ", " + OptimizationLog.Plural(result.MenuIcons, "menu icon") : "") + " repointed).";
+            state.Report?.AddSavings("Textures", result.Bytes, "capped " + OptimizationLog.Plural(result.Textures, "texture") + " at " + state.TextureSizeCap + " px", result.Unmeasured);
+            Announce(ctx, state, summary);
+        }
+
+        // A pass's one-line result: to the Console (with the avatar's name) and into the build report.
+        private static void Announce(BuildContext ctx, SubstitutionState state, string summary, bool refresh = false)
+        {
             Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-            state.Report?.AddSavings("Textures", result.Bytes, "downscaled " + result.Textures + " texture(s) to " + state.TextureSizeCap + " px", result.Unmeasured);
             state.Report?.Add(null, summary);
+            if (refresh) state.Report?.Refresh(ctx.AvatarRootObject, state);
         }
 
         private static void CropTextures(BuildContext ctx)
@@ -706,19 +691,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (cropped)
                 {
                     analysis.RescanReferences();
-                    string summary = (crops.Textures > 0 ? "Cropped " + crops.Textures + " texture(s) to the aligned part their meshes sample" : "") +
+                    string summary = (crops.Textures > 0 ? "Cropped " + OptimizationLog.Plural(crops.Textures, "texture") + " to the aligned part their meshes sample" : "") +
                         (crops.Textures > 0 && crops.Uniform > 0 ? "; " : "") +
-                        (crops.Uniform > 0 ? "replaced " + crops.Uniform + " one-colour texture(s) with 4 x 4 copies" : "") +
-                        " (" + (100 - 100 * crops.PixelsAfter / Math.Max(1, crops.PixelsBefore)) + "% fewer imported texels), on " + crops.Materials + " material(s).";
-                    Debug.Log("Arclight Optimizer: " + summary + " (" + ctx.AvatarRootObject.name + ")");
-                    state.Report?.Add(null, summary);
+                        (crops.Uniform > 0 ? "replaced " + OptimizationLog.Plural(crops.Uniform, "one-colour texture") + " with 4 x 4 copies" : "") +
+                        " (" + (100 - 100 * crops.PixelsAfter / Math.Max(1, crops.PixelsBefore)) + "% fewer pixels), on " + OptimizationLog.Plural(crops.Materials, "material") + ".";
+                    Announce(ctx, state, summary);
                 }
-                WhyNotLine(state, "material(s) whose textures were not cropped", crops.WhyNot);
+                WhyNotLine(state, "material whose textures were not cropped", "materials whose textures were not cropped", crops.WhyNot);
                 if (cancelled)
                 {
                     string stopped = cropped
-                        ? "Texture cropping was cancelled part-way: the " + (crops.Textures + crops.Uniform) +
-                          " texture(s) already cropped or replaced stay as they are, and no further textures were cropped."
+                        ? "Texture cropping was cancelled part-way: the " + OptimizationLog.Plural(crops.Textures + crops.Uniform, "texture already cropped or replaced stays", "textures already cropped or replaced stay") +
+                          " as they are, and no further textures were cropped."
                         : "Texture cropping was cancelled before any texture was cropped.";
                     Debug.Log("Arclight Optimizer: " + stopped + " (" + ctx.AvatarRootObject.name + ")");
                     state.Report?.Add(null, stopped);
@@ -943,7 +927,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 {
                     if (IsUnsafeStandaloneSwap(scan.Groups.First(g => g.Source == pair.Value), scan.Animation))
                     {
-                        report(pair.Key, "Duplicate kept: animated swaps require the NDMF virtual controller context.");
+                        report(pair.Key, OptimizationLog.DuplicateKeptPrefix + " animated swaps require the NDMF virtual controller context.");
                         continue;
                     }
                     replacements[pair.Key] = replacements.TryGetValue(pair.Value, out var target) ? target : pair.Value;
@@ -1032,7 +1016,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     throw;
                 }
             }
-            catch (Exception e) { report(config, "Substitution aborted: " + e.Message); }
+            catch (Exception e) { report(config, OptimizationLog.SubstitutionAbortedPrefix + " " + e.Message); }
             finally { UnityEngine.Object.DestroyImmediate(config); }
         }
 

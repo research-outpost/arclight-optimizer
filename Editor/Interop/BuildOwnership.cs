@@ -21,7 +21,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static bool snapshotChecked;
 
         // Called by the SDK hook before any other preprocess callback, and by Play Mode before its passes.
-        internal static void Begin(GameObject avatar)
+        internal static void Begin()
         {
             try
             {

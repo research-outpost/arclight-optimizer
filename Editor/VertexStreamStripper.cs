@@ -124,9 +124,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var copy = Strip(mesh, strip, narrow);
                 if (!copy) continue;
                 register(mesh, copy);
-                foreach (var renderer in pair.Value)
-                    if (renderer is SkinnedMeshRenderer skinned) skinned.sharedMesh = copy;
-                    else renderer.GetComponent<MeshFilter>().sharedMesh = copy;
+                // Through Rebind, as the other mesh passes do, so a bound Animator captures the copy and a later controller
+                // commit cannot write the unstripped mesh back.
+                MeshUsers.Assign(pair.Value, copy);
                 result.Meshes++;
                 result.Bytes += before - MeshAndAudioOptimizer.MeshBytes(copy);
             }

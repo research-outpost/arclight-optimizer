@@ -26,30 +26,17 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var result = new Result();
             if (!analysis.Complete) return result;
-            var swaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
-            var users = analysis.Root.GetComponentsInChildren<Renderer>(true)
-                .Select(r => (Renderer: r, Mesh: MeshOf(r))).Where(p => p.Mesh).GroupBy(p => p.Mesh)
-                .Where(g => !g.Any(p => Exclusions.Excluded(p.Renderer))); // A mesh an excluded renderer uses stays as it is.
-            foreach (var group in users)
+            // Welding and rebuilding read the vertex streams.
+            foreach (var group in MeshUsers.Rebuildable(analysis, eligible))
             {
                 var mesh = group.Key;
-                if (swaps.Contains(mesh) || !mesh.isReadable || eligible != null && !eligible(mesh)) continue; // Welding and rebuilding read the vertex streams.
-                if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer) && !(c is MeshFilter))) continue;
-                // Extra vertex streams override the mesh's own attributes, and a particle shape can emit from a renderer's vertices,
-                // edges or triangles.
-                if (group.Any(p => p.Renderer is MeshRenderer m && m.additionalVertexStreams || analysis.ReferencesTo(p.Renderer).Any(c => c is ParticleSystem))) continue;
-                if (group.Any(p => p.Renderer.GetComponent<Cloth>())) continue;
                 // Update When Offscreen bounds come from the vertices: only welding, which removes exact duplicates, is safe there.
-                bool weldOnly = group.Any(p => p.Renderer is SkinnedMeshRenderer s && s.updateWhenOffscreen);
-                if (group.Any(p => SkinnedMeshMerger.ReadsVertexId(p.Renderer, analysis))) continue;
+                bool weldOnly = group.Any(r => r is SkinnedMeshRenderer s && s.updateWhenOffscreen);
+                if (group.Any(r => SkinnedMeshMerger.ReadsVertexId(r, analysis))) continue;
                 var copy = Compact(mesh, WeldMap(mesh), out int vertices, weldOnly);
                 if (!copy) continue;
                 register(mesh, copy);
-                foreach (var (renderer, _) in group)
-                {
-                    if (renderer is SkinnedMeshRenderer skinned) SkinnedMeshMerger.Rebind(skinned, () => skinned.sharedMesh = copy);
-                    else renderer.GetComponent<MeshFilter>().sharedMesh = copy;
-                }
+                MeshUsers.Assign(group, copy);
                 result.Meshes++;
                 result.Vertices += vertices;
             }
@@ -84,7 +71,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 foreach (int v in kept)
                 {
                     newPerVertex.Add(perVertex[v]);
-                    newWeights.AddRange(Enumerable.Range(start[v], perVertex[v]).Select(i => weights[i]));
+                    for (int i = start[v]; i < start[v] + perVertex[v]; i++) newWeights.Add(weights[i]);
                 }
             }
             removedVertices = count - kept.Length;
@@ -130,15 +117,22 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
             }
             copy.subMeshCount = mesh.subMeshCount;
-            for (int s = 0; s < mesh.subMeshCount; s++) copy.SetIndices(indices[s].Select(i => map[i]).ToArray(), mesh.GetTopology(s), s, false, 0);
+            for (int s = 0; s < mesh.subMeshCount; s++)
+            {
+                var remapped = new int[indices[s].Length];
+                for (int i = 0; i < remapped.Length; i++) remapped[i] = map[indices[s][i]];
+                copy.SetIndices(remapped, mesh.GetTopology(s), s, false, 0);
+            }
             copy.bindposes = mesh.bindposes;
             var dv = new Vector3[mesh.vertexCount]; var dn = new Vector3[mesh.vertexCount]; var dt = new Vector3[mesh.vertexCount];
+            // AddBlendShapeFrame copies the deltas, so one set of kept-vertex buffers serves every frame.
+            var kv = new Vector3[kept.Length]; var kn = new Vector3[kept.Length]; var kt = new Vector3[kept.Length];
             for (int shape = 0; shape < mesh.blendShapeCount; shape++)
                 for (int f = 0; f < mesh.GetBlendShapeFrameCount(shape); f++)
                 {
                     mesh.GetBlendShapeFrameVertices(shape, f, dv, dn, dt);
-                    copy.AddBlendShapeFrame(mesh.GetBlendShapeName(shape), mesh.GetBlendShapeFrameWeight(shape, f),
-                        kept.Select(v => dv[v]).ToArray(), kept.Select(v => dn[v]).ToArray(), kept.Select(v => dt[v]).ToArray());
+                    for (int v = 0; v < kept.Length; v++) { kv[v] = dv[kept[v]]; kn[v] = dn[kept[v]]; kt[v] = dt[kept[v]]; }
+                    copy.AddBlendShapeFrame(mesh.GetBlendShapeName(shape), mesh.GetBlendShapeFrameWeight(shape, f), kv, kn, kt);
                 }
             return copy;
         }
@@ -220,7 +214,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var layout = new Func<Mesh, HashSet<(VertexAttribute, VertexAttributeFormat, int)>>(m =>
                 new HashSet<(VertexAttribute, VertexAttributeFormat, int)>(m.GetVertexAttributes().Select(d => (d.attribute, d.format, d.dimension))));
             if (!layout(a).SetEquals(layout(b))) return false;
-            bool Channel<T>(T[] x, T[] y) => x.Length == 0 ? y.Length == 0 : y.Length == kept.Length && kept.Select(v => x[v]).SequenceEqual(y);
+            bool Channel<T>(T[] x, T[] y)
+            {
+                if (x.Length == 0) return y.Length == 0;
+                if (y.Length != kept.Length) return false;
+                var equal = EqualityComparer<T>.Default; // What SequenceEqual compared with.
+                for (int v = 0; v < kept.Length; v++) if (!equal.Equals(x[kept[v]], y[v])) return false;
+                return true;
+            }
             if (!Channel(a.vertices, b.vertices) || !Channel(a.normals, b.normals) || !Channel(a.tangents, b.tangents) || !Channel(a.colors, b.colors)) return false;
             for (int i = 0; i < 8; i++)
             {
@@ -234,7 +235,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 if (a.GetTopology(s) != b.GetTopology(s)) return false;
                 var x = a.GetIndices(s, true); var y = b.GetIndices(s, true);
-                if (x.Length != y.Length || Enumerable.Range(0, x.Length).Any(i => kept[y[i]] != (weld == null ? x[i] : weld[x[i]]))) return false;
+                if (x.Length != y.Length) return false;
+                for (int i = 0; i < x.Length; i++) if (kept[y[i]] != (weld == null ? x[i] : weld[x[i]])) return false;
             }
             Vector3[] da = new Vector3[a.vertexCount], na = new Vector3[a.vertexCount], ta = new Vector3[a.vertexCount];
             Vector3[] db = new Vector3[b.vertexCount], nb = new Vector3[b.vertexCount], tb = new Vector3[b.vertexCount];
@@ -250,9 +252,47 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             return true;
         }
+    }
 
-        private static Mesh MeshOf(Renderer renderer) =>
+    // The renderers that share each mesh, for the passes that replace a mesh with a rebuilt copy (UnusedVertexRemover,
+    // DegenerateTriangleRemover).
+    internal static class MeshUsers
+    {
+        // A skinned renderer's mesh, or a MeshRenderer's MeshFilter mesh; null for other renderers.
+        internal static Mesh Of(Renderer renderer) =>
             renderer is SkinnedMeshRenderer skinned ? skinned.sharedMesh
             : renderer is MeshRenderer && renderer.GetComponent<MeshFilter>() is MeshFilter filter && filter ? filter.sharedMesh : null;
+
+        // Each mesh with the renderers that use it, when a rebuilt copy may replace it for all of them: no renderer is
+        // excluded, no animation swaps the mesh in, it is readable and eligible (when given), only renderers and filters
+        // refer to it, no renderer has extra vertex streams (they override the mesh's attributes) or is a particle shape
+        // (it can emit from the vertices, edges or triangles), and Cloth simulates none of them. Each group is checked as
+        // it is enumerated, as the passes did inline.
+        internal static IEnumerable<IGrouping<Mesh, Renderer>> Rebuildable(AvatarAnalysis analysis, Func<Mesh, bool> eligible)
+        {
+            var swaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
+            var users = analysis.Root.GetComponentsInChildren<Renderer>(true)
+                .Select(r => (Renderer: r, Mesh: Of(r))).Where(p => p.Mesh).GroupBy(p => p.Mesh, p => p.Renderer)
+                .Where(g => !g.Any(r => Exclusions.Excluded(r))); // A mesh an excluded renderer uses stays as it is.
+            foreach (var group in users)
+            {
+                var mesh = group.Key;
+                if (swaps.Contains(mesh) || !mesh.isReadable || eligible != null && !eligible(mesh)) continue;
+                if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer) && !(c is MeshFilter))) continue;
+                if (group.Any(r => r is MeshRenderer m && m.additionalVertexStreams || analysis.ReferencesTo(r).Any(c => c is ParticleSystem))) continue;
+                if (group.Any(r => r.GetComponent<Cloth>())) continue;
+                yield return group;
+            }
+        }
+
+        // Points every renderer at the copy (a skinned renderer through SkinnedMeshMerger.Rebind).
+        internal static void Assign(IEnumerable<Renderer> renderers, Mesh copy)
+        {
+            foreach (var renderer in renderers)
+            {
+                if (renderer is SkinnedMeshRenderer skinned) SkinnedMeshMerger.Rebind(skinned, () => skinned.sharedMesh = copy);
+                else renderer.GetComponent<MeshFilter>().sharedMesh = copy;
+            }
+        }
     }
 }

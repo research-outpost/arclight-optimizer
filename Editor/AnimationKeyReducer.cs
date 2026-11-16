@@ -80,7 +80,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 var key = keys[i];
                 var next = keys[i + 1];
                 bool flat = key.value == previous.value && key.value == next.value &&
-                    AnimatorLayerMerger.Flat(previous.outTangent) && AnimatorLayerMerger.Flat(key.inTangent) && AnimatorLayerMerger.Flat(key.outTangent) && AnimatorLayerMerger.Flat(next.inTangent) &&
+                    CurveFacts.Flat(previous.outTangent) && CurveFacts.Flat(key.inTangent) && CurveFacts.Flat(key.outTangent) && CurveFacts.Flat(next.inTangent) &&
                     previous.weightedMode == WeightedMode.None && key.weightedMode == WeightedMode.None && next.weightedMode == WeightedMode.None;
                 if (!flat) kept.Add(key);
             }
@@ -97,7 +97,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var list = clips.Where(c => c && !c.legacy && !elsewhere.Contains(c)).Distinct().ToList();
             // One path walk per distinct path, not per curve: clips repeat paths heavily and root is fixed here.
-            var resolvedByPath = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Transform>>(System.StringComparer.Ordinal);
+            var paths = new PathCache();
             // What Unity can actually animate on an object, asked once per (object, type). A property outside that set
             // does nothing at runtime, however alive its object and type are.
             var animatableByTarget = new System.Collections.Generic.Dictionary<(int, Type), HashSet<string>>();
@@ -123,9 +123,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             bool Dead(EditorCurveBinding b)
             {
                 if (b.type == typeof(Animator)) return false;
-                if (!resolvedByPath.TryGetValue(b.path, out var found))
-                    resolvedByPath[b.path] = found = AvatarAnalysis.Resolve(root, b.path).ToList();
-                var targets = found;
+                var targets = paths.Resolve(root, b.path);
                 if (targets.Count == 0) return true;
                 if (b.type == typeof(GameObject) || b.type == typeof(Transform)) return false;
                 if (b.type == null) return true; // A type that no longer exists binds nothing.

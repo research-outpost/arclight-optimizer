@@ -26,24 +26,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var result = new Result();
             if (!analysis.Complete) return result;
-            var swaps = new HashSet<Mesh>(analysis.AnimatedObjectValues.OfType<Mesh>());
-            var users = analysis.Root.GetComponentsInChildren<Renderer>(true)
-                .Select(r => (Renderer: r, Mesh: MeshOf(r))).Where(p => p.Mesh).GroupBy(p => p.Mesh)
-                .Where(g => !g.Any(p => Exclusions.Excluded(p.Renderer))); // A mesh an excluded renderer uses stays as it is.
-            foreach (var group in users)
+            // Plane tests and rebuilds read the vertex positions; Cloth builds its constraints from the triangles.
+            foreach (var group in MeshUsers.Rebuildable(analysis, eligible))
             {
                 var mesh = group.Key;
-                if (swaps.Contains(mesh) || !mesh.isReadable || eligible != null && !eligible(mesh)) continue; // Plane tests and rebuilds read the vertex positions.
-                if (analysis.ReferencesTo(mesh).Any(c => !(c is SkinnedMeshRenderer) && !(c is MeshFilter))) continue;
-                // Extra vertex streams override the mesh's own attributes, and a particle shape can emit from a renderer's vertices,
-                // edges or triangles.
-                if (group.Any(p => p.Renderer is MeshRenderer m && m.additionalVertexStreams || analysis.ReferencesTo(p.Renderer).Any(c => c is ParticleSystem))) continue;
-                if (group.Any(p => p.Renderer.GetComponent<Cloth>())) continue; // Cloth builds its constraints from the triangles.
-                var keep = Enumerable.Range(0, mesh.subMeshCount).Select(s => mesh.GetTopology(s) == MeshTopology.Triangles ? Survivors(mesh, s) : null).ToArray();
+                var keep = Survivors(mesh);
                 int removed = Enumerable.Range(0, mesh.subMeshCount).Sum(s => keep[s] == null ? 0 : (int)(mesh.GetIndexCount(s) - keep[s].Length) / 3);
                 if (removed == 0) continue;
                 // The shader proofs compile variants, so they run only for meshes that have a triangle to remove.
-                if (group.Any(p => p.Renderer.sharedMaterials.Concat(analysis.SwappedMaterials(p.Renderer)).Any(m => !TriangleCountInvisible(m)) || SkinnedMeshMerger.ReadsVertexId(p.Renderer, analysis))) continue;
+                if (group.Any(r => r.sharedMaterials.Concat(analysis.SwappedMaterials(r)).Any(m => !TriangleCountInvisible(m)) || SkinnedMeshMerger.ReadsVertexId(r, analysis))) continue;
 
                 var copy = Object.Instantiate(mesh);
                 copy.name = mesh.name;
@@ -51,39 +42,77 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (keep[s] != null) copy.SetIndices(keep[s], MeshTopology.Triangles, s, false, (int)mesh.GetBaseVertex(s));
                 copy.bounds = mesh.bounds;
                 register(mesh, copy);
-                foreach (var (renderer, _) in group)
-                {
-                    if (renderer is SkinnedMeshRenderer skinned) SkinnedMeshMerger.Rebind(skinned, () => skinned.sharedMesh = copy);
-                    else renderer.GetComponent<MeshFilter>().sharedMesh = copy;
-                }
+                MeshUsers.Assign(group, copy);
                 result.Meshes++;
                 result.Triangles += removed;
             }
             return result;
         }
 
-        // The submesh's indices (relative to its base vertex) without its never-visible triangles.
-        internal static int[] Survivors(Mesh mesh, int submesh)
+        // Each submesh's indices (relative to its base vertex) without its never-visible triangles; null for a submesh that is
+        // not triangles. A triangle is never visible when two of its corners are one vertex, or two vertices identical in
+        // everything a vertex shader gets (Vertices plus every blend shape delta). Blend shape frames are read one at a time,
+        // and only compared for the vertex pairs that are identical in everything else, so memory stays one frame.
+        internal static int[][] Survivors(Mesh mesh)
         {
-            var indices = mesh.GetIndices(submesh, false);
-            int baseVertex = (int)mesh.GetBaseVertex(submesh);
+            int submeshes = mesh.subMeshCount;
+            var indices = new int[submeshes][];
+            var flat = new bool[submeshes][];
             Vertices identical = null;
-            var kept = new List<int>(indices.Length);
-            for (int t = 0; t + 2 < indices.Length; t += 3)
+            // Corner pairs identical in everything but blend shapes: the triangle is flat if any of them also has equal deltas.
+            var pairs = new List<(int Submesh, int Triangle, int A, int B)>();
+            for (int s = 0; s < submeshes; s++)
             {
-                int a = indices[t], b = indices[t + 1], c = indices[t + 2];
-                bool flat = a == b || b == c || a == c;
-                if (!flat)
+                if (mesh.GetTopology(s) != MeshTopology.Triangles) continue;
+                var index = indices[s] = mesh.GetIndices(s, false);
+                int baseVertex = (int)mesh.GetBaseVertex(s);
+                var triangles = flat[s] = new bool[index.Length / 3];
+                for (int t = 0; t + 2 < index.Length; t += 3)
                 {
+                    int a = index[t], b = index[t + 1], c = index[t + 2];
+                    if (a == b || b == c || a == c) { triangles[t / 3] = true; continue; }
                     identical = identical ?? new Vertices(mesh);
-                    flat = identical.Same(a + baseVertex, b + baseVertex) || identical.Same(b + baseVertex, c + baseVertex) || identical.Same(a + baseVertex, c + baseVertex);
+                    a += baseVertex; b += baseVertex; c += baseVertex;
+                    if (identical.SameExceptShapes(a, b)) pairs.Add((s, t / 3, a, b));
+                    if (identical.SameExceptShapes(b, c)) pairs.Add((s, t / 3, b, c));
+                    if (identical.SameExceptShapes(a, c)) pairs.Add((s, t / 3, a, c));
                 }
-                if (!flat) { kept.Add(a); kept.Add(b); kept.Add(c); }
             }
-            return kept.ToArray();
+            if (pairs.Count > 0)
+            {
+                var equal = new bool[pairs.Count];
+                for (int i = 0; i < equal.Length; i++) equal[i] = true;
+                int count = mesh.vertexCount;
+                Vector3[] dv = new Vector3[count], dn = new Vector3[count], dt = new Vector3[count];
+                for (int shape = 0; shape < mesh.blendShapeCount; shape++)
+                    for (int frame = 0; frame < mesh.GetBlendShapeFrameCount(shape); frame++)
+                    {
+                        mesh.GetBlendShapeFrameVertices(shape, frame, dv, dn, dt);
+                        for (int i = 0; i < equal.Length; i++)
+                        {
+                            if (!equal[i]) continue;
+                            int a = pairs[i].A, b = pairs[i].B;
+                            equal[i] = dv[a].Equals(dv[b]) && dn[a].Equals(dn[b]) && dt[a].Equals(dt[b]);
+                        }
+                    }
+                for (int i = 0; i < equal.Length; i++)
+                    if (equal[i]) flat[pairs[i].Submesh][pairs[i].Triangle] = true;
+            }
+            var result = new int[submeshes][];
+            for (int s = 0; s < submeshes; s++)
+            {
+                var index = indices[s];
+                if (index == null) continue;
+                var kept = new List<int>(index.Length);
+                for (int t = 0; t + 2 < index.Length; t += 3)
+                    if (!flat[s][t / 3]) { kept.Add(index[t]); kept.Add(index[t + 1]); kept.Add(index[t + 2]); }
+                result[s] = kept.ToArray();
+            }
+            return result;
         }
 
-        // Exact comparison of everything a vertex shader can get for two vertices (Equals, not Unity's approximate ==).
+        // Exact comparison of everything a vertex shader can get for two vertices except blend shape deltas (Equals, not
+        // Unity's approximate ==); Survivors compares the deltas a frame at a time.
         private sealed class Vertices
         {
             private readonly Mesh mesh;
@@ -92,7 +121,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
             internal Vertices(Mesh mesh) { this.mesh = mesh; positions = mesh.vertices; }
 
-            internal bool Same(int a, int b) => positions[a].Equals(positions[b]) && (rest ?? (rest = Channels())).All(same => same(a, b));
+            internal bool SameExceptShapes(int a, int b) => positions[a].Equals(positions[b]) && (rest ?? (rest = Channels())).All(same => same(a, b));
 
             private List<Func<int, int, bool>> Channels()
             {
@@ -117,14 +146,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     channels.Add((a, b) => counts[a] == counts[b] && Enumerable.Range(0, counts[a]).All(i =>
                         weights[start[a] + i].boneIndex == weights[start[b] + i].boneIndex && weights[start[a] + i].weight.Equals(weights[start[b] + i].weight)));
                 }
-                int count = mesh.vertexCount;
-                for (int shape = 0; shape < mesh.blendShapeCount; shape++)
-                    for (int frame = 0; frame < mesh.GetBlendShapeFrameCount(shape); frame++)
-                    {
-                        Vector3[] dv = new Vector3[count], dn = new Vector3[count], dt = new Vector3[count];
-                        mesh.GetBlendShapeFrameVertices(shape, frame, dv, dn, dt);
-                        channels.Add((a, b) => dv[a].Equals(dv[b]) && dn[a].Equals(dn[b]) && dt[a].Equals(dt[b]));
-                    }
                 return channels;
             }
         }
@@ -175,9 +196,5 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (clean) ShaderFacts.Put("triangles", fact, safe ? "1" : "0");
             return Safe[key] = safe;
         }
-
-        private static Mesh MeshOf(Renderer renderer) =>
-            renderer is SkinnedMeshRenderer skinned ? skinned.sharedMesh
-            : renderer is MeshRenderer && renderer.GetComponent<MeshFilter>() is MeshFilter filter && filter ? filter.sharedMesh : null;
     }
 }

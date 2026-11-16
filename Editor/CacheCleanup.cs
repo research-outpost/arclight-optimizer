@@ -120,7 +120,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static void PrepareTracked(Plan plan, string folder, Func<string, bool> generated, bool decodeCopies, string ownerMarker)
         {
             if (!AssetDatabase.IsValidFolder(folder)) return;
-            var usage = AudioMonoConverter.LoadUsage();
+            var usage = CacheUsage.LoadUsage();
             bool recorded = false;
             foreach (string file in Directory.GetFiles(folder).Select(p => p.Replace('\\', '/')).OrderBy(p => p, StringComparer.Ordinal))
             {
@@ -141,7 +141,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 plan.Assets.Add(file);
                 plan.Bytes += new FileInfo(file).Length;
             }
-            if (recorded) AudioMonoConverter.SaveUsage(usage);
+            if (recorded) CacheUsage.SaveUsage(usage);
         }
 
         // Tests pass moveToTrash: false so fixtures do not fill the user's trash.
@@ -167,13 +167,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 EditorUtility.SetDirty(cache);
                 AssetDatabase.SaveAssetIfDirty(cache);
             }
-            var usage = AudioMonoConverter.LoadUsage();
+            var usage = CacheUsage.LoadUsage();
             bool usageChanged = false;
             // Forget every record whose generated file is no longer on disk, not just this sweep's removals:
             // clips deleted by hand, or removed after an earlier failed sweep, would leak their record forever.
             foreach (string path in usage.Keys.ToList())
                 if (!File.Exists(path)) { usage.Remove(path); usageChanged = true; }
-            if (usageChanged) AudioMonoConverter.SaveUsage(usage);
+            if (usageChanged) CacheUsage.SaveUsage(usage);
             foreach (string file in plan.StagingFiles)
             {
                 if (File.Exists(file)) File.Delete(file);
@@ -264,6 +264,67 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (!cache || cache.cacheOwner != AutomaticTextureOptimizer.CacheOwner)
                 throw new InvalidOperationException("The cache manifest is not owned by this optimizer; nothing was removed.");
             return cache;
+        }
+    }
+
+    // Last build day each generated file (mono and Vorbis clips, capped textures, texture crops) was used, for the cache
+    // cleanup's 30-day rule. The record file keeps its historical name.
+    internal static class CacheUsage
+    {
+        // Kept in Library: it is per machine, like the builds that refresh it, and changing it never reimports anything. Test fixtures
+        // redirect the cache folder into themselves (AutomaticTextureOptimizer.CacheFolder); the record follows that
+        // redirect, so fixtures never touch the shared machine-wide file.
+        private static string UsageFile => AutomaticTextureOptimizer.CacheFolder == AvatarTextureOptimizer.OutputFolder
+            ? "Library/AvatarTextureOptimizer/audio-usage.json"
+            : AutomaticTextureOptimizer.CacheFolder + "/audio-usage.json";
+        [Serializable] private sealed class Usage { public List<string> paths = new List<string>(); public List<int> days = new List<int>(); }
+
+        internal static Dictionary<string, int> LoadUsage()
+        {
+            var usage = new Dictionary<string, int>(StringComparer.Ordinal);
+            try
+            {
+                if (!File.Exists(UsageFile)) return usage;
+                var stored = UnityEngine.JsonUtility.FromJson<Usage>(File.ReadAllText(UsageFile));
+                for (int i = 0; stored != null && i < Math.Min(stored.paths.Count, stored.days.Count); i++) usage[stored.paths[i]] = stored.days[i];
+            }
+            catch (Exception) { } // An unreadable record only restarts the 30 days.
+            return usage;
+        }
+
+        internal static void SaveUsage(Dictionary<string, int> usage)
+        {
+            var stored = new Usage();
+            foreach (var pair in usage.OrderBy(p => p.Key, StringComparer.Ordinal)) { stored.paths.Add(pair.Key); stored.days.Add(pair.Value); }
+            Directory.CreateDirectory(Path.GetDirectoryName(UsageFile));
+            File.WriteAllText(UsageFile, UnityEngine.JsonUtility.ToJson(stored));
+        }
+
+        // Shared last-used record for generated files the cache cleanup tracks (mono clips and texture crops).
+        // Marking used loaded and rewrote the whole file per clip, so marks land in usagePending instead and the
+        // mono pass saves once at its end (try/finally in Convert, so a pass that throws part-way still keeps what
+        // it marked). Passes with no end point here (texture crops) have their marks dropped, not written late:
+        // the next pass starts from the on-disk record, so at most one build's crop re-touches are lost. Entries
+        // only start their staleness clock, and the cache cleanup records any generated file it finds unrecorded,
+        // so the cost is at most 30 more days before that crop goes.
+        private static Dictionary<string, int> usagePending;
+
+        // Start a pass from the on-disk record: the cache cleanup may have pruned it since the last marks, and marks left over
+        // from a pass with no end point (texture crops) are not carried into this one.
+        internal static void BeginPass() => usagePending = null;
+
+        internal static void MarkUsed(string path)
+        {
+            if (usagePending == null) usagePending = LoadUsage();
+            usagePending[path] = CacheCleanup.Today;
+        }
+
+        // Write the marks collected so far and forget them; the next pass reloads, which also drops records the
+        // cache cleanup has since pruned.
+        internal static void FlushUsage()
+        {
+            if (usagePending != null) SaveUsage(usagePending);
+            usagePending = null;
         }
     }
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -75,14 +75,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 progress?.Overall("Applying replacements", .95f, false);
                 TemporaryMaterialSubstituter.Apply(buildRoot, state, register, selected, log.Add, animationContext, scan);
                 if (state.ReadableDropped.Count > 0)
-                    log.Add(null, "Kept pixels, Read/Write dropped: " + state.ReadableDropped.Count + " kept texture(s) with Read/Write on are uploaded as byte-identical build copies with it off, so the avatar holds no second copy of them in memory (" +
+                    log.Add(null, "Kept pixels, Read/Write dropped: " + OptimizationLog.Plural(state.ReadableDropped.Count, "kept texture with Read/Write on is uploaded as a byte-identical build copy", "kept textures with Read/Write on are uploaded as byte-identical build copies") + " with it off, so the avatar holds no second copy of them in memory (" +
                         string.Join(", ", state.ReadableDropped.Select(t => t.name).OrderBy(n => n, StringComparer.Ordinal).Take(10)) + (state.ReadableDropped.Count > 10 ? ", ..." : "") + ").");
                 log.Capture(scan, selected, state.Summary, state, optimizeTextures);
             }
             catch (OperationCanceledException)
             {
                 state.Cancelled = true;
-                log.Add(config, "Substitution aborted: Texture optimization cancelled; original texture assignments retained. Completed outputs remain cached.");
+                log.Add(config, OptimizationLog.SubstitutionAbortedPrefix + " Texture optimization cancelled; original texture assignments retained. Completed outputs remain cached.");
             }
             catch (Exception e) { log.Add(config, "Automatic optimization skipped: " + e.Message); }
             finally
@@ -156,7 +156,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             string recipe = null, id = null; // Read by the RetainedException handler.
                             try
                             {
-                                progress?.Stage("Fingerprinting texture");
+                                progress?.Stage("Identifying texture");
                                 recipe = FingerprintService.Recipe(group);
                                 id = FingerprintService.Id(group.Source);
                                 progress?.Stage("Checking cache");

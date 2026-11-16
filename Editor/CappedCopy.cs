@@ -17,9 +17,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static string Folder => AutomaticTextureOptimizer.CacheFolder + "/Capped";
         internal const string Marker = "ArclightCapped:";
 
-        internal static bool IsGenerated(string path, string marker) =>
-            !string.IsNullOrEmpty(path) && AssetImporter.GetAtPath(path) is TextureImporter importer &&
-            (importer.userData ?? "").StartsWith(marker, StringComparison.Ordinal);
+        internal static bool IsGenerated(string path, string marker) => GeneratedFiles.HasMarker<TextureImporter>(path, marker);
 
         // The capped/changed copy of a main-asset 2D texture, or null when it is not one, already fits and needs no
         // other change, or does not measure smaller. before/after are the measured bundle bytes.
@@ -43,9 +41,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 FingerprintService.FileHash(path) + "|" + TextureSafety.SettingsFingerprint(importer) + "|" + effectiveMax + "|" +
                 (mips ? "nomips" : "mips") + "|" + (narrowOpaque ? "narrow" : "keep") + "|" + (ChannelFormats.NarrowBc7 ? "bc7narrow" : "bc7keep") + "|" + marker));
             AutomaticTextureOptimizer.EnsureFolder(folder);
-            string safeName = new string(Path.GetFileNameWithoutExtension(path)
-                .Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_').Take(36).ToArray());
-            string output = OutputPath(folder, safeName, hash, Path.GetExtension(path), suffix);
+            // "<name>_<hash>_<suffix><ext>", as the audio passes name their copies.
+            string output = GeneratedFiles.OutputPath(folder, GeneratedFiles.SafeName(Path.GetFileNameWithoutExtension(path)), hash, "_" + suffix + Path.GetExtension(path));
             if (output == null) return null;
             string tag = marker + hash;
             if (File.Exists(LongPath.For(output)))
@@ -57,7 +54,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (cached.userData == tag + ":" + FingerprintService.FileHash(output) && cached.mipmapEnabled == expectedMips && reused &&
                     (effectiveMax <= 0 || reused.width <= effectiveMax && reused.height <= effectiveMax))
                 {
-                    AudioMonoConverter.MarkUsed(output);
+                    CacheUsage.MarkUsed(output);
                     return reused;
                 }
             }
@@ -120,7 +117,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             copy.SaveAndReimport();
             result = AssetDatabase.LoadAssetAtPath<Texture2D>(output);
             if (!result) { AssetDatabase.DeleteAsset(output); return null; }
-            AudioMonoConverter.MarkUsed(output);
+            CacheUsage.MarkUsed(output);
             return result;
         }
 
@@ -132,15 +129,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             importer.isReadable = readable;
             importer.SaveAndReimport();
             return AssetImporter.GetAtPath(path) as TextureImporter;
-        }
-
-        // Keeps the longest written name ("<name>_<hash>_<suffix><ext>.meta") within 259 characters, as the other passes do.
-        private static string OutputPath(string folder, string safeName, string signature, string extension, string suffix)
-        {
-            string tail = "_" + signature.Substring(0, 12) + "_" + suffix + extension;
-            int budget = 259 - Path.GetFullPath(folder + "/" + tail + ".meta").Length;
-            if (budget < 0) return null;
-            return folder + "/" + safeName.Substring(0, Math.Min(safeName.Length, budget)) + tail;
         }
     }
 }

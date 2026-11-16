@@ -28,12 +28,66 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static long Length(string path) => new FileInfo(For(path)).Length;
     }
 
+    // Names, markers and signatures shared by the generated build copies (audio, capped textures, crops, generated PNGs).
+    // Every string built here is part of a cache file's name, marker or SessionState key: changing one regenerates the cache.
+    internal static class GeneratedFiles
+    {
+        // The source name with anything but letters, digits, '-' and '_' replaced by '_', at most 36 characters.
+        internal static string SafeName(string name) =>
+            new string(name.Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_').Take(36).ToArray());
+
+        // folder/<safeName, shortened as needed>_<12 signature hex digits><tail>. Unity's own tools still fail on paths
+        // past MAX_PATH, so the longest file written (the copy's .meta) stays within 259 characters; a cache folder too
+        // deep to leave room returns null rather than throwing (a source left as it is beats stopping every later pass).
+        internal static string OutputPath(string folder, string safeName, string signature, string tail)
+        {
+            tail = "_" + signature.Substring(0, 12) + tail;
+            int budget = 259 - Path.GetFullPath(folder + "/" + tail + ".meta").Length;
+            if (budget < 0) return null;
+            return folder + "/" + safeName.Substring(0, Math.Min(safeName.Length, budget)) + tail;
+        }
+
+        // Whether path holds an importer of type T whose userData starts with marker (a copy Arclight wrote).
+        internal static bool HasMarker<T>(string path, string marker) where T : AssetImporter =>
+            !string.IsNullOrEmpty(path) && AssetImporter.GetAtPath(path) is T importer &&
+            (importer.userData ?? "").StartsWith(marker, StringComparison.Ordinal);
+
+        // The source's bytes, its raw .meta and extra hashed together: the signature that names and marks a copy. Memoized in
+        // SessionState (it survives Play Mode's domain reloads) under keyPrefix + version + Unity's dependency hash (content and
+        // importer) + the .meta's hash + keySuffix, so a build re-reads a big source only when it changes. Null when the .meta
+        // cannot be read; IO failures are not memoized.
+        internal static string SourceSignature(string keyPrefix, string path, string meta, string keySuffix = "", byte[] extra = null)
+        {
+            string key;
+            try { key = keyPrefix + FingerprintService.Version + "." + AssetDatabase.GetAssetDependencyHash(path) + "." + FingerprintService.FileHash(meta) + keySuffix; }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { return null; }
+            string cached = SessionState.GetString(key, "");
+            if (cached.Length > 0) return cached;
+            var source = File.ReadAllBytes(LongPath.For(path));
+            var metaBytes = File.ReadAllBytes(LongPath.For(meta));
+            string hash = extra == null ? FingerprintService.Hash(source, metaBytes) : FingerprintService.Hash(source, metaBytes, extra);
+            SessionState.SetString(key, hash);
+            return hash;
+        }
+    }
+
     internal static class FingerprintService
     {
         public const string Version = "png-reimport-v22-r8";
         public static string Hash(byte[] bytes)
         {
             using (var sha = SHA256.Create()) return Hex(sha.ComputeHash(bytes));
+        }
+        // The hash of the parts' concatenation (equal to Hash of the joined array), without copying large files into one array.
+        public static string Hash(params byte[][] parts) => Hex(Sha256(parts));
+        internal static byte[] Sha256(params byte[][] parts)
+        {
+            using (var sha = SHA256.Create())
+            {
+                foreach (var part in parts) sha.TransformBlock(part, 0, part.Length, null, 0);
+                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                return sha.Hash;
+            }
         }
         private static string Hex(byte[] bytes) => BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
         public static string FileHash(string path)

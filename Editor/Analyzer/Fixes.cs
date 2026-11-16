@@ -57,7 +57,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         var added = p.Names.Where(n => have.Add(n.Name)).ToList();
                         foreach (var (name, type) in added) controller.AddParameter(name, type);
                         EditorUtility.SetDirty(controller);
-                        return "Added " + added.Count + " parameter(s) to " + controller.name + ".";
+                        return "Added " + AvatarAnalyzer.N(added.Count, "parameter") + " to " + controller.name + ".";
                     });
                 case Layers l when finding.Target is AnimatorController controller && Writable(controller):
                     return ("Remove them", () =>
@@ -67,7 +67,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         for (int i = controller.layers.Length - 1; i > 0; i--)
                             if (l.Names.Contains(controller.layers[i].name)) { controller.RemoveLayer(i); removed++; }
                         EditorUtility.SetDirty(controller);
-                        return "Removed " + removed + " layer(s) from " + controller.name + ".";
+                        return "Removed " + AvatarAnalyzer.N(removed, "layer") + " from " + controller.name + ".";
                     });
                 // Scene fixes only: on a prefab asset picked from the Project window they would change the file with no backup.
                 case Scripts s when s.Objects.All(o => !o || !EditorUtility.IsPersistent(o)):
@@ -82,7 +82,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             int after = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(o);
                             removed += before - after; kept += after;
                         }
-                        return "Removed " + removed + " missing script(s)." + (kept > 0 ? " " + kept + " sit inside a prefab; open the prefab to remove them there." : "");
+                        return "Removed " + AvatarAnalyzer.N(removed, "missing script") + "." + (kept > 0 ? " " + kept + " sit inside a prefab; open the prefab to remove them there." : "");
                     });
                 case References r when r.Fields.All(f => !f.Component || !EditorUtility.IsPersistent(f.Component)):
                     return ("Clear them", () =>
@@ -100,7 +100,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                                 }
                                 serialized.ApplyModifiedProperties(); // Recorded for Undo.
                             }
-                        return "Cleared " + cleared + " missing reference(s). References to objects outside the avatar were left for you to point at the right object.";
+                        return "Cleared " + AvatarAnalyzer.N(cleared, "missing reference") + ". References to objects outside the avatar were left for you to point at the right object.";
                     });
                 case CapTextures c when c.Component:
                     return ("Set it to 1024 px", () =>
@@ -111,7 +111,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             property.enumValueIndex = Array.IndexOf(Enum.GetValues(typeof(TextureSizeCap)), TextureSizeCap.Size1024);
                             serialized.ApplyModifiedProperties(); // Recorded for Undo.
                         }
-                        return "Set Texture Size Cap to 1024 px. Build and look at the avatar close up; sources are unchanged.";
+                        return "Set Texture Size Cap to 1024 px (PC only). Build and look at the avatar close up.";
                     });
                 case ExpressionAdds e when finding.Target && Writable(finding.Target):
                     return ("Add them", () =>
@@ -134,7 +134,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             }
                             serialized.ApplyModifiedProperties(); // Recorded for Undo.
                         }
-                        return "Added " + added + " parameter(s) to " + finding.Target.name + ", not synced (they use no synced bits).";
+                        return "Added " + AvatarAnalyzer.N(added, "parameter") + " to " + finding.Target.name + ", not synced (they use no synced bits).";
                     });
                 // An import setting, not a file edit: nothing is backed up, and the action says how to turn it back off. Only how the
                 // texture loads changes (mip levels stream in), never its pixels.
@@ -154,7 +154,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             }
                         }
                         finally { AssetDatabase.StopAssetEditing(); }
-                        return "Turned on Streaming Mipmaps on " + changed.Count + " texture(s): " + string.Join(", ", changed) + ". To undo, untick it in their import settings.";
+                        return "Turned on Streaming Mipmaps on " + AvatarAnalyzer.N(changed.Count, "texture") + ": " + string.Join(", ", changed) + ". To undo, untick it in their import settings.";
                     });
                 // A scene edit only (never a prefab asset), undone with Edit > Undo: each object is turned on or off as the game
                 // starts it. In game the animator decides this anyway, so only what the scene shows changes.
@@ -169,7 +169,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             target.SetActive(on);
                             changed++;
                         }
-                        return "Turned " + changed + " object(s) on or off in the scene to match how they start in game.";
+                        return "Turned " + AvatarAnalyzer.N(changed, "object") + " on or off in the scene to match how they start in game.";
                     });
                 case Curves c when c.Bindings.Any(b => Editable(b.Clip)):
                     return ("Remove them", () =>
@@ -202,7 +202,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                             EditorUtility.SetDirty(clip);
                         }
                         int skipped = c.Bindings.Count(b => !Editable(b.Clip));
-                        return "Removed " + removed + " curve(s) from " + c.Bindings.Select(b => b.Clip).Where(Editable).Distinct().Count() + " clip(s)." +
+                        return "Removed " + AvatarAnalyzer.N(removed, "curve") + " from " + AvatarAnalyzer.N(c.Bindings.Select(b => b.Clip).Where(Editable).Distinct().Count(), "clip") + "." +
                             (kept > 0 ? " Kept " + kept + " so the animation's length (and so its timing) stays the same." : "") +
                             (skipped > 0 ? " " + skipped + " sit in clips inside a model, controller or package, which were left alone." : "");
                     });

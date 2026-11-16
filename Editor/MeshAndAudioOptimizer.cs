@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -32,8 +32,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             public int AudioUnmeasured;
             public bool Changed => Meshes + AudioClips + Compacted + MonoAudio + CompressedAudio + Stripped + FrozenShapes + MergedSkinned + MergedRigid > 0;
             public override string ToString() =>
-                $"merged {Meshes} duplicate mesh(es) and {AudioClips} duplicate audio clip(s), gave {Compacted} mesh(es) a 16-bit index buffer, " +
-                $"made {MonoAudio} identical-channel stereo clip(s) mono (+3 dB), re-encoded {CompressedAudio} PCM clip(s) as Vorbis, removed unused vertex channels from {Stripped} mesh(es), baked or removed {FrozenShapes} blend shape(s), merged {MergedSkinned} skinned mesh(es)" + (MergedRigid > 0 ? $" and {MergedRigid} static mesh(es)" : "") + $" into {MergedInto}";
+                string.Join("; ", new[]
+                {
+                    Meshes > 0 ? "merged " + OptimizationLog.Plural(Meshes, "duplicate mesh", "duplicate meshes") : null,
+                    AudioClips > 0 ? "merged " + OptimizationLog.Plural(AudioClips, "duplicate audio clip") : null,
+                    Compacted > 0 ? "gave " + OptimizationLog.Plural(Compacted, "mesh", "meshes") + " a smaller index format (16-bit)" : null,
+                    MonoAudio > 0 ? "made " + OptimizationLog.Plural(MonoAudio, "stereo clip") + " mono" : null,
+                    CompressedAudio > 0 ? "compressed " + OptimizationLog.Plural(CompressedAudio, "audio clip") : null,
+                    Stripped > 0 ? "removed unused vertex data from " + OptimizationLog.Plural(Stripped, "mesh", "meshes") : null,
+                    FrozenShapes > 0 ? "baked or removed " + OptimizationLog.Plural(FrozenShapes, "blend shape") : null,
+                    MergedSkinned + MergedRigid > 0 ? "merged " + OptimizationLog.Plural(MergedSkinned, "skinned mesh", "skinned meshes") +
+                        (MergedRigid > 0 ? " and " + OptimizationLog.Plural(MergedRigid, "static mesh", "static meshes") : "") + " into " + MergedInto : null,
+                }.Where(part => part != null));
         }
 
         // monoAudio: convert qualifying identical-channel stereo clips. Callers pass false when animation can change

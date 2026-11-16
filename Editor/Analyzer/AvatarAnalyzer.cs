@@ -209,7 +209,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Detail = "Each skinned mesh is drawn on its own. Arclight merges those that are provably drawn the same way; these stayed separate:\n" +
                         string.Join("\n", reasons.Take(8).Select(p => "• " + p.Key + ": " + string.Join(", ", p.Value.Distinct().Take(6)) + (p.Value.Distinct().Count() > 6 ? ", ..." : ""))) +
                         (reasons.Count > 8 ? "\n• and " + (reasons.Count - 8) + " more reasons" : ""),
-                    Fix = "Where a reason names a setting (a probe anchor, a renderer setting, a vertex layout), making it the same as on the other meshes lets them merge. Leave the rest as they are.",
+                    Fix = "Where a reason names a setting (lighting point, renderer settings, mesh data), making it the same as on the other meshes lets them merge. Leave the rest as they are.",
                     Identity = string.Join("\n", reasons.Select(p => p.Key + ": " + string.Join(",", p.Value.Distinct().OrderBy(n => n, StringComparer.Ordinal))))
                 });
             }
@@ -314,7 +314,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             var runtime = animator ? animator.runtimeAnimatorController : null;
             var controller = runtime as AnimatorController ?? (runtime as AnimatorOverrideController)?.runtimeAnimatorController as AnimatorController;
             if (!controller || avatar.Playables.Any(p => p.Controller == controller)) return;
-            var layers = controller.layers.Where(l => States(l.stateMachine).Any()).Select(l => l.name).ToList();
+            var layers = controller.layers.Where(l => ControllerWalk.States(l.stateMachine).Any()).Select(l => l.name).ToList();
             if (layers.Count == 0) return;
             if (avatar.Root.GetComponentsInChildren<Component>(true).Any(c => c && (c.GetType().Name.Contains("VRCFury") ||
                     (c.GetType().Namespace ?? "").StartsWith("VF.", StringComparison.Ordinal) ||
@@ -372,7 +372,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             {
                 var layer = controller.layers[index];
                 var machine = layer.syncedLayerIndex >= 0 && layer.syncedLayerIndex < controller.layers.Length ? controller.layers[layer.syncedLayerIndex].stateMachine : layer.stateMachine;
-                foreach (var (sm, state) in States(machine))
+                foreach (var (sm, state) in ControllerWalk.States(machine))
                 {
                     string where = layer.name;
                     var motion = layer.syncedLayerIndex >= 0 ? layer.GetOverrideMotion(state) : state.motion;
@@ -385,7 +385,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     if (state.mirrorParameterActive) Read(state.mirrorParameter, "state", AnimatorControllerParameterType.Bool, where);
                 }
                 if (layer.syncedLayerIndex >= 0) continue;
-                foreach (var sm in Machines(machine))
+                foreach (var sm in ControllerWalk.Machines(machine))
                 {
                     Transitions(sm.anyStateTransitions, layer.name);
                     Transitions(sm.entryTransitions, layer.name);
@@ -455,17 +455,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             : mode == AnimatorConditionMode.Equals || mode == AnimatorConditionMode.NotEqual ? AnimatorControllerParameterType.Int
             : AnimatorControllerParameterType.Float;
 
-        private static IEnumerable<AnimatorStateMachine> Machines(AnimatorStateMachine machine)
-        {
-            if (!machine) yield break;
-            yield return machine;
-            foreach (var child in machine.stateMachines)
-                foreach (var sub in Machines(child.stateMachine)) yield return sub;
-        }
-
-        private static IEnumerable<(AnimatorStateMachine, AnimatorState)> States(AnimatorStateMachine machine) =>
-            Machines(machine).SelectMany(sm => sm.states.Where(s => s.state).Select(s => (sm, s.state)));
-
         // Checks 2 and 3: expression parameters, the menu and the animators agreeing on names and types.
         private static void ExpressionsAndMenu(Avatar avatar, List<Finding> findings, bool built, ICollection<string> laterNames)
         {
@@ -506,7 +495,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     Title = N(badValues.Count, "menu control", "sets", "set") + " a value its parameter can't use",
                     Detail = "Ints hold whole numbers from 0 to 255 and Floats -1 to 1, so these controls can't set what they ask for:\n" +
                         string.Join("\n", badValues.Take(8).Select(c => "• " + c.Path + " (\"" + c.Parameter + "\" = " + c.Value + ")")) + (badValues.Count > 8 ? "\n• and " + (badValues.Count - 8) + " more" : ""),
-                    Fix = "Give each control a value its parameter can hold.",
+                    Fix = "In the menu, keep each value in range: 0–255 for Int, -1 to 1 for Float.",
                     Identity = string.Join("\n", badValues.Select(c => c.Path + " " + c.Parameter + " " + c.Value))
                 });
 
@@ -578,8 +567,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                         Severity = Severity.WorthChecking,
                         Key = "type|" + playable + "|" + expression.Name, Playable = playable,
                         Title = "\"" + expression.Name + "\" is a " + expression.Type + " in Expression Parameters but " + (type == AnimatorControllerParameterType.Int ? "an " : "a ") + type + " in " + playable,
-                        Detail = "VRChat converts the value on the way in, and " + Conversion(expression.Type, type) + " That's fine if it's intended.",
-                        Fix = "If it isn't intended, give both the same type.",
+                        Detail = "VRChat converts the value on the way in, and " + Conversion(expression.Type) + " That's fine if it's intended.",
+                        Fix = "If not intended, use the same type in Expression Parameters and the " + playable + " controller.",
                         Target = avatar.Playables.First(p => p.Name == playable).Controller
                     });
             }
@@ -590,7 +579,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             from == AnimatorControllerParameterType.Float && (to == AnimatorControllerParameterType.Int || to == AnimatorControllerParameterType.Bool) ||
             from == AnimatorControllerParameterType.Int && to == AnimatorControllerParameterType.Bool;
 
-        private static string Conversion(AnimatorControllerParameterType from, AnimatorControllerParameterType to) =>
+        private static string Conversion(AnimatorControllerParameterType from) =>
             from == AnimatorControllerParameterType.Float ? "fractions are lost: 0.5 doesn't arrive as 0.5." : "every value above 0 becomes true, so 2 and 1 look the same.";
     }
 }

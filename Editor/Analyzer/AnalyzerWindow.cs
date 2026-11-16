@@ -146,7 +146,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 EditorGUILayout.LabelField("Backups in " + Fixes.Folder + ": " + (Fixes.BackupBytes() / 1024f / 1024f).ToString("0.0") + " MB", EditorStyles.miniLabel);
                 if (GUILayout.Button("Delete backups older than 30 days", GUILayout.Width(220)))
                 {
-                    EditorUtility.DisplayDialog("Arclight Analyzer", "Deleted " + Fixes.DeleteBackups(30) + " backup folder(s).", "OK");
+                    EditorUtility.DisplayDialog("Arclight Analyzer", "Deleted " + AvatarAnalyzer.N(Fixes.DeleteBackups(30), "backup folder") + ".", "OK");
                     history = null;
                 }
             }
@@ -164,7 +164,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     EditorGUILayout.LabelField((a ? a.name : "(removed)") + (a && !a.activeInHierarchy ? " (inactive)" : ""), EditorStyles.boldLabel, GUILayout.Width(200));
                     EditorGUILayout.LabelField((shown.Count == 0 ? "No problems" :
                         string.Join(", ", Groups.Keys.Where(s => shown.Any(f => f.Severity == s)).Select(s => shown.Count(f => f.Severity == s) + " " + Groups[s].Name.ToLowerInvariant()))) +
-                        " (" + bits + " bits)" + (error != null ? "; checked as it is only (the uploaded version failed to build)" : ""));
+                        " (" + bits + " synced bits)" + (error != null ? "; checked as it is only (the uploaded version failed to build)" : ""));
                     using (new EditorGUI.DisabledScope(!a))
                         if (GUILayout.Button("View", GUILayout.Width(50)))
                         {

@@ -14,8 +14,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     // instead of the pose it would have reached (an accepted difference). A PhysBone qualifies only when:
     //  - it reports no parameter, is enabled, is the only PhysBone on its GameObject, is not animated itself, and does
     //    not sit inside the object (where hiding the object already stops it);
-    //  - every transform it moves (below its root) carries no component but it, is not animated except for its own
-    //    active toggle, and is referenced only by renderers inside the object and by the PhysBone;
+    //  - every transform it moves (below its root) carries no component but it and is referenced only by renderers
+    //    inside the object and by the PhysBone. A transform animation on a bone is allowed: what is drawn is the
+    //    renderer's business, and while the object is hidden the animation cannot show anything either way;
     //  - the object (the lowest toggled ancestor of all those renderers) is toggled only by controller clips played from
     //    an object above the PhysBone, by keys of 0 or 1 with flat or stepped tangents; both
     //    paths must name exactly one object.
@@ -43,14 +44,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             if (follow.Count == 0) return result;
 
+            var paths = new PathCache();
             rewriter.Copy((owner, binding) =>
             {
                 bool active = binding.type == typeof(GameObject) && binding.propertyName == "m_IsActive";
                 bool enabled = typeof(Renderer).IsAssignableFrom(binding.type) && binding.propertyName == "m_Enabled";
                 if (!active && !enabled) return null;
-                var targets = AvatarAnalysis.Resolve(owner, binding.path).ToList();
-                if (targets.Count != 1) return null;
-                Object source = active ? (Object)targets[0].gameObject : targets[0].GetComponent(binding.type);
+                var target = paths.Single(owner, binding.path);
+                if (target == null) return null;
+                Object source = active ? (Object)target.gameObject : target.GetComponent(binding.type);
                 if (!source || !follow.TryGetValue(source, out var physBones)) return null;
                 return physBones.Select(p => EditorCurveBinding.FloatCurve(AnimationUtility.CalculateTransformPath(p.transform, owner), p.GetType(), "m_Enabled"));
             });
@@ -77,8 +79,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (t == start && !UnusedObjectRemover.RootMoves(physBone)) continue;
                 if (t.GetComponents<Component>().Any(c => c && !(c is Transform) && c != physBone)) return null;
                 // A bone's own active toggle (outfit bones merged into the armature keep the outfit's toggle) moves
-                // nothing and draws nothing by itself, so only its observers matter.
-                if (analysis.IsAnimated(t) || analysis.IsAnimated(t.gameObject, p => p != "m_IsActive")) return null;
+                // nothing and draws nothing by itself, so only its observers matter. A transform animation on the bone
+                // is harmless for the same reason: what is drawn is the renderer's business, and the chain restarts
+                // from rest when it is shown again (the accepted difference). An object curve is not harmless: a mesh
+                // or material swap would change what is drawn without the toggle reaching it.
+                if (analysis.IsAnimated(t.gameObject, p => p != "m_IsActive")) return null;
                 foreach (var c in analysis.ReferencesTo(t).Concat(analysis.ReferencesTo(t.gameObject).Where(c => c.GetType().Name != "VRCAvatarDescriptor"))) // Network IDs only name it.
                 {
                     if (c == physBone) continue;
@@ -116,9 +121,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         // the same point, as a test checks).
         private static bool Copyable(IEnumerable<AvatarAnalysis.Binding> bindings, Component physBone) =>
             !bindings.Any(b => b.Legacy || b.FloatCurve == null || !physBone.transform.IsChildOf(b.Owner) ||
-                AvatarAnalysis.Resolve(b.Owner, b.Curve.path).Count() != 1 ||
-                AvatarAnalysis.Resolve(b.Owner, AnimationUtility.CalculateTransformPath(physBone.transform, b.Owner)).Count() != 1 ||
+                AvatarAnalysis.ResolveSingle(b.Owner, b.Curve.path) == null ||
+                AvatarAnalysis.ResolveSingle(b.Owner, AnimationUtility.CalculateTransformPath(physBone.transform, b.Owner)) == null ||
                 b.FloatCurve.keys.Length == 0 || b.FloatCurve.keys.Any(k => k.value != 0 && k.value != 1 ||
-                    !AnimatorLayerMerger.Flat(k.inTangent) || !AnimatorLayerMerger.Flat(k.outTangent)));
+                    !CurveFacts.Flat(k.inTangent) || !CurveFacts.Flat(k.outTangent)));
     }
 }

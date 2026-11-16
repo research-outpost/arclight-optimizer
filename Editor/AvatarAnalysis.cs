@@ -161,13 +161,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static AvatarAnalysis Build(GameObject root, IEnumerable<(Transform Owner, AnimationClip Clip)> clips)
         {
             var analysis = new AvatarAnalysis(root);
-            foreach (var (owner, clip) in clips)
-            {
-                if (!clip) continue;
-                foreach (var curve in AnimationUtility.GetCurveBindings(clip)) analysis.Add(owner, curve, null, clip, AnimationUtility.GetEditorCurve(clip, curve));
-                foreach (var curve in AnimationUtility.GetObjectReferenceCurveBindings(clip))
-                    analysis.Add(owner, curve, AnimationUtility.GetObjectReferenceCurve(clip, curve)?.Select(k => k.value).ToArray() ?? Array.Empty<Object>(), clip);
-            }
+            foreach (var (owner, clip) in clips) analysis.AddClip(owner, clip, false);
             analysis.Finish();
             return analysis;
         }
@@ -177,18 +171,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             try
             {
                 foreach (var animation in Root.GetComponentsInChildren<Animation>(true))
-                    foreach (var clip in AnimationUtility.GetAnimationClips(animation.gameObject))
-                    {
-                        if (!clip) continue;
-                        foreach (var curve in AnimationUtility.GetCurveBindings(clip)) Add(animation.transform, curve, null, clip, AnimationUtility.GetEditorCurve(clip, curve), true);
-                        foreach (var curve in AnimationUtility.GetObjectReferenceCurveBindings(clip))
-                            Add(animation.transform, curve, AnimationUtility.GetObjectReferenceCurve(clip, curve)?.Select(k => k.value).ToArray() ?? Array.Empty<Object>(), clip, null, true);
-                    }
+                    foreach (var clip in AnimationUtility.GetAnimationClips(animation.gameObject)) AddClip(animation.transform, clip, true);
             }
             catch (Exception e) { Debug.LogException(e); Complete = false; }
             ScanReferences();
             ScanImplicit();
             ScanMotion();
+        }
+
+        // An AnimationClip asset's float and object curves, with paths starting at owner; legacy: played by an Animation component.
+        private void AddClip(Transform owner, AnimationClip clip, bool legacy)
+        {
+            if (!clip) return;
+            foreach (var curve in AnimationUtility.GetCurveBindings(clip)) Add(owner, curve, null, clip, AnimationUtility.GetEditorCurve(clip, curve), legacy);
+            foreach (var curve in AnimationUtility.GetObjectReferenceCurveBindings(clip))
+                Add(owner, curve, AnimationUtility.GetObjectReferenceCurve(clip, curve)?.Select(k => k.value).ToArray() ?? Array.Empty<Object>(), clip, null, legacy);
         }
 
         private void Add(Transform owner, EditorCurveBinding curve, Object[] values, object clip, AnimationCurve floatCurve = null, bool legacy = false, bool summed = false)
@@ -220,6 +217,19 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 current = current.SelectMany(t => t.Cast<Transform>().Where(child => child.name == name)).ToArray();
             }
             return current;
+        }
+
+        // The one transform the path names from owner, or null when it names none or several (same-named siblings; Unity's
+        // animation reaches only one of those).
+        internal static Transform ResolveSingle(Transform owner, string path)
+        {
+            Transform only = null;
+            foreach (var transform in Resolve(owner, path))
+            {
+                if (only != null) return null;
+                only = transform;
+            }
+            return only;
         }
 
         // Resolve memoized for this analysis. The stored list is shared, not copied: callers enumerate it and must not mutate it.
@@ -462,6 +472,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var chain = new List<Transform>();
             for (; t; t = t.parent) chain.Add(t);
             return chain;
+        }
+    }
+
+    // Resolve memoized for one walk over clip bindings while the hierarchy does not change: one AnimationRewriter call
+    // (which edits clips only) or one scan. Never kept across a pass that renames, reparents or destroys objects. The stored
+    // lists are shared: callers enumerate them and must not mutate them.
+    internal sealed class PathCache
+    {
+        private readonly Dictionary<(Transform Owner, string Path), List<Transform>> lists = new Dictionary<(Transform Owner, string Path), List<Transform>>();
+
+        internal List<Transform> Resolve(Transform owner, string path)
+        {
+            if (!lists.TryGetValue((owner, path), out var list)) lists[(owner, path)] = list = AvatarAnalysis.Resolve(owner, path).ToList();
+            return list;
+        }
+
+        // The one transform the path names, or null when it names none or several.
+        internal Transform Single(Transform owner, string path)
+        {
+            var list = Resolve(owner, path);
+            return list.Count == 1 ? list[0] : null;
         }
     }
 }

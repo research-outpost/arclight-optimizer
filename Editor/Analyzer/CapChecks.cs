@@ -33,10 +33,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                 Severity = Severity.TidyUp, Key = "texcap|", Target = large[0].Texture,
                 Title = N(large.Count, "texture") + " " + (large.Count == 1 ? "is" : "are") + " " + CapCandidate + " px or larger",
                 Detail = N(large.Count, "texture") + " at " + CapCandidate + " px or more hold most of this avatar's texture bytes. " +
-                    "The Texture Size Cap setting writes a build copy of each at " + CapTarget + " px — a quarter of the pixels, so roughly three quarters " +
-                    "of their compressed size — and uses it only when it measures smaller. They look softer when displayed large; the source files are never changed. " +
+                    "The Texture Size Cap setting writes a build copy of each at " + CapTarget + " px, about a quarter of the size (less for bigger ones), " +
+                    "used only if smaller. They look softer when displayed large. " +
                     "Source files: " + Bytes(bytes) + ".\n" + Bullets(large.Select(t => t.Texture.name + " (" + t.Size + " px, " + Bytes(t.Bytes) + ")")),
-                Fix = "Set Texture Size Cap to " + CapTarget + " px on the Arclight Optimizer component. Check the avatar close up afterwards; Exclude keeps any single object's textures out of it.",
+                Fix = "Set Texture Size Cap to " + CapTarget + " px (PC only) on the Arclight Optimizer component. Check the avatar close up afterwards; Exclude keeps any single object's textures out of it.",
                 Identity = string.Join("\n", large.Select(t => t.Texture.name + "|" + t.Size)),
                 Data = new Fixes.CapTextures { Component = component }
             });

@@ -66,9 +66,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             foreach (var controller in all.OfType<AnimatorController>())
                 foreach (var layer in controller.layers)
                     // A synced layer keeps its own behaviours per state of the layer it copies.
-                    foreach (var behaviour in Machines(layer.stateMachine).SelectMany(m => m.behaviours.Concat(m.states.SelectMany(s => s.state.behaviours)))
+                    foreach (var behaviour in ControllerWalk.Machines(layer.stateMachine).SelectMany(m => m.behaviours.Concat(m.states.SelectMany(s => s.state.behaviours)))
                         .Concat(layer.syncedLayerIndex >= 0 && layer.syncedLayerIndex < controller.layers.Length
-                            ? Machines(controller.layers[layer.syncedLayerIndex].stateMachine).SelectMany(m => m.states).SelectMany(s => layer.GetOverrideBehaviours(s.state) ?? new StateMachineBehaviour[0])
+                            ? ControllerWalk.Machines(controller.layers[layer.syncedLayerIndex].stateMachine).SelectMany(m => m.states).SelectMany(s => layer.GetOverrideBehaviours(s.state) ?? new StateMachineBehaviour[0])
                             : Enumerable.Empty<StateMachineBehaviour>()))
                     {
                         if (!behaviour || behaviour.GetType().Name != "VRCAnimatorLayerControl") continue;
@@ -81,9 +81,6 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     }
             return named;
         }
-
-        private static IEnumerable<AnimatorStateMachine> Machines(AnimatorStateMachine machine) =>
-            machine ? new[] { machine }.Concat(machine.stateMachines.SelectMany(c => Machines(c.stateMachine))) : Enumerable.Empty<AnimatorStateMachine>();
 
         // The layer's Direct tree when the layer qualifies (see above), else null.
         // masked: whether the layer may have an avatar mask.
@@ -114,7 +111,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             motion is AnimationClip clip ? new[] { clip } : motion is BlendTree tree ? tree.children.SelectMany(c => Clips(c.motion)) : Enumerable.Empty<AnimationClip>();
 
         private static IEnumerable<AnimationClip> Clips(AnimatorStateMachine machine) =>
-            Machines(machine).SelectMany(m => m.states).SelectMany(s => Clips(s.state.motion));
+            ControllerWalk.Machines(machine).SelectMany(m => m.states).SelectMany(s => Clips(s.state.motion));
 
         // Every curve holds one value. Object curves (material swaps) are allowed: the trees never bind the same property, so
         // the child that sets an object value is the same before and after.
@@ -128,9 +125,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             foreach (var binding in AnimationUtility.GetCurveBindings(clip))
             {
-                var keys = AnimationUtility.GetEditorCurve(clip, binding)?.keys;
-                if (keys == null || keys.Length == 0) return false;
-                if (keys.Length > 1 && keys.Any(k => !k.value.Equals(keys[0].value) || !AnimatorLayerMerger.Flat(k.inTangent) || !AnimatorLayerMerger.Flat(k.outTangent))) return false;
+                if (!CurveFacts.HoldsOneValue(AnimationUtility.GetEditorCurve(clip, binding)?.keys)) return false;
             }
             return true;
         }

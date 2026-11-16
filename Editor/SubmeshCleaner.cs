@@ -63,7 +63,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 }
                 if (swapped.Contains(-1)) continue;
                 if (swapped.Count > 0 && (rewriter == null || bindings.Any(b => b.Legacy || b.Owner != root.transform) ||
-                    AvatarAnalysis.Resolve(root.transform, AnimationUtility.CalculateTransformPath(renderer.transform, root.transform)).Count() != 1)) continue;
+                    AvatarAnalysis.ResolveSingle(root.transform, AnimationUtility.CalculateTransformPath(renderer.transform, root.transform)) == null)) continue;
 
                 // Plan: each old slot maps to a new slot, or -1 when removed.
                 var signatures = materials.Select(m => m ? DuplicateMaterialMerger.Signature(m) : null).ToArray();
@@ -166,12 +166,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             finally
             {
+            var paths = new PathCache();
             if (renumber.Count > 0)
                 rewriter.Rewrite((owner, binding) =>
                 {
                     if (owner != root.transform) return null;
-                    var found = AvatarAnalysis.Resolve(owner, binding.path).ToList();
-                    if (found.Count != 1 || !renumber.TryGetValue(found[0].gameObject, out var plan) || binding.type != plan.Type) return null;
+                    var found = paths.Single(owner, binding.path);
+                    if (found == null || !renumber.TryGetValue(found.gameObject, out var plan) || binding.type != plan.Type) return null;
                     const string prefix = "m_Materials.Array.data[";
                     if (!binding.propertyName.StartsWith(prefix, StringComparison.Ordinal) ||
                         !int.TryParse(binding.propertyName.Substring(prefix.Length).TrimEnd(']'), out int old) || old >= plan.Map.Length) return null;

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -16,7 +16,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
     internal sealed class OptimizationLog
     {
         private const int MaxNamePartLength = 48;
-        private const string SkippedPrefix = "Skipped; original texture retained for all its assignments.";
+        // Message prefixes this log parses (Add, the report); every writer uses these constants so the text cannot drift.
+        internal const string SkippedPrefix = "Skipped; original texture retained for all its assignments.";
+        internal const string DuplicateKeptPrefix = "Duplicate kept:";
+        internal const string SubstitutionAbortedPrefix = "Substitution aborted:";
 
         private readonly List<string> notes = new List<string>();
         private readonly HashSet<string> seenNotes = new HashSet<string>(StringComparer.Ordinal);
@@ -41,7 +44,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             if (related is Texture texture && !string.IsNullOrEmpty(message))
             {
-                if (message.StartsWith("Duplicate kept:", StringComparison.Ordinal))
+                if (message.StartsWith(DuplicateKeptPrefix, StringComparison.Ordinal))
                     duplicateRejections[texture] = ReasonText(message);
                 else
                 {
@@ -50,7 +53,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     issues.Add(ReasonText(message));
                 }
             }
-            if (message != null && message.StartsWith("Substitution aborted:", StringComparison.Ordinal))
+            if (message != null && message.StartsWith(SubstitutionAbortedPrefix, StringComparison.Ordinal))
                 substitutionFailure = ReasonText(message);
 
             string identity = related ? Compact(related.name) : "Build";
@@ -196,7 +199,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             textureResults.Sort((a, b) => string.CompareOrdinal(a.SourcePath, b.SourcePath));
             if (replaced + merged > 0)
-                savings.Add(("Textures", textureBytes, Count(replaced, "replaced") + Count(merged, "duplicate(s) merged"), textureUnmeasured));
+                savings.Add(("Textures", textureBytes, Count(replaced, "replaced") + Count(merged, "duplicate merged", "duplicates merged"), textureUnmeasured));
         }
         internal string Format(GameObject root, SubstitutionState state)
         {
@@ -221,8 +224,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             output.Append("Applied: ").Append(Number(state?.AppliedTextures ?? 0)).AppendLine(" textures applied");
             output.Append("Duplicates merged: ").AppendLine(Number(state?.MergedDuplicates.Count ?? 0));
             if (captured)
-                output.Append("Scan: ").Append(Number(scannedGroups)).Append(" unique textures; ")
-                    .Append(Number(eligibleGroups)).AppendLine(" eligible");
+                output.Append("Scan: ").Append(Number(scannedGroups)).Append(" textures, ")
+                    .Append(Number(eligibleGroups)).AppendLine(" optimizable");
 
             AppendSavings(output);
             AppendKeptByReason(output, summary);
@@ -340,7 +343,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // Animator cleanup saves structure, not measurable bytes: it is listed as counts.
                 if (entry.Category == AnimatorCategory) { output.Append("  ").Append(entry.Category).Append(": ").AppendLine(entry.Detail.TrimEnd(',', ' ')); continue; }
                 output.Append("  ").Append(entry.Category).Append(": ").Append(Size(entry.Bytes)).Append(" (").Append(entry.Detail.TrimEnd(',', ' ')).Append(')');
-                if (entry.Unmeasured > 0) output.Append("; ").Append(Number(entry.Unmeasured)).Append(" item(s) could not be estimated");
+                if (entry.Unmeasured > 0) output.Append("; ").Append(Plural(entry.Unmeasured, "item")).Append(" could not be estimated");
                 output.AppendLine();
             }
             output.AppendLine("  Textures and audio are estimated compressed download sizes for this platform; meshes are uncompressed mesh data.");
@@ -348,6 +351,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         internal static string Count(int count, string what) => count > 0 ? Number(count) + " " + what + ", " : "";
+        // Count with a real plural: Count(3, "layer folded", "layers folded") gives "3 layers folded, ".
+        internal static string Count(int count, string one, string many) => count > 0 ? Plural(count, one, many) + ", " : "";
+        // "1 texture" / "3 textures"; pass the plural when adding "s" is wrong ("mesh", "meshes").
+        internal static string Plural(long count, string one, string many = null) => Number(count) + " " + (count == 1 ? one : many ?? one + "s");
+        // The first `shown` names joined by ", ", with ", ..." when there are more.
+        internal static string FirstNames(IReadOnlyCollection<string> names, int shown) =>
+            string.Join(", ", names.Take(shown)) + (names.Count > shown ? ", ..." : "");
 
         // The savings category for animator structure (layers, parameters, drivers, menu icons): counts with no byte figure.
         internal const string AnimatorCategory = "Animator";
@@ -371,11 +381,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     long source = measured.Sum(r => r.SourceBytes);
                     long generated = measured.Sum(r => r.ReplacementBytes);
                     output.Append(Size(source - generated)).Append(" across ")
-                        .Append(Number(measured.Length)).Append(" measured replacement(s) ")
+                        .Append(Plural(measured.Length, "measured replacement")).Append(" ")
                         .Append('(').Append(Size(source)).Append(" source; ")
                         .Append(Size(generated)).AppendLine(" generated).");
                     if (measured.Length != replacements.Count)
-                        output.Append("  Sizes unavailable for ").Append(Number(replacements.Count - measured.Length)).AppendLine(" replacement(s).");
+                        output.Append("  Sizes unavailable for ").Append(Plural(replacements.Count - measured.Length, "replacement")).AppendLine(".");
                 }
             }
             output.AppendLine("  Encoded PNG file size only; not VRAM use or platform download size. Savings are available from selected replacements and do not imply every assignment was applied.");

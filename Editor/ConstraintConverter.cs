@@ -72,10 +72,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             result.Converted = converted.Count;
             result.Kept.AddRange(hosts.Where(h => h.Component).Select(h => h.Component.name + " (" + h.Type.Name + ")"));
             if (converted.Count == 0) return result;
+            var paths = new PathCache();
             rewriter.Rewrite((owner, binding) =>
             {
                 if (binding.isPPtrCurve || binding.type == null || !typeof(IConstraint).IsAssignableFrom(binding.type)) return null;
-                foreach (var target in AvatarAnalysis.Resolve(owner, binding.path))
+                foreach (var target in paths.Resolve(owner, binding.path))
                     if (converted.Contains((target.gameObject, binding.type)) && map.TryGetValue((target.gameObject, binding.type, binding.propertyName), out var to))
                     {
                         result.Curves++;

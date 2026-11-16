@@ -101,7 +101,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 // identical icons would ship as two uploads again.
                 foreach (var pair in resized)
                     if (!keeper.ContainsKey(pair.Key)) keeper[pair.Key] = pair.Value;
-                AudioMonoConverter.FlushUsage(); // One save for the whole pass, as the mono pass does.
+                CacheUsage.FlushUsage(); // One save for the whole pass, as the mono pass does.
             }
             if (keeper.Count == 0) return result;
 

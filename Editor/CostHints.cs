@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEditor;
@@ -44,8 +44,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var textures = TexturesOf(material).ToList();
                 // Arclight clears these textures (StaleTextureCleaner), so usually only the pink warning is left.
-                hints.Add("Material " + material.name + " has no shader installed, so it renders pink in game" + (textures.Count == 0 ? "" : "; its " + textures.Count +
-                    " texture(s) still take " + EditorUtility.FormatBytes(textures.Sum(Bytes))) + ". Install its shader or remove the material.");
+                hints.Add("Material " + material.name + " has no shader installed, so it renders pink in game" + (textures.Count == 0 ? "" : "; its " + OptimizationLog.Plural(textures.Count, "texture still takes", "textures still take") +
+                    " " + EditorUtility.FormatBytes(textures.Sum(Bytes))) + ". Install its shader or remove the material.");
             }
 
             return hints;

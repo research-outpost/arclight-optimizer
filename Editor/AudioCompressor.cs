@@ -34,13 +34,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (copy) result.Add(clip, copy);
                 }
             }
-            finally { AudioMonoConverter.FlushUsage(); } // One save for the whole pass, as the mono pass does.
+            finally { CacheUsage.FlushUsage(); } // One save for the whole pass, as the mono pass does.
             return result;
         }
 
-        internal static bool IsGenerated(string path) =>
-            !string.IsNullOrEmpty(path) && AssetImporter.GetAtPath(path) is AudioImporter importer &&
-            (importer.userData ?? "").StartsWith(Marker, StringComparison.Ordinal);
+        internal static bool IsGenerated(string path) => GeneratedFiles.HasMarker<AudioImporter>(path, Marker);
 
         // A cached or new Vorbis copy of an imported PCM clip, or null when the clip is not a candidate or the copy
         // does not measure smaller than its source.
@@ -60,12 +58,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string meta = path + ".meta";
             if (!File.Exists(LongPath.For(path)) || !File.Exists(LongPath.For(meta))) return null;
             float q = Mathf.Clamp01(quality);
-            string hash = SourceSignature(path, meta, q);
+            // Source bytes, its .meta and the quality, memoized as the mono pass does.
+            string hash = GeneratedFiles.SourceSignature("Arclight.Optimizer.VorbisSourceSignature.", path, meta,
+                "." + q.ToString("R"), System.Text.Encoding.UTF8.GetBytes(q.ToString("R")));
             if (hash == null) return null;
             AutomaticTextureOptimizer.EnsureFolder(Folder);
-            string safeName = new string(Path.GetFileNameWithoutExtension(path)
-                .Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_').Take(36).ToArray());
-            string output = OutputPath(Folder, safeName, hash, Path.GetExtension(path));
+            // "<name>_<hash>_vorbis<ext>", as the mono pass names its copies.
+            string output = GeneratedFiles.OutputPath(Folder, GeneratedFiles.SafeName(Path.GetFileNameWithoutExtension(path)), hash, "_vorbis" + Path.GetExtension(path));
             if (output == null) return null;
             string marker = Marker + hash;
 
@@ -82,7 +81,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     cached.defaultSampleSettings.Equals(expected) && reused &&
                     reused.channels == clip.channels && reused.frequency == clip.frequency && reused.samples == clip.samples)
                 {
-                    AudioMonoConverter.MarkUsed(output);
+                    CacheUsage.MarkUsed(output);
                     return reused;
                 }
             }
@@ -117,38 +116,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             importer.SaveAndReimport();
             result = AssetDatabase.LoadAssetAtPath<AudioClip>(output);
             if (!result) { AssetDatabase.DeleteAsset(output); return null; }
-            AudioMonoConverter.MarkUsed(output);
+            CacheUsage.MarkUsed(output);
             return result;
-        }
-
-        // Source bytes, its .meta and the quality, memoized in SessionState by Unity's dependency hash (content and
-        // importer) plus the .meta hash, as the mono pass does. A build only re-reads a big clip when one changes.
-        private static string SourceSignature(string path, string meta, float quality)
-        {
-            string key;
-            try
-            {
-                key = "Arclight.Optimizer.VorbisSourceSignature." + FingerprintService.Version + "." +
-                    AssetDatabase.GetAssetDependencyHash(path) + "." + FingerprintService.FileHash(meta) + "." + quality.ToString("R");
-            }
-            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { return null; }
-            string cached = SessionState.GetString(key, "");
-            if (cached.Length > 0) return cached;
-            string hash = FingerprintService.Hash(File.ReadAllBytes(LongPath.For(path))
-                .Concat(File.ReadAllBytes(LongPath.For(meta)))
-                .Concat(System.Text.Encoding.UTF8.GetBytes(quality.ToString("R"))).ToArray());
-            SessionState.SetString(key, hash);
-            return hash;
-        }
-
-        // Keeps the longest written name ("<name>_<hash>_vorbis<ext>.meta") within 259 characters, as the mono pass
-        // does; a cache folder too deep returns null instead of throwing.
-        private static string OutputPath(string folder, string safeName, string signature, string extension)
-        {
-            string tail = "_" + signature.Substring(0, 12) + "_vorbis" + extension;
-            int budget = 259 - Path.GetFullPath(folder + "/" + tail + ".meta").Length;
-            if (budget < 0) return null;
-            return folder + "/" + safeName.Substring(0, Math.Min(safeName.Length, budget)) + tail;
         }
     }
 }

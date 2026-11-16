@@ -24,7 +24,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     .Where(f => f.Severity != Severity.TidyUp && !AvatarAnalyzer.Breakage(f) && !f.Key.StartsWith("unused|", System.StringComparison.Ordinal)
                         && !f.Key.StartsWith("path|", System.StringComparison.Ordinal) && f.Key != "driver").ToList();
                 if (findings.Count == 0) return true;
-                Debug.LogWarning("Arclight Analyzer: " + findings.Count + " problem(s) on " + avatarGameObject.name + " (Tools > Arclight > Analyzer for details).");
+                Debug.LogWarning("Arclight Analyzer: " + AvatarAnalyzer.N(findings.Count, "problem") + " on " + avatarGameObject.name + " (Tools > Arclight > Analyzer for details).");
                 foreach (var finding in findings)
                     Debug.LogWarning("Arclight Analyzer [" + (finding.Severity == Severity.Broken ? "Broken" : "Worth checking") + "] " + finding.Title + ". " + finding.Detail + " How to fix: " + finding.Fix);
             }

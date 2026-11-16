@@ -123,7 +123,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             {
                 var keys = binding.FloatCurve?.keys;
                 if (keys == null || keys.Length == 0 || binding.Summed ||
-                    keys.Any(k => k.value != keys[0].value || !AnimatorLayerMerger.Flat(k.inTangent) || !AnimatorLayerMerger.Flat(k.outTangent)))
+                    keys.Any(k => k.value != keys[0].value || !CurveFacts.Flat(k.inTangent) || !CurveFacts.Flat(k.outTangent)))
                     return (float.NegativeInfinity, float.PositiveInfinity);
                 float value = keys[0].value;
                 range = range == null ? (value, value) : (Mathf.Min(range.Value.Min, value), Mathf.Max(range.Value.Max, value));

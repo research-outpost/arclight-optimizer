@@ -16,7 +16,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         {
             if (playable.Name != "FX" && playable.Name != "Gesture") return;
             // States playing a Direct blend tree are left out: the recommended layout pairs Write Defaults on tree layers with off toggles.
-            var states = playable.Controller.layers.SelectMany(l => States(l.stateMachine).Select(s => (Layer: l.name, State: s.Item2)))
+            var states = playable.Controller.layers.SelectMany(l => ControllerWalk.States(l.stateMachine).Select(s => (Layer: l.name, State: s.Item2)))
                 .Where(s => !(s.State.motion is BlendTree tree && tree.blendType == BlendTreeType.Direct)).ToList();
             var on = states.Where(s => s.State.writeDefaultValues).ToList();
             var off = states.Where(s => !s.State.writeDefaultValues).ToList();
@@ -48,7 +48,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             var ignored = new List<string>();
             foreach (var layer in playable.Controller.layers.Where(l => l.syncedLayerIndex < 0))
             {
-                foreach (var (_, state) in States(layer.stateMachine))
+                foreach (var (_, state) in ControllerWalk.States(layer.stateMachine))
                 {
                     // FX only: hand-pose layers in Gesture often leave idle states empty on purpose.
                     if (playable.Name == "FX" && !state.writeDefaultValues && !state.motion)
@@ -57,7 +57,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
                     if (state.transitions.Any(Ignored))
                         ignored.Add("\"" + state.name + "\" in layer \"" + layer.name + "\"");
                 }
-                foreach (var machine in Machines(layer.stateMachine))
+                foreach (var machine in ControllerWalk.Machines(layer.stateMachine))
                     foreach (var t in machine.anyStateTransitions.Where(Ignored))
                         ignored.Add("Any State → \"" + (t.destinationState ? t.destinationState.name : t.destinationStateMachine ? t.destinationStateMachine.name : "?") + "\" in layer \"" + layer.name + "\"");
             }
@@ -106,13 +106,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             for (int i = 1; i < layers.Length; i++) // The first layer always plays at full weight.
             {
                 var machine = layers[i].syncedLayerIndex >= 0 && layers[i].syncedLayerIndex < layers.Length ? layers[layers[i].syncedLayerIndex].stateMachine : layers[i].stateMachine;
-                if (Divider(layers[i].name) && !States(machine).Any()) continue;
-                if (!States(machine).Any()) { dead.Add("\"" + layers[i].name + "\" (no states)"); deadNames.Add(layers[i].name); }
+                if (Divider(layers[i].name) && !ControllerWalk.States(machine).Any()) continue;
+                if (!ControllerWalk.States(machine).Any()) { dead.Add("\"" + layers[i].name + "\" (no states)"); deadNames.Add(layers[i].name); }
                 // A weight-0 layer still runs its state machine (Unity evaluates every non-synced state machine even at
                 // weight 0), so one holding behaviours (drivers, tracking or layer controls) acts — and one whose states
                 // write defaults rewrites the defaults of everything they bind, suppressing the layers below.
                 else if (layers[i].defaultWeight == 0 && !raised.Contains(i) && !Acts(layers[i], machine) &&
-                    !Machines(machine).SelectMany(sm => sm.states).Any(s => s.state && s.state.writeDefaultValues))
+                    !ControllerWalk.Machines(machine).SelectMany(sm => sm.states).Any(s => s.state && s.state.writeDefaultValues))
                 { dead.Add("\"" + layers[i].name + "\" (weight 0)"); deadNames.Add(layers[i].name); }
             }
             if (dead.Count == 0) return;
@@ -135,7 +135,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         }
 
         private static bool Acts(UnityEditor.Animations.AnimatorControllerLayer layer, UnityEditor.Animations.AnimatorStateMachine machine) =>
-            Machines(machine).Any(sm => sm.behaviours.Length > 0 || sm.states.Any(s => s.state && (s.state.behaviours.Length > 0 ||
+            ControllerWalk.Machines(machine).Any(sm => sm.behaviours.Length > 0 || sm.states.Any(s => s.state && (s.state.behaviours.Length > 0 ||
                 layer.syncedLayerIndex >= 0 && layer.GetOverrideBehaviours(s.state).Length > 0)));
 
         // Animator Layer Controls aimed at a layer number the target controller doesn't have: they change nothing. Only controllers the
@@ -179,7 +179,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
         {
             var where = new Dictionary<StateMachineBehaviour, string>();
             foreach (var layer in playable.Controller.layers)
-                foreach (var machine in Machines(layer.stateMachine))
+                foreach (var machine in ControllerWalk.Machines(layer.stateMachine))
                 {
                     foreach (var b in machine.behaviours.Where(b => b)) where[b] = playable.Name + " → " + layer.name + " → " + machine.name;
                     foreach (var s in machine.states.Where(s => s.state))
@@ -193,9 +193,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             name.Length >= 3 && "-=*_#/~".IndexOf(name[0]) >= 0 && name[1] == name[0] && name[2] == name[0];
 
         private static IEnumerable<StateMachineBehaviour> Behaviours(AnimatorController controller) =>
-            controller.layers.SelectMany(l => Machines(l.stateMachine)).SelectMany(sm => sm.behaviours.Concat(sm.states.Where(s => s.state).SelectMany(s => s.state.behaviours)))
+            controller.layers.SelectMany(l => ControllerWalk.Machines(l.stateMachine)).SelectMany(sm => sm.behaviours.Concat(sm.states.Where(s => s.state).SelectMany(s => s.state.behaviours)))
                 .Concat(controller.layers.Where(l => l.syncedLayerIndex >= 0 && l.syncedLayerIndex < controller.layers.Length)
-                    .SelectMany(l => States(controller.layers[l.syncedLayerIndex].stateMachine).SelectMany(s => l.GetOverrideBehaviours(s.Item2))));
+                    .SelectMany(l => ControllerWalk.States(controller.layers[l.syncedLayerIndex].stateMachine).SelectMany(s => l.GetOverrideBehaviours(s.Item2))));
 
         // One finding per object or component a clip animates that the avatar doesn't have; grouped per controller by Group.
         private static void AnimationTargets(Avatar avatar, Playable playable, List<Finding> findings)
@@ -264,7 +264,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor.Analyzer
             foreach (var layer in controller.layers)
             {
                 bool synced = layer.syncedLayerIndex >= 0 && layer.syncedLayerIndex < controller.layers.Length;
-                foreach (var (_, state) in States(synced ? controller.layers[layer.syncedLayerIndex].stateMachine : layer.stateMachine))
+                foreach (var (_, state) in ControllerWalk.States(synced ? controller.layers[layer.syncedLayerIndex].stateMachine : layer.stateMachine))
                     Walk(synced ? layer.GetOverrideMotion(state) : state.motion);
             }
             return clips;

@@ -9,6 +9,7 @@ using Object = UnityEngine.Object;
 
 namespace Okarin.AvatarTextureOptimizer.Editor
 {
+    // Also removes, per controller, VRChat built-in parameters that controller declares but never reads itself (see Run).
     // Removes animator parameters whose name nothing else on the avatar mentions: no transition
     // condition, blend tree, state speed/time/offset/mirror parameter, state machine behaviour (parameter drivers,
     // layer controls and any other behaviour, read field by field), animation curve, expressions menu control, or
@@ -41,7 +42,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         internal static bool HasInvisibleReaders(GameObject root) =>
             root.GetComponentsInChildren<Component>(true).Any(c => c && !(c is Transform) && InvisibleReader(c));
 
-        internal static Result Run(GameObject root, IEnumerable<VirtualAnimatorController> controllers, AvatarAnalysis analysis, Action<Object, Object> register)
+        internal static Result Run(GameObject root, IEnumerable<VirtualAnimatorController> controllers, AvatarAnalysis analysis)
         {
             var result = new Result();
             if (!analysis.Complete) return result;
@@ -80,6 +81,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 result.Names.AddRange(unused);
             }
 
+            // VRChat writes its built-in parameters into every Animator that declares one, and an Animator's parameters are its
+            // own: a built-in that this controller never reads (condition, tree, behaviour field, or a curve in its own clips) holds
+            // a value nothing in it uses, even when another controller reads the same name. So that declaration goes from this
+            // controller alone. A built-in no controller reads went above already.
+            foreach (var controller in list)
+            {
+                var reads = ControllerReads(controller);
+                if (reads == null) continue;
+                var idle = controller.Parameters.Keys.Where(name => BuiltIn.Contains(name) && !reads.Contains(name)).ToList();
+                if (idle.Count == 0) continue;
+                controller.Parameters = controller.Parameters.RemoveRange(idle);
+                result.Animator += idle.Count;
+                result.Names.AddRange(idle);
+            }
+
             result.Names = result.Names.Distinct().ToList();
             return result;
         }
@@ -110,6 +126,26 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             var descriptor = root.GetComponents<Component>().FirstOrDefault(c => c && c.GetType().Name == "VRCAvatarDescriptor");
             if (!descriptor) return null;
             var used = new HashSet<string>(StringComparer.Ordinal);
+            if (!GraphReads(list, used)) return null;
+            foreach (var binding in analysis.Bindings.Where(b => b.Curve.type == typeof(Animator))) used.Add(binding.Property);
+
+            Object menu;
+            using (var serialized = new SerializedObject(descriptor))
+            {
+                // The descriptor's own strings (visemes, eye bones, collider names) are not parameters; its menu is read
+                // separately.
+                menu = serialized.FindProperty("expressionsMenu")?.objectReferenceValue;
+            }
+            if (menu && !MenuStrings(menu, used, new HashSet<Object>())) return null;
+            used.Remove(null); // Inactive state parameters.
+            return used;
+        }
+
+        // What the controllers' own graphs read: transition conditions, blend trees, state parameters and every behaviour field
+        // (synced layer overrides too). False when a graph cannot be walked.
+        private static bool GraphReads(IEnumerable<VirtualAnimatorController> controllers, HashSet<string> used)
+        {
+            var list = controllers.Where(c => c != null).ToList();
             try
             {
                 foreach (var node in list.SelectMany(c => c.AllReachableNodes()))
@@ -131,21 +167,27 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             break;
                     }
             }
-            catch (Exception) { return null; }
+            catch (Exception) { return false; }
             // A synced layer keeps its own behaviours for the states it shares; AllReachableNodes does not visit them.
             foreach (var behaviour in list.SelectMany(c => c.Layers).SelectMany(l => l.SyncedLayerBehaviourOverrides.Values.SelectMany(v => v)))
                 Strings(behaviour, used);
-            foreach (var binding in analysis.Bindings.Where(b => b.Curve.type == typeof(Animator))) used.Add(binding.Property);
+            return true;
+        }
 
-            Object menu;
-            using (var serialized = new SerializedObject(descriptor))
+        // What one controller reads by itself: its graph (GraphReads) and the Animator curves of its own clips. Null when the
+        // controller cannot be walked.
+        private static HashSet<string> ControllerReads(VirtualAnimatorController controller)
+        {
+            var used = new HashSet<string>(StringComparer.Ordinal);
+            if (!GraphReads(new[] { controller }, used)) return null;
+            try
             {
-                // The descriptor's own strings (visemes, eye bones, collider names) are not parameters; its menu is read
-                // separately.
-                menu = serialized.FindProperty("expressionsMenu")?.objectReferenceValue;
+                foreach (var clip in controller.AllReachableNodes().OfType<VirtualClip>())
+                    foreach (var binding in clip.GetFloatCurveBindings().Where(b => b.type == typeof(Animator)))
+                        used.Add(binding.propertyName);
             }
-            if (menu && !MenuStrings(menu, used, new HashSet<Object>())) return null;
-            used.Remove(null); // Inactive state parameters.
+            catch (Exception) { return null; }
+            used.Remove(null);
             return used;
         }
 

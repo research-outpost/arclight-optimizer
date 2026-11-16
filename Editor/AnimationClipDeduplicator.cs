@@ -326,4 +326,21 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             writer.Write(binding.propertyName ?? ""); writer.Write(binding.isPPtrCurve); writer.Write(binding.isDiscreteCurve);
         }
     }
+
+    // Walks of an AnimatorController's state machines, shared by the analyzer and the d4rk layer fold.
+    internal static class ControllerWalk
+    {
+        // The machine and every sub-state machine below it, depth first (the machine first).
+        internal static IEnumerable<AnimatorStateMachine> Machines(AnimatorStateMachine machine)
+        {
+            if (!machine) yield break;
+            yield return machine;
+            foreach (var child in machine.stateMachines)
+                foreach (var sub in Machines(child.stateMachine)) yield return sub;
+        }
+
+        // Every non-null state in the machine and its sub-state machines, with the machine that holds it.
+        internal static IEnumerable<(AnimatorStateMachine, AnimatorState)> States(AnimatorStateMachine machine) =>
+            Machines(machine).SelectMany(sm => sm.states.Where(s => s.state).Select(s => (sm, s.state)));
+    }
 }

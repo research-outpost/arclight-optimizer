@@ -35,17 +35,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // Humanoid bones stay: the Animator maps them, and VRChat reads some of them itself.
             kept.UnionWith(analysis.Root.GetComponentsInChildren<Animator>(true).Where(a => a.isHuman)
                 .SelectMany(a => Enumerable.Range(0, (int)HumanBodyBones.LastBone).Select(b => a.GetBoneTransform((HumanBodyBones)b))).Where(t => t));
-            var physBones = analysis.Root.GetComponentsInChildren<Component>(true).Where(c => c && c.GetType().Name == "VRCPhysBone").ToList();
+            var index = new PhysBoneIndex(analysis.Root);
+            var physBones = index.All;
             // Chains that share a transform (nested or overlapping PhysBones) are left alone: removing one's end bones would
             // change the other's chain.
             var owners = new Dictionary<Transform, int>();
-            foreach (var t in physBones.SelectMany(p => UnusedObjectRemover.PhysBoneRoot(p).GetComponentsInChildren<Transform>(true)))
+            foreach (var t in physBones.SelectMany(p => index.Root(p).GetComponentsInChildren<Transform>(true)))
                 owners[t] = owners.TryGetValue(t, out int n) ? n + 1 : 1;
             foreach (var physBone in physBones)
             {
-                if (Exclusions.Excluded(physBone) || !UnusedObjectRemover.PhysBoneRoot(physBone).IsChildOf(analysis.Root.transform)) continue;
-                if (UnusedObjectRemover.PhysBoneRoot(physBone).GetComponentsInChildren<Transform>(true).Any(t => owners[t] > 1)) continue;
-                var root = UnusedObjectRemover.PhysBoneRoot(physBone);
+                if (Exclusions.Excluded(physBone)) continue;
+                var root = index.Root(physBone);
+                if (!root.IsChildOf(analysis.Root.transform) || root.GetComponentsInChildren<Transform>(true).Any(t => owners[t] > 1)) continue;
                 // An animation that writes the endpoint or the ignore list before the chain starts would see a different chain.
                 if (analysis.IsAnimated(physBone, p => p.StartsWith("endpointPosition", StringComparison.Ordinal) ||
                     p.StartsWith("ignoreTransforms", StringComparison.Ordinal) || p.StartsWith("rootTransform", StringComparison.Ordinal))) continue;

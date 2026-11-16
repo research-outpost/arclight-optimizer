@@ -41,15 +41,13 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     particleMeshes.UnionWith(meshes.Where(m => m));
                 }
             }
-            Mesh MeshOf(Renderer r) => r is SkinnedMeshRenderer skinned ? skinned.sharedMesh
-                : r is MeshRenderer && r.GetComponent<MeshFilter>() is MeshFilter filter && filter ? filter.sharedMesh : null;
             var renderers = root.GetComponentsInChildren<Renderer>(true);
             // A mesh any protected user holds stays readable for every user.
-            particleMeshes.UnionWith(renderers.Where(r => particleRenderers.Contains(r) || r.GetComponent<Cloth>() || Exclusions.Excluded(r)).Select(MeshOf).Where(m => m));
+            particleMeshes.UnionWith(renderers.Where(r => particleRenderers.Contains(r) || r.GetComponent<Cloth>() || Exclusions.Excluded(r)).Select(MeshUsers.Of).Where(m => m));
             // A MeshCollider can cook its mesh at runtime (negative scale, non-default cooking options), which needs it readable.
             particleMeshes.UnionWith(root.GetComponentsInChildren<MeshCollider>(true).Select(c => c.sharedMesh).Where(m => m));
             int count = 0;
-            foreach (var mesh in renderers.Select(MeshOf).Where(m => m).Distinct())
+            foreach (var mesh in renderers.Select(MeshUsers.Of).Where(m => m).Distinct())
             {
                 if (!mesh.isReadable || !(eligible != null ? eligible(mesh) : BuildOwned(mesh)) || particleMeshes.Contains(mesh) || sourceMeshes != null && sourceMeshes.Contains(mesh)) continue;
                 using (var serialized = new SerializedObject(mesh))

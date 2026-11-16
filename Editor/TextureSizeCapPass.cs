@@ -90,7 +90,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             finally { foreach (var pair in animators) pair.Key.runtimeAnimatorController = pair.Value; }
             // One save for the whole pass: an unflushed mark dies at the next domain reload and the cleanup can then trash a
             // copy this build is using.
-            AudioMonoConverter.FlushUsage();
+            CacheUsage.FlushUsage();
             return result;
         }
 

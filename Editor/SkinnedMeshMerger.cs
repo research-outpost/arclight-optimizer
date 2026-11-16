@@ -121,7 +121,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             finally
             {
-                if (moves.Count > 0) rewriter?.Rewrite((owner, binding) => Retarget(owner, binding, root, moves));
+                if (moves.Count > 0) { var paths = new PathCache(); rewriter?.Rewrite((owner, binding) => Retarget(owner, binding, root, moves, paths)); }
                 foreach (var pair in rigid.Where(p => !mergedAway.Contains(p.Key))) Restore(pair.Key, pair.Value);
             }
             foreach (var r in candidates.Except(singles).Where(r => !mergedAway.Contains(r) && !rigid.ContainsKey(r)))
@@ -232,12 +232,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             public int SlotOffset;
         }
 
-        private static EditorCurveBinding? Retarget(Transform owner, EditorCurveBinding binding, GameObject root, Dictionary<GameObject, Move> moves)
+        private static EditorCurveBinding? Retarget(Transform owner, EditorCurveBinding binding, GameObject root, Dictionary<GameObject, Move> moves, PathCache paths)
         {
             // m_Enabled stays where it is: the host's identical curve already switches the merged renderer.
             if (owner != root.transform || binding.type != typeof(SkinnedMeshRenderer) || binding.propertyName == "m_Enabled") return null;
-            var targets = AvatarAnalysis.Resolve(owner, binding.path).ToList();
-            if (targets.Count != 1 || !moves.TryGetValue(targets[0].gameObject, out var move)) return null;
+            var target = paths.Single(owner, binding.path);
+            if (target == null || !moves.TryGetValue(target.gameObject, out var move)) return null;
             string property = binding.propertyName ?? "";
             const string shape = "blendShape.", slot = "m_Materials.Array.data[";
             if (property.StartsWith(shape, StringComparison.Ordinal) && move.Shapes.TryGetValue(property.Substring(shape.Length), out var renamed))
@@ -325,7 +325,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             var bindings = analysis.BindingsOn(toggled, p => p == property).ToList();
             // A path that names two same-named siblings reaches only one of them in Unity, so such objects keep their identity.
-            if (bindings.Any(b => b.Legacy || b.FloatCurve == null || AvatarAnalysis.Resolve(b.Owner, b.Curve.path).Count() != 1))
+            if (bindings.Any(b => b.Legacy || b.FloatCurve == null || AvatarAnalysis.ResolveSingle(b.Owner, b.Curve.path) == null))
                 return "object:" + toggled.GetInstanceID();
             string Curve(AnimationCurve c) => (int)c.preWrapMode + "/" + (int)c.postWrapMode + "/" + string.Join(",", c.keys.Select(k =>
                 string.Join(" ", new[] { k.time, k.value, k.inTangent, k.outTangent, k.inWeight, k.outWeight }.Select(f => f.ToString("R"))) + " " + (int)k.weightedMode));

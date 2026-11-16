@@ -51,10 +51,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (result.Bones > 0) analysis.RescanReferences();
 
             // physBones: false while VRCFury has not built yet, as it may still add readers of a PhysBone's parameter.
-            foreach (var physBone in root.GetComponentsInChildren<Component>(true).Where(c => physBones && c && c.GetType().Name == "VRCPhysBone" && !Exclusions.Excluded(c)).ToList())
+            var index = physBones ? new PhysBoneIndex(root) : null;
+            foreach (var physBone in physBones ? index.All.Where(c => c && !Exclusions.Excluded(c)).ToList() : new List<Component>())
             {
-                if (Observed(physBone, analysis) || UnusedObjectRemover.NeedsExcludedWrite(root, physBone)) continue;
-                UnusedObjectRemover.KeepIgnoredByOthers(root, physBone);
+                if (Observed(physBone, analysis) || UnusedObjectRemover.NeedsExcludedWrite(index, physBone)) continue;
+                UnusedObjectRemover.KeepIgnoredByOthers(index, physBone);
                 Object.DestroyImmediate(physBone);
                 result.PhysBones++;
             }

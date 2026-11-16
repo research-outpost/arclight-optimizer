@@ -276,7 +276,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                         var motion = Mergeable(layer);
                         string parameter = null;
                         if (motion == null && retypable.Count > 0) motion = Toggle(layer, controller, retypable, owner, out parameter);
-                        if (motion == null) { string why = WhyNotFolded(layer, controller, retypable); if (!result.WhyNot.TryGetValue(why, out var named)) result.WhyNot[why] = named = new List<string>(); named.Add(layer.Name); }
+                        if (motion == null) { string why = WhyNotFolded(layer, retypable); if (!result.WhyNot.TryGetValue(why, out var named)) result.WhyNot[why] = named = new List<string>(); named.Add(layer.Name); }
                         if (motion != null)
                         {
                             int g = groups.FindIndex(x => !bindings.Overlaps(x.Blocked));
@@ -591,9 +591,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static float? DefaultValue(Transform owner, EditorCurveBinding binding)
         {
-            var targets = AvatarAnalysis.Resolve(owner, binding.path).ToList();
-            if (targets.Count != 1) return null;
-            var target = targets[0];
+            var target = AvatarAnalysis.ResolveSingle(owner, binding.path);
+            if (target == null) return null;
             string property = binding.propertyName ?? "";
             if (binding.type == typeof(GameObject)) return property == "m_IsActive" ? (target.gameObject.activeSelf ? 1 : 0) : (float?)null;
             if (binding.type == null || !(target.GetComponent(binding.type) is Component component) || !component) return null;
@@ -759,7 +758,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         }
 
         // The first rule a layer that did not fold breaks, for the report (each is a condition of Mergeable or Toggle).
-        private static string WhyNotFolded(VirtualLayer layer, VirtualAnimatorController controller, HashSet<string> retypable)
+        private static string WhyNotFolded(VirtualLayer layer, HashSet<string> retypable)
         {
             var machine = layer.StateMachine;
             if (machine == null) return "no state machine";
@@ -785,16 +784,11 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (clip.IsMarkerClip) return false;
             foreach (var binding in clip.GetFloatCurveBindings())
             {
-                var keys = clip.GetFloatCurve(binding)?.keys;
-                if (keys == null || keys.Length == 0) return false;
-                // Equal values with flat or stepped (infinite) tangents hold that value; a finite slope would bulge between keys.
-                if (keys.Length > 1 && keys.Any(k => !k.value.Equals(keys[0].value) || !Flat(k.inTangent) || !Flat(k.outTangent))) return false;
+                if (!CurveFacts.HoldsOneValue(clip.GetFloatCurve(binding)?.keys)) return false;
             }
             // Object curves (material and mesh swaps) inside a Direct blend tree are not covered by the side-by-side test.
             return !clip.GetObjectCurveBindings().Any();
         }
-
-        internal static bool Flat(float tangent) => tangent == 0 || float.IsPositiveInfinity(tangent); // Unity writes stepped keys as +Infinity.
 
         // What a layer writes: a synced layer plays its source's states, each with its own motion where it overrides one.
         private static HashSet<EditorCurveBinding> Bindings(VirtualLayer layer, IEnumerable<VirtualLayer> siblings)
@@ -833,5 +827,18 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 p.StartsWith("m_LocalRotation", StringComparison.Ordinal) || p.StartsWith("localEuler", StringComparison.Ordinal) ? "rotation" : p;
             return EditorCurveBinding.FloatCurve(binding.path, typeof(Transform), whole);
         }
+    }
+
+    // Facts about animation keys that several passes rely on.
+    internal static class CurveFacts
+    {
+        // A tangent that keeps the value level into or out of a key: zero, or stepped (Unity writes stepped keys as +Infinity).
+        internal static bool Flat(float tangent) => tangent == 0 || float.IsPositiveInfinity(tangent);
+
+        // Keys that hold one value for all time: at least one key, and every key equal to the first (Equals) with flat or
+        // stepped tangents; a finite slope would bulge between keys.
+        internal static bool HoldsOneValue(Keyframe[] keys) =>
+            keys != null && keys.Length > 0 &&
+            (keys.Length == 1 || keys.All(k => k.value.Equals(keys[0].value) && Flat(k.inTangent) && Flat(k.outTangent)));
     }
 }

@@ -239,9 +239,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 bool flattened = !SourceImages.IsPng(path);
                 if (flattened && importer.textureType != TextureImporterType.Default) continue;
                 // Each of these makes mip levels differ from a plain average, or reads something other than the pixels.
-                if (importer.mipMapsPreserveCoverage || importer.borderMipmap || importer.fadeout || importer.crunchedCompression ||
-                    importer.convertToNormalmap || importer.alphaIsTransparency || importer.mipmapFilter != TextureImporterMipFilter.BoxFilter) continue;
-                if (new[] { "Standalone", "Android" }.Select(importer.GetPlatformTextureSettings).Any(s => s.overridden && s.crunchedCompression)) continue;
+                if (ReadsBeyondTexels(importer) || importer.fadeout) continue;
                 var bytes = File.ReadAllBytes(LongPath.For(path));
                 string hash;
                 Color32[] pixels;
@@ -251,7 +249,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     SourceImages.Size(importer, out int flatWidth, out int flatHeight);
                     if (flatWidth * flatHeight <= 16) continue;
                     // What Unity flattens depends on the importer too (matte removal, alpha source), so the memo covers the .meta.
-                    hash = NotUniform.Key(bytes.Concat(File.ReadAllBytes(LongPath.For(path + ".meta"))).ToArray(), "flat-v1:");
+                    hash = NotUniform.Key("flat-v1:", bytes, File.ReadAllBytes(LongPath.For(path + ".meta")));
                     if (NotUniform.Known(hash)) continue;
                     try { pixels = SourceImages.Flatten(path, folder, out info); }
                     catch (OperationCanceledException) { throw; }
@@ -320,9 +318,9 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         private static Texture2D GenerateUniform(Texture2D texture, byte[] bytes, Color32 colour, PngInfo info, string folder, Crop crop = null, bool cachedOnly = false)
         {
             string sourcePath = AssetDatabase.GetAssetPath(texture);
-            string recipe = FingerprintService.Hash(bytes.Concat(System.Text.Encoding.UTF8.GetBytes(
+            string recipe = FingerprintService.Hash(bytes, System.Text.Encoding.UTF8.GetBytes(
                 File.ReadAllText(LongPath.For(sourcePath + ".meta")) +
-                (crop == null ? "|uniform-v2" : "|" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + "|uniform-crop-v1"))).ToArray());
+                (crop == null ? "|uniform-v2" : "|" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + "|uniform-crop-v1")));
             string userData = "ArclightCrop:" + recipe;
             folder += "/Crops";
             AutomaticTextureOptimizer.EnsureFolder(folder);
@@ -330,7 +328,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (File.Exists(outPath) && AssetImporter.GetAtPath(outPath) is TextureImporter cachedImporter && cachedImporter.userData == userData)
             {
                 var cached = AssetDatabase.LoadAssetAtPath<Texture2D>(outPath);
-                if (cached && cached.width == 4 && cached.height == 4 && Checked(texture, cached, outPath, crop)) { TextureSafety.DropReadable(cachedImporter); AudioMonoConverter.MarkUsed(outPath); return cached; } // Copies made before 1.1.13 lose Read/Write.
+                if (cached && cached.width == 4 && cached.height == 4 && Checked(texture, cached, outPath, crop)) { TextureSafety.DropReadable(cachedImporter); CacheUsage.MarkUsed(outPath); return cached; } // Copies made before 1.1.13 lose Read/Write.
             }
             if (cachedOnly) return null;
             if (File.Exists(outPath) || File.Exists(outPath + ".meta")) outPath = AssetDatabase.GenerateUniqueAssetPath(outPath);
@@ -355,7 +353,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             if (!Checked(texture, imported, outPath, crop)) throw new InvalidOperationException("The one-colour copy decodes to a different value.");
             TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(outPath));
-            AudioMonoConverter.MarkUsed(outPath);
+            CacheUsage.MarkUsed(outPath);
             return imported;
         }
 
@@ -512,9 +510,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 bool flattened = !SourceImages.IsPng(path);
                 if (flattened && importer.textureType != TextureImporterType.Default) return null;
                 // Each step here reads texels beyond the crop's edge (wider mip kernels, height-to-normal, alpha dilation).
-                if (importer.mipMapsPreserveCoverage || importer.borderMipmap || importer.crunchedCompression || importer.mipmapFilter != TextureImporterMipFilter.BoxFilter ||
-                    importer.convertToNormalmap || importer.alphaIsTransparency) return null;
-                if (new[] { "Standalone", "Android" }.Select(importer.GetPlatformTextureSettings).Any(s => s.overridden && s.crunchedCompression)) return null;
+                if (ReadsBeyondTexels(importer)) return null;
                 PngInfo info;
                 if (flattened)
                 {
@@ -594,8 +590,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             // Whether the part is one colour is decided before any cached plain crop is used, and remembered when it is not
             // (NotUniform, keyed by the source, its importer and the part), so a later build reuses the plain crop undecoded.
-            string partKey = collapsible ? NotUniform.Key(bytes.Concat(File.ReadAllBytes(LongPath.For(sourcePath + ".meta"))).ToArray(),
-                "part-v1:" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + ":") : null;
+            string partKey = collapsible ? NotUniform.Key("part-v1:" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + ":",
+                bytes, File.ReadAllBytes(LongPath.For(sourcePath + ".meta"))) : null;
             if (collapsible && !NotUniform.Known(partKey))
             {
                 Cut();
@@ -607,8 +603,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     catch (Exception e) { Debug.Log("Arclight Optimizer: one-colour crop kept as a crop for " + texture.name + ": " + e.Message); }
                 }
             }
-            string recipe = FingerprintService.Hash(bytes.Concat(System.Text.Encoding.UTF8.GetBytes(
-                File.ReadAllText(LongPath.For(sourcePath + ".meta")) + "|" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + "|crop-v2")).ToArray());
+            string recipe = FingerprintService.Hash(bytes, System.Text.Encoding.UTF8.GetBytes(
+                File.ReadAllText(LongPath.For(sourcePath + ".meta")) + "|" + crop.Kx + "," + crop.Ky + "," + crop.Jx + "," + crop.Jy + "|crop-v2"));
             string userData = "ArclightCrop:" + recipe;
             int importedW = texture.width >> crop.Kx, importedH = texture.height >> crop.Ky;
             folder += "/Crops";
@@ -630,7 +626,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     // Copies made before 1.1.13 lose Read/Write; that rewrites the .meta, so the memo is set under the key read above
                     // only when the .meta is unchanged.
                     if (!TextureSafety.DropReadable(cachedImporter)) SessionState.SetBool(verifiedKey, true);
-                    AudioMonoConverter.MarkUsed(outPath);
+                    CacheUsage.MarkUsed(outPath);
                     return cached;
                 }
                 AssetDatabase.DeleteAsset(outPath);
@@ -665,7 +661,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             finally { if (!same) AssetDatabase.DeleteAsset(outPath); }
             if (!same) throw new InvalidOperationException("The cropped texture decodes differently from that part of the original.");
             TextureSafety.DropReadable((TextureImporter)AssetImporter.GetAtPath(outPath));
-            AudioMonoConverter.MarkUsed(outPath); // Starts its 30 days for the cache cleanup.
+            CacheUsage.MarkUsed(outPath); // Starts its 30 days for the cache cleanup.
             return imported;
         }
 
@@ -674,9 +670,15 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             crop.graphicsFormat == texture.graphicsFormat && crop.wrapModeU == texture.wrapModeU && crop.wrapModeV == texture.wrapModeV &&
             crop.filterMode == texture.filterMode && crop.anisoLevel == texture.anisoLevel;
 
+        // Import settings whose mip levels or pixels depend on more than each texel's own value (coverage-preserving, border
+        // or non-box mips, crunch on any platform, height-to-normal, alpha dilation).
+        private static bool ReadsBeyondTexels(TextureImporter importer) =>
+            importer.mipMapsPreserveCoverage || importer.borderMipmap || importer.crunchedCompression || importer.mipmapFilter != TextureImporterMipFilter.BoxFilter ||
+            importer.convertToNormalmap || importer.alphaIsTransparency ||
+            new[] { "Standalone", "Android" }.Select(importer.GetPlatformTextureSettings).Any(s => s.overridden && s.crunchedCompression);
+
         internal static bool IsGenerated(string path) =>
-            path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) && AssetImporter.GetAtPath(path) is TextureImporter importer &&
-            (importer.userData ?? "").StartsWith("ArclightCrop:", StringComparison.Ordinal);
+            path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) && GeneratedFiles.HasMarker<TextureImporter>(path, "ArclightCrop:");
     }
 
     // PNG contents already decoded and found to hold more than one colour, so a repeat build skips decoding them again.
@@ -693,6 +695,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             using (var sha = System.Security.Cryptography.SHA256.Create())
                 return reader + BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "");
         }
+
+        // The same key for the parts' concatenation, without copying them into one array.
+        internal static string Key(string reader, params byte[][] parts) =>
+            reader + BitConverter.ToString(FingerprintService.Sha256(parts)).Replace("-", "");
 
         internal static bool Known(string key) => Load().Contains(key);
 

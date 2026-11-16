@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -141,12 +141,12 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                                     bool present = slot < currentMaterials.Length && currentMaterials[slot] == material;
                                     if (!present && (!state.SlotMaterials.TryGetValue(slot, out var slotCandidates) || !slotCandidates.Contains(material))) continue;
                                     AddUsage(renderer, path, mesh, slot, material, property.Key, texture, sampling,
-                                        true, state, ambiguousSlots, groups, result, seenUses);
+                                        true, ambiguousSlots, groups, result, seenUses);
                                 }
                             }
                         }
                     }
-                    progress?.Scanning(null, "Checking animated sampling");
+                    progress?.Scanning(null, "Checking animations");
                     state.ComplexTextureCrossProduct = HasBorrowedSamplerDependency(state, groups, path,
                         allowUnsupportedShaders, progress);
                 }
@@ -159,7 +159,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             }
             progress?.Scanning(null, "Checking animation safety");
             ApplyAnimationSafety(result, animation, allowUnsupportedShaders, progress);
-            progress?.Scanning(null, "Validating texture groups");
+            progress?.Scanning(null, "Checking texture uses");
             ValidateGroups(result, progress);
             var assumed = result.Groups.SelectMany(g => g.Uses).Where(u => u.Sampling.UnsafeOverride)
                 .Select(u => u.Material.shader.name + " [" + u.Property + "]").Distinct().OrderBy(s => s, StringComparer.Ordinal).ToArray();
@@ -446,7 +446,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 if (!texture) continue;
                 var sampling = ShaderAdapterRegistry.Describe(material, property, allowUnsupportedShaders);
                 AddUsage(renderer, path, mesh, slot, material, property, texture, sampling, fromAnimation,
-                    state, ambiguousSlots, groups, result, seenUses);
+                    ambiguousSlots, groups, result, seenUses);
             }
         }
 
@@ -493,7 +493,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         private static void AddUsage(Renderer renderer, string path, Mesh mesh, int slot, Material material,
             string property, Texture texture, SamplingDescription sampling, bool fromAnimation,
-            AnimationRendererState state, bool ambiguousSlots, Dictionary<Texture, TextureGroup> groups,
+            bool ambiguousSlots, Dictionary<Texture, TextureGroup> groups,
             ScanResult result, HashSet<string> seenUses)
         {
             if (!texture || !material || sampling == null) return;
@@ -751,7 +751,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
         {
             foreach (var group in result.Groups)
             {
-                progress?.Scanning(group.Source, "Validating texture group");
+                progress?.Scanning(group.Source, "Checking texture uses");
                 group.Status = "Unsupported";
                 if (!group.ActiveUses.Any())
                 {
@@ -804,7 +804,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                             "\nTexture properties: " + string.Join(", ", uses.Select(u => u.Property).Distinct().OrderBy(p => p, StringComparer.Ordinal));
                     }).ToArray();
                 if (details.Length > 0)
-                    group.Warning = "Skipped; original texture retained for all its assignments.\n" + string.Join("\n\n", details);
+                    group.Warning = OptimizationLog.SkippedPrefix + "\n" + string.Join("\n\n", details);
             }
         }
     }
