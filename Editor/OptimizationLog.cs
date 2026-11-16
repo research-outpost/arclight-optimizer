@@ -224,7 +224,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             output.Append("Applied: ").Append(Number(state?.AppliedTextures ?? 0)).AppendLine(" textures applied");
             output.Append("Duplicates merged: ").AppendLine(Number(state?.MergedDuplicates.Count ?? 0));
             if (captured)
-                output.Append("Scan: ").Append(Number(scannedGroups)).Append(" textures, ")
+                output.Append("Scan: ").Append(Plural(scannedGroups, "texture")).Append(", ")
                     .Append(Number(eligibleGroups)).AppendLine(" optimizable");
 
             AppendSavings(output);

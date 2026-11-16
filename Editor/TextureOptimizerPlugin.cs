@@ -398,8 +398,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                     if (shapes.Merged > 0)
                     {
                         analysis = AvatarAnalysis.Build(ctx); // Merged shapes' curves were removed.
-                        string summary = "Merged " + OptimizationLog.Plural(shapes.Merged, "blend shape") + " into others that always move together (the same weight, or a fixed ratio of it), on " + OptimizationLog.Plural(shapes.Meshes, "mesh", "meshes") + ".";
-                        Announce(ctx, state, summary);
+                        Announce(ctx, state, BlendShapeSummary(shapes.Merged, shapes.Meshes));
                     }
                     WhyNotLine(state, "renderer whose animated blend shapes were not considered for merging", "renderers whose animated blend shapes were not considered for merging", shapes.RendererWhyNot);
                     WhyNotLine(state, "blend shape animated like another but not merged into it", "blend shapes animated like another but not merged into it", shapes.ShapeWhyNot);
@@ -573,6 +572,14 @@ namespace Okarin.AvatarTextureOptimizer.Editor
 
         // Crops generated and original textures to the aligned part their meshes sample, after texture generation.
         // "Why not" lines: what kept meshes apart or layers unfolded, most common reason first, for the user to act on.
+        // The Console/report sentences a user quotes back: kept here so tests can assert the exact words.
+        internal static string BlendShapeSummary(int merged, int meshes) =>
+            "Merged " + OptimizationLog.Plural(merged, "blend shape") + " into others that always move together (the same weight, or a fixed ratio of it), on " +
+            OptimizationLog.Plural(meshes, "mesh", "meshes") + ".";
+
+        internal static string TextureCapLabel(int textures, int cap) =>
+            "capped " + OptimizationLog.Plural(textures, "texture") + " at " + cap + " px";
+
         internal static string WhyNotText(string what, Dictionary<string, List<string>> reasons) =>
             "Why not: " + reasons.Values.Sum(n => n.Count) + " " + what + ". " + string.Join("; ", reasons.OrderByDescending(p => p.Value.Count)
                 .Select(p => p.Value.Count + " because " + p.Key + " (" + string.Join(", ", p.Value.Distinct().Take(6)) + (p.Value.Distinct().Count() > 6 ? ", ..." : "") + ")")) + ".";
@@ -644,7 +651,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             string summary = "Capped " + OptimizationLog.Plural(result.Textures, "texture") + " at " + state.TextureSizeCap +
                 " px in build copies (" + OptimizationLog.Plural(result.Materials, "material") +
                 (result.MenuIcons > 0 ? ", " + OptimizationLog.Plural(result.MenuIcons, "menu icon") : "") + " repointed).";
-            state.Report?.AddSavings("Textures", result.Bytes, "capped " + OptimizationLog.Plural(result.Textures, "texture") + " at " + state.TextureSizeCap + " px", result.Unmeasured);
+            state.Report?.AddSavings("Textures", result.Bytes, TextureCapLabel(result.Textures, state.TextureSizeCap), result.Unmeasured);
             Announce(ctx, state, summary);
         }
 
