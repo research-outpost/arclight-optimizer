@@ -47,7 +47,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             // not unmodelable. _AnisotropyDirectionMap is on 10.0 and 11.0, _ContactShadowsMask on Pro only, the rest 11.0 only.
             // _PathingMaskMap is the exception: a fixed _linear_repeat sampler (see Repeat).
             "_AnisotropyDirectionMap _OutlineEmissionMap _ContactShadowsMask _PathingMaskMap _PoiPBRMaskMap " +
-            "_BacklightColorTex__1 " +
+            "_BacklightColorTex__1 _RGBAAOMaps _SSAOMask _ConstellationMask " +
             // Custom matcap normal maps: every 10.0.22 entry samples them only in calculateNormal, at poiUV(poiMesh.uv[<UV>], _ST) panned,
             // through the main sampler, like the other mesh-UV normal maps; only the matcap lookup after it is view-dependent.
             "_Matcap0NormalMap _Matcap1NormalMap _Matcap2NormalMap _Matcap3NormalMap");
@@ -97,8 +97,10 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             { "_DissolveDetailNoise", TextureChannels.R }, { "_FurNoiseMask", TextureChannels.R }, { "_ShadowStrengthMask", TextureChannels.R },
             { "_HighColor_Tex", TextureChannels.RGB }, { "_MultilayerMathBlurMap", TextureChannels.RGB },
             { "_DistortionFlowTexture", TextureChannels.R | TextureChannels.G }, { "_DistortionFlowTexture1", TextureChannels.R | TextureChannels.G },
-            // Anisotropy reads .rg as a tangent-space direction; the outline emission multiplies the colour by .rgb (both 10.0.28 and 11.0.43).
+            // Anisotropy reads .rg as a tangent-space direction; the outline emission multiplies the colour by .rgb (both 10.0.28 and 11.0.43);
+            // the constellation mask reads .r only.
             { "_AnisotropyDirectionMap", TextureChannels.R | TextureChannels.G }, { "_OutlineEmissionMap", TextureChannels.RGB },
+            { "_ConstellationMask", TextureChannels.R },
         };
         // Fields whose only sample site in every Toon 10.0.22 entry is tex[<channel property>]: one channel
         // chosen by a material value (0-3 = R, G, B, A).
@@ -116,8 +118,8 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             { "_VoronoiNoise", "_VoronoiNoiseChannel" }, { "_VoronoiMask", "_VoronoiMaskChannel" },
             { "_TruchetMask", "_TruchetMaskChannel" }, { "_VertexManipulationHeightMask", "_VertexManipulationHeightMapChannel" },
             { "_UzumoreMask", "_UzumoreMaskChannel" }, { "_Heightmask", "_HeightmaskChannel" }, { "_DistortionMask", "_DistortionMaskChannel" },
-            // Pro 10.0.28 only; 11.0 keeps every channel.
-            { "_ContactShadowsMask", "_ContactShadowsMaskChannel" },
+            // Pro entries only; 11.0 keeps every channel except the fields in ElevenChannels.
+            { "_ContactShadowsMask", "_ContactShadowsMaskChannel" }, { "_SSAOMask", "_SSAOMaskChannel" },
         };
 
         // Material values are read through MaterialInputs, so animating them is checked like any sampling input.
@@ -150,6 +152,29 @@ namespace Okarin.AvatarTextureOptimizer.Editor
             if (NineThreeToonChannels.TryGetValue(property, out read)) return read;
             if (property == "_RimEnviroMask")
                 return material.HasProperty("_RimEnviroChannel") ? ChannelOf(Number(material, "_RimEnviroChannel")) : TextureChannels.All;
+            return TextureChannels.All;
+        }
+
+        // 11.x channel reads. Its masks pass through PoiMaskLevels4, which keeps every channel, so 11.x reads All unless every
+        // sample site of the field swizzles the sample itself. Audited 2026-11-16 on all 27 entries of 11.0.43; Pro's Triple
+        // Outline entry (refused by name) is the one place an outline emission site reads the whole texel.
+        private static readonly Dictionary<string, TextureChannels> ElevenChannels = new Dictionary<string, TextureChannels>(StringComparer.Ordinal)
+        {
+            { "_AnisotropyDirectionMap", TextureChannels.R | TextureChannels.G }, { "_LightDataSDFMap", TextureChannels.R | TextureChannels.G },
+            { "_ConstellationMask", TextureChannels.R }, { "_DissolveDetailNoise", TextureChannels.R }, { "_DissolveNoiseTexture", TextureChannels.R },
+            { "_MetallicGlossMap", TextureChannels.R }, { "_SDFShadingTexture", TextureChannels.R }, { "_SkinThicknessMap", TextureChannels.R },
+            { "_SmoothnessTex", TextureChannels.R },
+            { "_DepthTexture", TextureChannels.RGB }, { "_DetailTex", TextureChannels.RGB }, { "_GlitterColorMap", TextureChannels.RGB },
+            { "_OutlineEmissionMap", TextureChannels.RGB },
+        };
+
+        private static TextureChannels ElevenChannelsRead(Material material, string property)
+        {
+            if (ElevenChannels.TryGetValue(property, out var read)) return read;
+            // One channel chosen by a material value, exactly as on 10.x.
+            if (property == "_VoronoiNoise") return Pick(material, "_VoronoiNoiseChannel", false, false);
+            if (property == "_VertexManipulationHeightMask") return Pick(material, "_VertexManipulationHeightMapChannel", false, false);
+            if (property == "_SSAOMask") return Pick(material, "_SSAOMaskChannel", false, false);
             return TextureChannels.All;
         }
 
@@ -389,8 +414,30 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 string layer = Layer(property);
                 if (layer != null) st = Merge(st, Vector(material, "_RGBA" + layer + "ScaleOffset"));
                 var paths = new List<SamplingPath>();
-                AddPath(material, layout, property, paths, uv, pan, property + "Stochastic", st, VertexOnly.Contains(property), layout.Repeat.Contains(property), fur,
-                    layer == null && !raw && !foreignSt ? CropBasis(material, version, property, fur) : null);
+                // _RGBAAOMaps is one packed AO mask read per colour region: each enabled region takes its own channel and merges the
+                // region's layer offset into the lookup, using its own UV/pan/stochastic when Custom Sampling is on. The field's own
+                // ST alone would under-cover the sampled area, so the generic path is not added for it.
+                if (property == "_RGBAAOMaps")
+                {
+                    bool any = false;
+                    foreach (var (colour, channel) in new[] { ("Red", TextureChannels.R), ("Green", TextureChannels.G), ("Blue", TextureChannels.B), ("Alpha", TextureChannels.A) })
+                    {
+                        if (!Toggle(material, "_RGBA" + colour + "Enable")) continue;
+                        if (material.HasProperty("_RGBA" + colour + "AOStrength") && Number(material, "_RGBA" + colour + "AOStrength") <= 0) continue;
+                        any = true;
+                        bool custom = On(material, "_RGBA" + colour + "AOCustomSampling");
+                        AddPath(material, layout, property, paths,
+                            custom ? "_RGBA" + colour + "AOUV" : uv, custom ? "_RGBA" + colour + "AOPan" : pan,
+                            custom ? "_RGBA" + colour + "AOStochastic" : property + "Stochastic",
+                            Merge(custom ? Vector(material, "_RGBA" + colour + "AOScaleOffset") : st, Vector(material, "_RGBA" + colour + "ScaleOffset")),
+                            false, layout.Repeat.Contains(property), fur);
+                    }
+                    // No region enabled: the shader reads nothing, but the field's own lookup still keeps its texels.
+                    if (!any) AddPath(material, layout, property, paths, uv, pan, property + "Stochastic", st, false, layout.Repeat.Contains(property), fur);
+                }
+                else
+                    AddPath(material, layout, property, paths, uv, pan, property + "Stochastic", st, VertexOnly.Contains(property), layout.Repeat.Contains(property), fur,
+                        layer == null && !raw && !foreignSt ? CropBasis(material, version, property, fur) : null);
                 if (layout.VertexAndFragment.Contains(property))
                     AddPath(material, layout, property, paths, uv, pan, null, st, true, true, fur);
                 if (fur && property == "_FurMask")
@@ -420,7 +467,7 @@ namespace Okarin.AvatarTextureOptimizer.Editor
                 return new SamplingDescription { AdapterId = id, Supported = true,
                     Semantics = Normals.Contains(property) ? TextureSemantics.Normal : TextureSemantics.Data, Paths = paths,
                     // 11.x passes most masks through PoiMaskLevels4 before picking channels; its channel reads are not audited.
-                    Channels = eleven ? TextureChannels.All : layout == Toon10 ? ToonChannelsRead(material, property) : NineChannelsRead(material, version, property) };
+                    Channels = eleven ? ElevenChannelsRead(material, property) : layout == Toon10 ? ToonChannelsRead(material, property) : NineChannelsRead(material, version, property) };
             }
             catch (InvalidOperationException e)
             {

@@ -66,7 +66,7 @@ Each of these trades some quality for size, so it's off until you choose it. Che
 
 **Texture clearing.** Used pixels are kept, padding is rebuilt from them, and the rest is filled with a flat colour. A texture is only replaced when its estimated compressed size gets smaller.
 
-**Smaller formats (PC only).** DXT5 becomes DXT1 when alpha is never read or always opaque, and red-only linear masks become BC4 (R8 when uncompressed). Only for shaders whose source has been checked: Unity Standard and Unlit/Texture, lilToon 2.x, Poiyomi 10 and 9.3 Toon and Pro (three red-only masks on other 9.x Toon), VRChat mobile shaders, NonToon, Sunao, ORL Toon and Mochie Standard. BC7, crunched and Quest textures keep their format unless **Narrow Opaque Textures** is turned on.
+**Smaller formats (PC only).** DXT5 becomes DXT1 when alpha is never read or always opaque, and red-only linear masks become BC4 (R8 when uncompressed). Only for shaders whose source has been checked: Unity Standard and Unlit/Texture, lilToon 2.x, Poiyomi 11, 10 and 9.3 Toon and Pro (three red-only masks on other 9.x Toon), VRChat mobile shaders, NonToon, Sunao, ORL Toon and Mochie Standard. BC7, crunched and Quest textures keep their format unless **Narrow Opaque Textures** is turned on.
 
 **Mono audio.** Identical-channel stereo is stored as mono at +3 dB (same level and balance), only when it can't clip and every source is spatialized or plain 2D without pan.
 
