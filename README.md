@@ -1,5 +1,7 @@
 # Arclight Optimizer
 
+**[Add to VCC or ALCOM](https://research-outpost.github.io/arclight-optimizer-vpm/)**
+
 Smaller, lighter VRChat avatars, optimized on a copy at build time. By default you shouldn't see or hear a difference; settings that can change how the avatar looks or sounds stay off until you turn them on.
 
 ## What it does
@@ -26,12 +28,6 @@ It runs automatically on build and in Play Mode. Your source assets are never mo
 - **Sync budget**: synced bits used out of 256.
 
 It also checks the avatar as uploaded, so Modular Avatar and VRCFury additions count. Fix buttons (**Add**, **Remove**, **Clear**) only run when pressed, support Undo, and back up changed files for **Fix history**. **Ignore** hides a card.
-
-## Install
-
-Requires **Unity 2022.3**, the **VRChat SDK 3.10.6 or later** (material contacts, which Arclight models, were introduced in 3.10.6) and **[NDMF](https://github.com/bdunderscore/ndmf) 1.14.8 or later (1.x)** (tested on 1.14.8 and 1.15.0).
-
-**[Add to VCC or ALCOM](https://research-outpost.github.io/arclight-optimizer-vpm/)**, or add this repository in **Settings → Packages → Add Repository**:
 
 ```
 https://research-outpost.github.io/arclight-optimizer-vpm/index.json
