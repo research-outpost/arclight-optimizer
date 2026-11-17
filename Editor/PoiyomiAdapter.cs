@@ -672,7 +672,12 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
             if (property.Contains("LUT") || property.Contains("Ramp") || property.Contains("Curve") || property == "_MainGradationTex" || property == "_ClothDFG")
                 return "Lookup/ramp/curve textures are not sampled through mesh UV coverage.";
             if (property.StartsWith("_DecalTexture", StringComparison.Ordinal))
-                return "Decal projection, animation and channel-separated sampling are not yet modeled.";
+                // A decal maps its whole texture inside the region its position, scale and rotation cover, so every texel is
+                // sampled wherever the decal shows: cropping cannot free anything, and the old wording ("projection, animation
+                // and channel-separated sampling are not yet modeled") read as three missing features hiding a saving that
+                // does not exist (LowPoly audit, 2026-11-17). Rotation, parallax and the per-hand modes change where the
+                // region sits, never how much of the texture it uses.
+                return "A decal maps its whole texture inside the region its placement covers, so no texel is unused and cropping cannot save anything; the original is kept.";
             if (property == "_FurVectorTex")
                 return "Fur direction maps are tangent-space vector fields that require separate encoding validation; original retained.";
             if (property.StartsWith("_RNM", StringComparison.Ordinal))

@@ -337,6 +337,13 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                         string summary = "Pointed the expressions menu at " + OptimizationLog.Plural(icons.Total, "build copy", "build copies") + ": " + string.Join("; ", parts) + ".";
                         Announce(ctx, state, summary);
                     }
+                    // The icon copies are the only part of that pass with a byte figure; the animator line below can
+                    // only count them. Report it with the measured savings so the pass that takes the longest shows
+                    // what it earned, and say how many copies had no estimate.
+                    if (icons.BeforeBytes > icons.AfterBytes)
+                        state.Report?.AddSavings("Menu icons", icons.BeforeBytes - icons.AfterBytes,
+                            OptimizationLog.Plural(icons.Optimized - icons.Unmeasured, "icon build copy measured", "icon build copies measured"),
+                            icons.Unmeasured);
                     BuildTimings.Step("CookieMerger");
                     int cookies = vrcfuryPending ? 0 : CookieMerger.Run(ctx.AvatarRootObject);
                     if (cookies > 0)

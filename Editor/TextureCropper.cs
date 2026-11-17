@@ -44,6 +44,20 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
         // Size 2^-k of the texture per axis, cell index j. Px/Py: the axis repeats every cell, and lookups wrap across it.
         private sealed class Crop { public int Kx, Ky, Jx, Jy; public bool Px, Py; }
 
+        // Whether an animation can move this path's sampling window over every part of the texture on both axes. Then no
+        // crop exists at all, which is different from "cropping animated transforms is not implemented" and reads very
+        // differently in a report: a 32-cell page atlas sampled page by page is the common case.
+        private static bool ReachesWholeTexture(SamplingPath path)
+        {
+            float minU = float.MaxValue, maxU = float.MinValue, minV = float.MaxValue, maxV = float.MinValue;
+            foreach (var transform in path.AnimatedTransforms)
+            {
+                minU = Mathf.Min(minU, transform.z); maxU = Mathf.Max(maxU, transform.z + transform.x);
+                minV = Mathf.Min(minV, transform.w); maxV = Mathf.Max(maxV, transform.w + transform.y);
+            }
+            return minU <= 0f && maxU >= 1f && minV <= 0f && maxV >= 1f;
+        }
+
         // The read-only MeshData API reads imported meshes in the Editor regardless of Read/Write (Unity docs:
         // "In the Editor, all meshes are readable, even when Mesh.isReadable is set to false"), so coverage needs
         // no readability gate — and VRChat-conformant avatars keep the flag off.
@@ -83,6 +97,17 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                             if (path.Basis == null && use.Sampling.CropReason != null)
                             {
                                 if (!result.WhyNot.TryGetValue(use.Sampling.CropReason, out var named)) result.WhyNot[use.Sampling.CropReason] = named = new List<string>();
+                                if (!named.Contains(use.Material.name)) named.Add(use.Material.name);
+                            }
+                            // An animated transform is dropped here without a word today, so a report could only say
+                            // "not cropped" for the whole material. Name the reason, and keep it honest: where the
+                            // animation reaches every texel there is nothing to earn, so it is not a missing feature.
+                            else if (path.AnimatedTransforms != null)
+                            {
+                                string why = ReachesWholeTexture(path)
+                                    ? "an animated UV transform reaches every part of the texture, so a crop would keep all of it"
+                                    : "an animated UV transform is not cropped (its curves would have to be rewritten)";
+                                if (!result.WhyNot.TryGetValue(why, out var named)) result.WhyNot[why] = named = new List<string>();
                                 if (!named.Contains(use.Material.name)) named.Add(use.Material.name);
                             }
                             continue;

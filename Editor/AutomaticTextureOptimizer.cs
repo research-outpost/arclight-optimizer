@@ -249,7 +249,12 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                                     MarkUsed(cache, ref nonBeneficial.lastUsedDay);
                                     summary.NotSmaller++;
                                     result.Outcome = TextureResultKind.NotSmaller;
-                                    result.Reason = "Cached size check: " + (nonBeneficial.explanation ?? NoFileSizeReductionException.Explain(nonBeneficial.sourceBytes, nonBeneficial.candidateBytes, nonBeneficial.compressedEstimate));
+                                    // The stored explanation is empty for older entries (a null custom reason is serialised as ""),
+                                    // so the byte figures are rebuilt from the record: a cached rejection reads the same as a
+                                    // fresh one instead of a bare "Cached size check:" label.
+                                    result.Reason = string.IsNullOrEmpty(nonBeneficial.explanation)
+                                        ? NoFileSizeReductionException.Explain(nonBeneficial.sourceBytes, nonBeneficial.candidateBytes, nonBeneficial.compressedEstimate)
+                                        : nonBeneficial.explanation;
                                     warn?.Invoke(group.Source, result.Reason);
                                     continue;
                                 }

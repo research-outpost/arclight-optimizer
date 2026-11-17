@@ -18,7 +18,9 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 
         // A cached or new build copy of an icon, or null when the icon is not a main texture asset, is already as small
         // as these changes allow, or does not measure smaller. maxSize 0 keeps the authored size.
-        internal static Texture2D Resize(Texture2D source, int maxSize) =>
-            CappedCopy.Make(source, maxSize, dropMips: true, narrowOpaque: true, Folder, Marker, "icon", allowCacheSource: false, out _, out _);
+        // before/after are the measured bundle bytes of the source and the copy; both stay 0 when no estimate was
+        // possible (Play Mode, a failed bundle build), which the report shows as unmeasured.
+        internal static Texture2D Resize(Texture2D source, int maxSize, out long before, out long after) =>
+            CappedCopy.Make(source, maxSize, dropMips: true, narrowOpaque: true, Folder, Marker, "icon", allowCacheSource: false, out before, out after);
     }
 }

@@ -20,7 +20,7 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
     internal static class MenuIconMerger
     {
         // What the pass did, so the report says which of the three things happened to the menu's icons.
-        internal sealed class Result { public int Total, Merged, Optimized, Capped; }
+        internal sealed class Result { public int Total, Merged, Optimized, Capped, Unmeasured; public long BeforeBytes, AfterBytes; }
 
         internal static Result Run(GameObject root, int maxIconSize = 0)
         {
@@ -87,10 +87,18 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
             var resized = new Dictionary<Texture2D, Texture2D>();
             foreach (var icon in icons)
             {
-                var copy = MenuIconOptimizer.Resize(icon, maxIconSize);
+                var copy = MenuIconOptimizer.Resize(icon, maxIconSize, out long before, out long after);
                 if (!copy) continue;
                 resized[icon] = copy;
                 result.Optimized++;
+                // The copies are the only part of this pass with a byte figure: a duplicate that points at one is gone
+                // from the build, but what that is worth is the duplicate's own estimate, which this pass does not take.
+                // A cached copy comes back without fresh estimates, so the memoized measurement is asked for here: it
+                // is the same content-keyed figure the generation pass already paid for.
+                if (before <= 0) BundleSizeEstimator.TryMeasure(AssetDatabase.GetAssetPath(icon), out before);
+                if (after <= 0) BundleSizeEstimator.TryMeasure(AssetDatabase.GetAssetPath(copy), out after);
+                if (before > 0 && after > 0) { result.BeforeBytes += before; result.AfterBytes += after; }
+                else result.Unmeasured++;
                 if (maxIconSize > 0 && copy.width < icon.width) result.Capped++;
             }
             if (resized.Count > 0)

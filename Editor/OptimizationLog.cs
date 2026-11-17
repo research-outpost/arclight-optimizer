@@ -249,8 +249,11 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                     {
                         long saving = replacement.SourceBytes - replacement.ReplacementBytes;
                         output.Append("  PNG size: ").Append(Size(replacement.SourceBytes)).Append(" -> ")
-                            .Append(Size(replacement.ReplacementBytes)).Append("; available saving ")
-                            .AppendLine(Size(saving));
+                            .Append(Size(replacement.ReplacementBytes));
+                        // A replacement chosen on its compressed size can be the larger PNG file; calling that a
+                        // negative "saving" read as a failed pass (LowPoly audit, 2026-11-16).
+                        if (saving > 0) output.Append("; available saving ").AppendLine(Size(saving));
+                        else output.AppendLine("; larger as a PNG file (the compressed estimate decided)");
                     }
                     else
                     {
@@ -380,10 +383,17 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                 {
                     long source = measured.Sum(r => r.SourceBytes);
                     long generated = measured.Sum(r => r.ReplacementBytes);
-                    output.Append(Size(source - generated)).Append(" across ")
-                        .Append(Plural(measured.Length, "measured replacement")).Append(" ")
-                        .Append('(').Append(Size(source)).Append(" source; ")
-                        .Append(Size(generated)).AppendLine(" generated).");
+                    // The estimate decides an assignment, so a total that is larger as PNG files is not a saving at
+                    // all: printing it as one ("-62.12 KiB") contradicted the headline next to it (LowPoly audit).
+                    if (generated >= source)
+                        output.Append("none (").Append(Plural(measured.Length, "measured replacement"))
+                            .Append(measured.Length == 1 ? " is " : " are ").Append(Size(generated - source))
+                            .AppendLine(" larger as PNG files; the estimated compressed size decided the assignment).");
+                    else
+                        output.Append(Size(source - generated)).Append(" across ")
+                            .Append(Plural(measured.Length, "measured replacement")).Append(" ")
+                            .Append('(').Append(Size(source)).Append(" source; ")
+                            .Append(Size(generated)).AppendLine(" generated).");
                     if (measured.Length != replacements.Count)
                         output.Append("  Sizes unavailable for ").Append(Plural(replacements.Count - measured.Length, "replacement")).AppendLine(".");
                 }

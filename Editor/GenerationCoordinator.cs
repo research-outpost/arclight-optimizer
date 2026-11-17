@@ -63,7 +63,9 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
             manifest.nonBeneficialTextures.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
             manifest.nonBeneficialTextures.Add(new NonBeneficialTextureAnalysis
                 { source = source, sourceId = id, recipeHash = recipe, sourceBytes = e.SourceBytes, candidateBytes = e.CandidateBytes, compressedEstimate = e.Compressed,
-                  explanation = e.CustomReason,
+                  // The whole sentence, not just a custom override: the record is what a cached run reports, and the
+                  // band note lives in it (LowPoly build, 2026-11-17).
+                  explanation = e.CustomReason ?? NoFileSizeReductionException.Explain(e.SourceBytes, e.CandidateBytes, e.Compressed),
                   estimateAttempted = BundleSizeEstimator.CanEstimate, lastUsedDay = CacheCleanup.Today });
             // Remove mappings only; existing PNG assets are never deleted.
             manifest.mappings.RemoveAll(m => m.sourceId == id && m.recipeHash == recipe);
@@ -108,6 +110,16 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
         }
         internal static int ExtensionRadius(int padding, int encodedSize, int importedSize) =>
             (int)Math.Ceiling(padding * 0.25 * encodedSize / importedSize);
+
+        // The size-rejection text for a candidate that also rebuilds the padding band. The first sentence stays the
+        // exception's own, because the report groups kept textures by it; the second only says where the bytes went, so
+        // a reader is not left thinking the crop earned nothing (LowPoly audit, 2026-11-16). The band is a settled
+        // always-on decision, so this explains it rather than offering to turn it off.
+        internal static string WithBandNote(long sourceBytes, long candidateBytes, int radiusX, int radiusY) =>
+            radiusX <= 0 && radiusY <= 0 ? null
+                : NoFileSizeReductionException.Explain(sourceBytes, candidateBytes, true) +
+                  " The candidate also rebuilds the mip padding band (edge extension " + radiusX + " x " + radiusY +
+                  " source texels), so part of the area it cleared is spent on the band.";
 
         // Number of generated PNGs that needed the API copy plus a second import (for tests/diagnostics).
         internal static int ImporterFallbacks;
@@ -446,7 +458,8 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                             // The candidate is a fresh asset of this run; drop it so a rejected texture leaves nothing behind.
                             AssetDatabase.DeleteAsset(written.Path);
                             if (notSmallerCompressed == null || candidateCompressed < notSmallerCompressed.CandidateBytes)
-                                notSmallerCompressed = new NoFileSizeReductionException(compressedSource, candidateCompressed, true);
+                                notSmallerCompressed = new NoFileSizeReductionException(compressedSource, candidateCompressed, true,
+                                    WithBandNote(compressedSource, candidateCompressed, radiusX, radiusY));
                             continue;
                         }
                         compressedReplacement = candidateCompressed;
