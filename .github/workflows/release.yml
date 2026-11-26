@@ -1,7 +1,6 @@
 # Builds the VPM/UPM package zip when a version tag (v1.0.0, ...) is pushed and attaches it to a GitHub
 # release. The zip contains the package with its .meta files (Unity needs them for stable script references),
-# minus the development-only folders (.tools, Tests, Documentation~) — the same set
-# .tools/Export-Public.ps1 keeps out of the public repository.
+# minus the development-only folders (.tools, Tests, Documentation~).
 # Download, docs, licence and changelog URLs are filled in from this repository; the release body is the
 # version's section of CHANGELOG.md, and a tag without one fails here.
 name: Release
