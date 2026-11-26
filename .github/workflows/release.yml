@@ -2,7 +2,8 @@
 # release. The zip contains the package with its .meta files (Unity needs them for stable script references),
 # minus the development-only folders (.tools, Tests, Documentation~) — the same set
 # .tools/Export-Public.ps1 keeps out of the public repository.
-# Download, docs and licence URLs are filled in from this repository.
+# Download, docs, licence and changelog URLs are filled in from this repository; the release body is the
+# version's section of CHANGELOG.md, and a tag without one fails here.
 name: Release
 
 on:
@@ -40,11 +41,15 @@ jobs:
           zip_name="$NAME-$VERSION.zip"
           blob="https://github.com/$REPO/blob/$GITHUB_REF_NAME"
           mkdir -p build/package
+          # Section from "## <version>" up to the next "## " heading; the heading may carry a date after a space.
+          awk -v v="## $VERSION" '$0 == v || index($0, v " ") == 1 { f = 1; next } /^## / { f = 0 } f' \
+             CHANGELOG.md > build/notes.md
+          grep -q '[^[:space:]]' build/notes.md || { echo "CHANGELOG.md has no '## $VERSION' section"; exit 1; }
           rsync -a --exclude='.git*' --exclude='.github' --exclude='build' --exclude='.tools' \
              --exclude='Tests' --exclude='Tests.meta' --exclude='Documentation~' ./ build/package/
           jq --arg url "https://github.com/$REPO/releases/download/$GITHUB_REF_NAME/$zip_name" \
-             --arg docs "$blob/README.md" --arg license "$blob/LICENSE.md" \
-             '.url = $url | .documentationUrl = $docs | .licensesUrl = $license' \
+             --arg docs "$blob/README.md" --arg license "$blob/LICENSE.md" --arg changelog "$blob/CHANGELOG.md" \
+             '.url = $url | .documentationUrl = $docs | .licensesUrl = $license | .changelogUrl = $changelog' \
              package.json > build/package/package.json
           (cd build/package && zip -r -X "../$zip_name" .)
           cp build/package/package.json build/package.json
@@ -55,4 +60,5 @@ jobs:
           files: |
             build/*.zip
             build/package.json
+          body_path: build/notes.md
           generate_release_notes: true
