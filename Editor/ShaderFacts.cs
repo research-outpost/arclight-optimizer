@@ -75,7 +75,7 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
         }
 
         // The source lilToon's importer generated for a container (its "Shader Source" sub-asset), or null.
-        private static string ContainerSource(string path) =>
+        internal static string ContainerSource(string path) =>
             AssetDatabase.LoadAllAssetsAtPath(path).OfType<TextAsset>().FirstOrDefault(t => t.name == "Shader Source")?.text;
 
         // What a container's compiled variants depend on: the generated source, lilToon's source files (LilToonSourceGuard) and

@@ -2,6 +2,10 @@
 
 What changed in each version, in plain words. Commits have the technical detail.
 
+## 1.7.8 (2026-11-27)
+- First builds are faster, up to about twice as fast on locked Poiyomi and lilToon avatars. Later builds were already fast.
+- Poiyomi 11 materials with outlines off, or without a curvature bake, get their textures optimized again.
+
 ## 1.7.7 (2026-11-17)
 - Reports show how much space smaller menu icons save, and never show a negative saving for PNGs.
 - When a texture is left at its size, the report says why.

@@ -304,6 +304,7 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                 string[] globalKeywords = null;
                 var data = ShaderUtil.GetShaderData(shader);
                 var subshader = data.ActiveSubshader;
+                var usePasses = UsePasses(shader);
                 for (int p = 0; p < subshader.PassCount; p++)
                 {
                     var pass = subshader.GetPass(p);
@@ -319,11 +320,17 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                     catch (Exception) { globals = BuiltInGlobals; clean = false; }
                     // The lighting sets VRChat turns on together cover keyword combinations (a shadowed point light) one global alone misses.
                     var sets = new[] { new string[0], globals }.Concat(globals.Select(g => new[] { g })).Concat(LightingSets);
+                    // As in Uniforms: a set cut to the pass's own keywords that matches one already compiled is the same variant,
+                    // so its result (a failure too) is reused.
+                    var declared = usePasses == null ? null : PassKeywords(shader, data.ActiveSubshaderIndex, p, ShaderType.Vertex, usePasses);
+                    var results = new Dictionary<string, ShaderData.VariantCompileInfo>(StringComparer.Ordinal);
                     foreach (var extra in sets)
                     {
+                        var effective = declared == null ? extra : extra.Where(declared.Contains).ToArray();
                         foreach (var (platform, target) in Targets)
                         {
-                            var info = pass.CompileVariant(ShaderType.Vertex, material.shaderKeywords.Concat(extra).ToArray(), platform, target);
+                            string variant = platform + "|" + string.Join(" ", effective);
+                            if (!results.TryGetValue(variant, out var info)) results[variant] = info = pass.CompileVariant(ShaderType.Vertex, material.shaderKeywords.Concat(effective).ToArray(), platform, target);
                             // A list without Position is not trusted to be complete (a reflection gap would strip every channel).
                             if (info.Success && info.Attributes != null && info.Attributes.Contains(VertexAttribute.Position)) inputs.UnionWith(info.Attributes);
                             else if (info.Success) { inputs.UnionWith(Optional); clean = false; }
@@ -351,9 +358,10 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
 
         // Keyed by the shader file's dependency hash (its includes too), so a shader edited since the last build is compiled
         // again while unchanged shaders are not.
+        // Keywords the shader does not declare (left from an earlier shader) change no variant, so they are left out of the key.
         internal static string CacheKey(Material material) => (Android ? "android|" : "") + material.shader.GetInstanceID() + "|" +
             AssetDatabase.GetAssetDependencyHash(AssetDatabase.GetAssetPath(material.shader)) + "|" +
-            string.Join(" ", material.shaderKeywords.OrderBy(k => k, StringComparer.Ordinal));
+            string.Join(" ", material.shaderKeywords.Where(k => material.shader.keywordSpace.FindKeyword(k).isValid).OrderBy(k => k, StringComparer.Ordinal));
 
         // Names of every uniform any stage of any pass reads, in each variant the material can draw with on PC (its
         // keywords alone, with each global keyword, and with the lighting sets above), or null if any variant fails to
@@ -391,6 +399,7 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
             {
                 var data = ShaderUtil.GetShaderData(shader);
                 var subshader = data.ActiveSubshader;
+                var usePasses = UsePasses(shader);
                 var stages = new[] { ShaderType.Vertex, ShaderType.Fragment, ShaderType.Geometry, ShaderType.Hull, ShaderType.Domain };
                 void Add(ShaderData.ConstantInfo[] fields)
                 {
@@ -412,9 +421,15 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
                         // Each global keyword the Built-in pipeline sets, one at a time (asking each stage for its own list logs
                         // errors, and all at once defines conflicting light textures, an error Unity then keeps on the shader).
                         var globals = BuiltInGlobals;
+                        // A pass ignores a keyword it does not declare, so an added set is cut to the pass's own keywords and a set
+                        // that cuts to one already compiled is the same variant. Locked Poiyomi compiled 37 variants per stage here.
+                        var declared = usePasses == null ? null : PassKeywords(shader, data.ActiveSubshaderIndex, p, stage, usePasses);
+                        var compiled = new HashSet<string>(StringComparer.Ordinal);
                         foreach (var extra in new[] { new string[0] }.Concat(globals.Select(g => new[] { g })).Concat(LightingSets))
                         {
-                            var info = pass.CompileVariant(stage, material.shaderKeywords.Concat(extra).ToArray(), ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64);
+                            var effective = declared == null ? extra : extra.Where(declared.Contains).ToArray();
+                            if (!compiled.Add(string.Join(" ", effective))) continue;
+                            var info = pass.CompileVariant(stage, material.shaderKeywords.Concat(effective).ToArray(), ShaderCompilerPlatform.D3D, BuildTarget.StandaloneWindows64);
                             if (info.Success)
                             {
                                 foreach (var buffer in info.ConstantBuffers ?? Array.Empty<ShaderData.ConstantBufferInfo>()) Add(buffer.Fields);
@@ -440,6 +455,45 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
             finally { if (!hadError && ShaderUtil.ShaderHasError(shader)) ShaderUtil.ClearShaderMessages(shader); }
             ShaderFacts.Put("uniforms", fact, string.Join(" ", names)); // A failed check (null) is not kept.
             return CompiledUniforms[key] = names;
+        }
+
+        // The passes a shader takes from others (UsePass "Shader/PASS"), or null when its source cannot be read (lilToon
+        // containers read the source their importer generated).
+        private static List<(Shader Shader, string Pass)> UsePasses(Shader shader)
+        {
+            string path = AssetDatabase.GetAssetPath(shader);
+            string text = path.EndsWith(".lilcontainer", StringComparison.OrdinalIgnoreCase) ? ShaderFacts.ContainerSource(path)
+                : path.EndsWith(".shader", StringComparison.OrdinalIgnoreCase) && System.IO.File.Exists(path) ? System.IO.File.ReadAllText(path) : null;
+            if (text == null) return null;
+            return System.Text.RegularExpressions.Regex.Matches(text, "UsePass\\s+\"([^\"]+)/([^/\"]+)\"").Cast<System.Text.RegularExpressions.Match>()
+                .Select(m => (Shader.Find(m.Groups[1].Value), m.Groups[2].Value)).ToList();
+        }
+
+        // The keywords this pass and stage declare, or null (compile every set) when none come back: keyword data not loaded
+        // looks the same as a pass that declares none. A pass taken by UsePass is asked of the shader it comes from (asking
+        // the copy logs "Invalid pass identifier"), only when one name matches one pass each side and that shader has no
+        // UsePass of its own.
+        private static HashSet<string> PassKeywords(Shader shader, int subshader, int pass, ShaderType stage, List<(Shader Shader, string Pass)> usePasses)
+        {
+            try
+            {
+                if (usePasses.Count > 0)
+                {
+                    var own = ShaderUtil.GetShaderData(shader).GetSubshader(subshader);
+                    string name = own.GetPass(pass).Name;
+                    var from = usePasses.Where(u => string.Equals(u.Pass, name, StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (from.Count != 1 || !from[0].Shader || UsePasses(from[0].Shader)?.Count != 0 ||
+                        Enumerable.Range(0, own.PassCount).Count(i => string.Equals(own.GetPass(i).Name, name, StringComparison.OrdinalIgnoreCase)) != 1) return null;
+                    var source = ShaderUtil.GetShaderData(from[0].Shader);
+                    var matches = Enumerable.Range(0, source.ActiveSubshader.PassCount)
+                        .Where(i => string.Equals(source.ActiveSubshader.GetPass(i).Name, from[0].Pass, StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (matches.Count != 1) return null;
+                    (shader, subshader, pass) = (from[0].Shader, source.ActiveSubshaderIndex, matches[0]);
+                }
+                var keywords = ShaderUtil.GetPassKeywords(shader, new PassIdentifier((uint)subshader, (uint)pass), stage);
+                return keywords.Length == 0 ? null : new HashSet<string>(keywords.Select(k => k.name), StringComparer.Ordinal);
+            }
+            catch (Exception) { return null; }
         }
 
         // A copy without the given channels, or null if any other data changed.

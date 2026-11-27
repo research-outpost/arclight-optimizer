@@ -529,13 +529,19 @@ namespace ResearchOutpost.AvatarTextureOptimizer.Editor
         // CropAudited fields as 10.x (audited 2026-11-16 on every 11.0.43 entry).
         private static void Eleven(Material m, string property)
         {
-            if (m.HasProperty("_OutlineCurvatureUVs") && Number(m, "_OutlineCurvatureUVs") >= 0.5f)
+            // Curvature UVs act only in the outline pass and only with a curvature bake assigned (the shader's switch is the bake's
+            // width, 512-1280). With outlines off that pass draws nothing: its vertex stage returns NaN, and a lock strips it.
+            if (Number(m, "_OutlineCurvatureUVs") >= 0.5f && Number(m, "_EnableOutlines") >= 0.01f && CurvatureBaked(m))
                 throw new InvalidOperationException("Outline curvature UVs replace UV0 in the outline pass.");
             if (property == "_ALDecalColorMask" && Number(m, "_ALDecalMaskSpace") >= 0.5f)
                 throw new InvalidOperationException("The AudioLink decal mask follows the spectrum's coordinates.");
             if (property == "_OutlineTexture" && (Any(m, "_AudioLinkOutlineTextureOffset") || Any(m, "_AudioLinkOutlineTextureChronoSpeed")))
                 throw new InvalidOperationException("AudioLink offsets or scrolls the outline texture.");
         }
+
+        // The shader's outlineCurvatureBaked: a bake 512-1280 texels wide and a vertex count above zero (vertexId < count).
+        private static bool CurvatureBaked(Material m) => Number(m, "_OutlineCurvatureVertexCount") > 0 && m.HasProperty("_OutlineCurvatureData") &&
+            m.GetTexture("_OutlineCurvatureData") is Texture bake && bake && (bake.width == 512 || bake.width == 768 || bake.width == 1024 || bake.width == 1280);
 
         private static bool Any(Material m, string property)
         {
